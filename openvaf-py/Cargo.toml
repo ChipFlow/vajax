@@ -1,0 +1,29 @@
+[package]
+name = "openvaf-py"
+version = "0.1.0"
+edition = "2021"
+description = "Python bindings for OpenVAF MIR interpreter"
+
+[lib]
+name = "openvaf_py"
+crate-type = ["cdylib"]
+
+[dependencies]
+pyo3 = { version = "0.19", features = ["extension-module"] }
+
+# OpenVAF dependencies (relative to jax-spice/openvaf-py)
+mir = { path = "../../OpenVAF/openvaf/mir" }
+mir_interpret = { path = "../../OpenVAF/openvaf/mir_interpret" }
+sim_back = { path = "../../OpenVAF/openvaf/sim_back" }
+hir = { path = "../../OpenVAF/openvaf/hir" }
+hir_lower = { path = "../../OpenVAF/openvaf/hir_lower" }
+basedb = { path = "../../OpenVAF/openvaf/basedb" }
+paths = { path = "../../OpenVAF/lib/paths" }
+
+# Other dependencies
+lasso = "0.7"
+typed-index-collections = "3.1"
+
+# Patch to use the same salsa version as OpenVAF
+[patch.crates-io]
+salsa = { git = 'https://github.com/pascalkuthe/salsa' }
