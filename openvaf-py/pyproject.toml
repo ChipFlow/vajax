@@ -3,10 +3,17 @@ requires = ["maturin>=1.0,<2.0"]
 build-backend = "maturin"
 
 [project]
-name = "openvaf_py"
+name = "openvaf-py"
 version = "0.1.0"
 description = "Python bindings for OpenVAF MIR interpreter"
-requires-python = ">=3.8"
+requires-python = ">=3.10"
 
 [tool.maturin]
 features = ["pyo3/extension-module"]
+
+[tool.uv]
+cache-keys = [
+    { file = "pyproject.toml" },
+    { file = "Cargo.toml" },
+    { file = "src/**/*.rs" },
+]
