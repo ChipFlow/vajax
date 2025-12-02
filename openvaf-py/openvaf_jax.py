@@ -38,10 +38,13 @@ class OpenVAFToJAX:
         # Build value tracking
         self.constants = dict(self.mir_data['constants'])
         self.bool_constants = dict(self.mir_data.get('bool_constants', {}))
+        self.int_constants = dict(self.mir_data.get('int_constants', {}))
         self.params = list(self.mir_data['params'])
 
         # Init function data
         self.init_constants = dict(self.init_mir_data['constants'])
+        self.init_bool_constants = dict(self.init_mir_data.get('bool_constants', {}))
+        self.init_int_constants = dict(self.init_mir_data.get('int_constants', {}))
         self.init_params = list(self.init_mir_data['params'])
         self.cache_mapping = list(self.init_mir_data['cache_mapping'])
 
@@ -105,6 +108,17 @@ class OpenVAFToJAX:
         for name, value in self.bool_constants.items():
             lines.append(f"    {name} = {repr(value)}")
 
+        # Int constants (from both eval and init MIR)
+        lines.append("    # Int constants")
+        # First add eval int constants
+        for name, value in self.int_constants.items():
+            if name not in self.constants:
+                lines.append(f"    {name} = {repr(value)}")
+        # Then add any init int constants not already defined
+        for name, value in self.init_int_constants.items():
+            if name not in self.constants and name not in self.int_constants:
+                lines.append(f"    {name} = {repr(value)}")
+
         # Ensure v3 exists (commonly used for zero)
         if 'v3' not in self.constants:
             lines.append("    v3 = 0.0")
@@ -112,11 +126,17 @@ class OpenVAFToJAX:
         lines.append("")
 
         # Map function parameters to inputs
-        # Named eval params first
+        # Named eval params from user inputs, derivative selectors default to 0
         lines.append("    # Input parameters (eval function)")
         num_named_params = len(self.module.param_names)
         for i, param in enumerate(self.params[:num_named_params]):
             lines.append(f"    {param} = inputs[{i}]")
+
+        # Derivative selector params (used internally for Jacobian computation)
+        # Default to 0 for DC analysis (no derivatives enabled)
+        lines.append("    # Derivative selector params (default to 0)")
+        for param in self.params[num_named_params:]:
+            lines.append(f"    {param} = 0")
 
         # Process init function first to compute cached values
         # Use init_ prefix to avoid name collisions with eval function
@@ -147,13 +167,32 @@ class OpenVAFToJAX:
                 lines.append(f"    {prefixed} = inputs[{eval_idx}]")
                 init_defined.add(prefixed)
 
-        # Process init instructions with prefixed variable names
-        for inst in self.init_mir_data.get('instructions', []):
-            expr = self._translate_init_instruction(inst, init_defined)
-            if expr and 'result' in inst:
-                prefixed_result = f"init_{inst['result']}"
-                lines.append(f"    {prefixed_result} = {expr}")
-                init_defined.add(prefixed_result)
+        # Process init instructions in block order (like eval function)
+        # This ensures variables are defined before use
+        init_block_order = self._topological_sort_init_blocks()
+        init_by_block = self._group_init_instructions_by_block()
+
+        for item in init_block_order:
+            if isinstance(item, tuple) and item[0] == 'loop':
+                # Handle loop structure
+                _, header, loop_blocks, exit_blocks = item
+                loop_lines = self._generate_init_loop(
+                    header, loop_blocks, exit_blocks,
+                    init_by_block, init_defined
+                )
+                lines.extend(loop_lines)
+            else:
+                # Regular block
+                block_name = item
+                lines.append(f"")
+                lines.append(f"    # init {block_name}")
+
+                for inst in init_by_block.get(block_name, []):
+                    expr = self._translate_init_instruction(inst, init_defined)
+                    if expr and 'result' in inst:
+                        prefixed_result = f"init_{inst['result']}"
+                        lines.append(f"    {prefixed_result} = {expr}")
+                        init_defined.add(prefixed_result)
 
         lines.append("")
 
@@ -251,36 +290,393 @@ class OpenVAFToJAX:
         return mapping
 
     def _topological_sort(self) -> List[str]:
-        """Sort blocks in topological order"""
-        blocks = self.mir_data['blocks']
+        """Sort eval blocks in topological order"""
+        return self._topological_sort_blocks(self.mir_data.get('blocks', {}))
+
+    def _topological_sort_init_blocks(self) -> List[str]:
+        """Sort init blocks in topological order"""
+        return self._topological_sort_blocks(self.init_mir_data.get('blocks', {}))
+
+    def _topological_sort_blocks(self, blocks: Dict) -> List[str]:
+        """Sort blocks in topological order using Kahn's algorithm, handling loops.
+
+        Uses Kahn's algorithm to ensure a block is only processed after ALL its
+        predecessors have been processed. Loops are collapsed into single nodes.
+
+        Returns a list where each element is either:
+        - A block name (str) for non-loop blocks
+        - A tuple ('loop', header_block, body_blocks, exit_blocks) for loops
+        """
         if not blocks:
             return []
 
-        # Find entry blocks (no predecessors)
-        entry_blocks = [name for name, block in blocks.items()
-                       if not block.get('predecessors', [])]
-        if not entry_blocks:
-            # Fall back to sorted order
-            entry_blocks = sorted(blocks.keys(),
-                                 key=lambda x: int(x.replace('block', '')) if x.startswith('block') else 0)
+        # First, find loops (SCCs with >1 node)
+        loops = self._find_loops(blocks)
 
-        visited = set()
+        # Create mapping from block to its loop (if any)
+        block_to_loop: Dict[str, int] = {}
+        for i, loop in enumerate(loops):
+            for block in loop:
+                block_to_loop[block] = i
+
+        # Build condensed graph:
+        # - Each non-loop block is a node
+        # - Each loop is collapsed into a single node (represented by its header)
+        # The "condensed" node name is either the block name or f"loop_{i}" for loops
+
+        def get_condensed_node(block: str) -> str:
+            if block in block_to_loop:
+                return f"loop_{block_to_loop[block]}"
+            return block
+
+        # Compute in-degrees for condensed graph (Kahn's algorithm)
+        in_degree: Dict[str, int] = {}
+        condensed_successors: Dict[str, Set[str]] = {}
+
+        # Initialize all nodes
+        for block in blocks:
+            cn = get_condensed_node(block)
+            if cn not in in_degree:
+                in_degree[cn] = 0
+                condensed_successors[cn] = set()
+
+        # Build edges in condensed graph
+        for block, data in blocks.items():
+            cn = get_condensed_node(block)
+            for succ in data.get('successors', []):
+                if succ not in blocks:
+                    continue
+                succ_cn = get_condensed_node(succ)
+                if cn != succ_cn:  # Skip edges within same loop
+                    if succ_cn not in condensed_successors[cn]:
+                        condensed_successors[cn].add(succ_cn)
+                        in_degree[succ_cn] = in_degree.get(succ_cn, 0) + 1
+
+        # Kahn's algorithm: process nodes with in-degree 0
+        queue = [cn for cn, deg in in_degree.items() if deg == 0]
+        # Sort for deterministic order
+        queue.sort(key=lambda x: (
+            not x.startswith('loop_'),  # Loops last among same in-degree
+            int(x.replace('block', '').replace('loop_', '')) if x.replace('block', '').replace('loop_', '').isdigit() else 0
+        ))
+
         result = []
+        processed = set()
 
-        def visit(name: str):
-            if name in visited or name not in blocks:
-                return
-            visited.add(name)
-            for succ in blocks[name].get('successors', []):
-                visit(succ)
-            result.append(name)
+        while queue:
+            cn = queue.pop(0)
+            if cn in processed:
+                continue
+            processed.add(cn)
 
-        for entry in entry_blocks:
-            visit(entry)
+            # Add to result
+            if cn.startswith('loop_'):
+                loop_idx = int(cn.replace('loop_', ''))
+                loop = loops[loop_idx]
+                header = self._find_loop_header(loop, blocks)
+                exits = self._find_loop_exits(loop, blocks)
+                result.append(('loop', header, loop, exits))
+            else:
+                result.append(cn)
 
-        return list(reversed(result))
+            # Decrease in-degree of successors
+            for succ_cn in condensed_successors.get(cn, []):
+                in_degree[succ_cn] -= 1
+                if in_degree[succ_cn] == 0:
+                    queue.append(succ_cn)
+
+            # Keep queue sorted for determinism
+            queue.sort(key=lambda x: (
+                not x.startswith('loop_'),
+                int(x.replace('block', '').replace('loop_', '')) if x.replace('block', '').replace('loop_', '').isdigit() else 0
+            ))
+
+        # Handle any remaining blocks (shouldn't happen in well-formed CFG)
+        for cn in in_degree:
+            if cn not in processed:
+                if cn.startswith('loop_'):
+                    loop_idx = int(cn.replace('loop_', ''))
+                    loop = loops[loop_idx]
+                    header = self._find_loop_header(loop, blocks)
+                    exits = self._find_loop_exits(loop, blocks)
+                    result.append(('loop', header, loop, exits))
+                else:
+                    result.append(cn)
+
+        return result
+
+    def _find_loops(self, blocks: Dict) -> List[Set[str]]:
+        """Find all loops (SCCs with >1 node) using Tarjan's algorithm"""
+        index_counter = [0]
+        stack = []
+        lowlinks = {}
+        index = {}
+        on_stack = {}
+        sccs = []
+
+        def strongconnect(v):
+            index[v] = index_counter[0]
+            lowlinks[v] = index_counter[0]
+            index_counter[0] += 1
+            stack.append(v)
+            on_stack[v] = True
+
+            for w in blocks.get(v, {}).get('successors', []):
+                if w not in blocks:
+                    continue
+                if w not in index:
+                    strongconnect(w)
+                    lowlinks[v] = min(lowlinks[v], lowlinks[w])
+                elif on_stack.get(w, False):
+                    lowlinks[v] = min(lowlinks[v], index[w])
+
+            if lowlinks[v] == index[v]:
+                scc = set()
+                while True:
+                    w = stack.pop()
+                    on_stack[w] = False
+                    scc.add(w)
+                    if w == v:
+                        break
+                sccs.append(scc)
+
+        for v in blocks:
+            if v not in index:
+                strongconnect(v)
+
+        # Return only non-trivial SCCs (loops with >1 node)
+        return [scc for scc in sccs if len(scc) > 1]
+
+    def _find_loop_header(self, loop: Set[str], blocks: Dict) -> str:
+        """Find the loop header (entry point from outside the loop)"""
+        for block in loop:
+            preds = blocks.get(block, {}).get('predecessors', [])
+            for pred in preds:
+                if pred not in loop:
+                    return block
+        # Fallback: return block with lowest number
+        return min(loop, key=lambda x: int(x.replace('block', '')) if x.startswith('block') else 0)
+
+    def _find_loop_exits(self, loop: Set[str], blocks: Dict) -> List[str]:
+        """Find blocks that exit the loop (successors outside the loop)"""
+        exits = []
+        for block in loop:
+            succs = blocks.get(block, {}).get('successors', [])
+            for succ in succs:
+                if succ not in loop and succ not in exits:
+                    exits.append(succ)
+        return exits
+
+    def _generate_init_loop(self, header: str, loop_blocks: Set[str],
+                            exit_blocks: List[str], init_by_block: Dict[str, List[dict]],
+                            init_defined: Set[str]) -> List[str]:
+        """Generate JAX code for a loop using jax.lax.while_loop
+
+        Args:
+            header: The loop header block name
+            loop_blocks: Set of all blocks in the loop
+            exit_blocks: List of blocks that are exited to
+            init_by_block: Dict mapping block names to their instructions
+            init_defined: Set of already-defined variable names (will be updated)
+
+        Returns:
+            List of code lines to add
+        """
+        lines = []
+        lines.append("")
+        lines.append(f"    # Loop: {header} with blocks {sorted(loop_blocks)}")
+
+        # Find PHI nodes in the header - these are loop-carried values
+        header_insts = init_by_block.get(header, [])
+        phi_nodes = [inst for inst in header_insts if inst.get('opcode', '').lower() == 'phi']
+
+        # Get loop-carried variables: PHI results and their incoming values from the loop
+        loop_carried = []  # (result_var, init_value, loop_value)
+        for phi in phi_nodes:
+            result = phi.get('result', '')
+            phi_ops = phi.get('phi_operands', [])
+            init_val = None
+            loop_val = None
+            for op in phi_ops:
+                if op['block'] in loop_blocks:
+                    loop_val = op['value']
+                else:
+                    init_val = op['value']
+            if result and init_val and loop_val:
+                loop_carried.append((result, init_val, loop_val))
+
+        if not loop_carried:
+            # No loop-carried values - something is wrong
+            lines.append("    # WARNING: No loop-carried values found, skipping loop")
+            return lines
+
+        # Find the condition and body instructions
+        condition_inst = None
+        body_insts = []
+
+        for inst in header_insts:
+            op = inst.get('opcode', '').lower()
+            if op == 'br' and 'condition' in inst:
+                condition_inst = inst
+            elif op != 'phi':
+                body_insts.append(inst)
+
+        # Also get instructions from other loop blocks (the body)
+        for block in sorted(loop_blocks):
+            if block != header:
+                for inst in init_by_block.get(block, []):
+                    op = inst.get('opcode', '').lower()
+                    if op not in ('br', 'jmp'):
+                        body_insts.append(inst)
+
+        # Helper to get operand with init_ prefix
+        def get_operand(op: str, local_vars: Set[str] = None) -> str:
+            if local_vars is None:
+                local_vars = set()
+            # Check local loop variables first (no prefix)
+            if op in local_vars:
+                return op
+            prefixed = f"init_{op}"
+            if prefixed in init_defined:
+                return prefixed
+            if op in self.init_constants:
+                return repr(self.init_constants[op])
+            if op in self.init_bool_constants:
+                return repr(self.init_bool_constants[op])
+            if op in self.init_int_constants:
+                return repr(self.init_int_constants[op])
+            return prefixed
+
+        # Generate initial state tuple
+        init_state_parts = []
+        for result, init_val, _ in loop_carried:
+            init_state_parts.append(get_operand(init_val))
+
+        lines.append(f"    _loop_state_init = ({', '.join(init_state_parts)},)")
+
+        # Generate condition function
+        lines.append("")
+        lines.append("    def _loop_cond(_loop_state):")
+
+        # Unpack state
+        state_vars = [lc[0] for lc in loop_carried]  # Use original var names inside loop
+        lines.append(f"        {', '.join(state_vars)}, = _loop_state")
+
+        # Generate condition computation (instructions before the branch in header)
+        local_vars = set(state_vars)
+        for inst in header_insts:
+            op = inst.get('opcode', '').lower()
+            if op == 'phi' or op == 'br':
+                continue
+            result = inst.get('result', '')
+            expr = self._translate_loop_instruction(inst, local_vars, init_defined)
+            if expr and result:
+                lines.append(f"        {result} = {expr}")
+                local_vars.add(result)
+
+        # Return the condition
+        if condition_inst:
+            cond_var = condition_inst.get('condition', '')
+            # Check if condition is in local vars or needs prefix
+            if cond_var in local_vars:
+                lines.append(f"        return {cond_var}")
+            else:
+                lines.append(f"        return {get_operand(cond_var, local_vars)}")
+        else:
+            lines.append("        return False")
+
+        # Generate body function
+        lines.append("")
+        lines.append("    def _loop_body(_loop_state):")
+        lines.append(f"        {', '.join(state_vars)}, = _loop_state")
+
+        # Recompute header instructions (needed for body)
+        local_vars = set(state_vars)
+        for inst in header_insts:
+            op = inst.get('opcode', '').lower()
+            if op == 'phi' or op == 'br':
+                continue
+            result = inst.get('result', '')
+            expr = self._translate_loop_instruction(inst, local_vars, init_defined)
+            if expr and result:
+                lines.append(f"        {result} = {expr}")
+                local_vars.add(result)
+
+        # Generate body instructions
+        for inst in body_insts:
+            result = inst.get('result', '')
+            expr = self._translate_loop_instruction(inst, local_vars, init_defined)
+            if expr and result:
+                lines.append(f"        {result} = {expr}")
+                local_vars.add(result)
+
+        # Return new state (the loop_val from each PHI)
+        new_state_parts = []
+        for _, _, loop_val in loop_carried:
+            if loop_val in local_vars:
+                new_state_parts.append(loop_val)
+            else:
+                new_state_parts.append(get_operand(loop_val, local_vars))
+
+        lines.append(f"        return ({', '.join(new_state_parts)},)")
+
+        # Call while_loop
+        lines.append("")
+        lines.append("    _loop_result = lax.while_loop(_loop_cond, _loop_body, _loop_state_init)")
+
+        # Unpack results to prefixed variables
+        for i, (result, _, _) in enumerate(loop_carried):
+            prefixed = f"init_{result}"
+            lines.append(f"    {prefixed} = _loop_result[{i}]")
+            init_defined.add(prefixed)
+
+        return lines
+
+    def _translate_loop_instruction(self, inst: dict, local_vars: Set[str],
+                                    init_defined: Set[str]) -> Optional[str]:
+        """Translate an instruction for use inside a loop
+
+        Args:
+            inst: The instruction to translate
+            local_vars: Variables defined locally in the loop (no prefix)
+            init_defined: Variables defined in init scope (with prefix)
+        """
+        def get_operand(op: str) -> str:
+            # Local vars first (no prefix)
+            if op in local_vars:
+                return op
+            prefixed = f"init_{op}"
+            if prefixed in init_defined:
+                return prefixed
+            if op in self.init_constants:
+                return repr(self.init_constants[op])
+            if op in self.init_bool_constants:
+                return repr(self.init_bool_constants[op])
+            if op in self.init_int_constants:
+                return repr(self.init_int_constants[op])
+            return prefixed
+
+        return self._translate_instruction_impl(inst, get_operand)
+
+    def _group_init_instructions_by_block(self) -> Dict[str, List[dict]]:
+        """Group init instructions by their block"""
+        by_block: Dict[str, List[dict]] = {}
+        for inst in self.init_mir_data.get('instructions', []):
+            block = inst.get('block', 'block0')
+            if block not in by_block:
+                by_block[block] = []
+            by_block[block].append(inst)
+        return by_block
 
     def _build_branch_conditions(self) -> Dict[str, Dict[str, Tuple[str, bool]]]:
+        """Build a map of (block -> successor -> (condition, polarity)) for eval function"""
+        return self._build_branch_conditions_impl(self.mir_data.get('instructions', []))
+
+    def _build_init_branch_conditions(self) -> Dict[str, Dict[str, Tuple[str, bool]]]:
+        """Build a map of (block -> successor -> (condition, polarity)) for init function"""
+        return self._build_branch_conditions_impl(self.init_mir_data.get('instructions', []))
+
+    def _build_branch_conditions_impl(self, instructions: List) -> Dict[str, Dict[str, Tuple[str, bool]]]:
         """Build a map of (block -> successor -> (condition, polarity))
 
         For each block with 2 successors, find the condition that determines the branch.
@@ -289,7 +685,7 @@ class OpenVAFToJAX:
         conditions = {}
 
         # Find branch instructions with explicit conditions
-        for inst in self.mir_data['instructions']:
+        for inst in instructions:
             op = inst.get('opcode', '').lower()
             if op == 'br' and 'condition' in inst:
                 block = inst.get('block', '')
@@ -305,13 +701,31 @@ class OpenVAFToJAX:
         return conditions
 
     def _get_phi_condition(self, phi_block: str, pred_blocks: List[str]) -> Optional[Tuple[str, str, str]]:
-        """Get the condition for a PHI node
+        """Get the condition for a PHI node in eval function
 
         Returns (condition_var, true_value_block, false_value_block) or None
         """
-        blocks = self.mir_data['blocks']
+        blocks = self.mir_data.get('blocks', {})
         branch_conds = self._build_branch_conditions()
+        return self._get_phi_condition_impl(phi_block, pred_blocks, blocks, branch_conds, prefix='')
 
+    def _get_init_phi_condition(self, phi_block: str, pred_blocks: List[str]) -> Optional[Tuple[str, str, str]]:
+        """Get the condition for a PHI node in init function
+
+        Returns (condition_var, true_value_block, false_value_block) or None
+        """
+        blocks = self.init_mir_data.get('blocks', {})
+        branch_conds = self._build_init_branch_conditions()
+        return self._get_phi_condition_impl(phi_block, pred_blocks, blocks, branch_conds, prefix='init_')
+
+    def _get_phi_condition_impl(self, phi_block: str, pred_blocks: List[str],
+                                 blocks: Dict, branch_conds: Dict,
+                                 prefix: str = '') -> Optional[Tuple[str, str, str]]:
+        """Implementation of PHI condition finding
+
+        Returns (condition_var, true_value_block, false_value_block) or None
+        The condition_var is prefixed with prefix if provided.
+        """
         if len(pred_blocks) != 2:
             return None
 
@@ -323,6 +737,7 @@ class OpenVAFToJAX:
             cond_info = branch_conds[pred0].get(phi_block)
             if cond_info:
                 cond_var, is_true = cond_info
+                cond_var = f"{prefix}{cond_var}" if prefix else cond_var
                 if is_true:
                     return (cond_var, pred0, pred1)
                 else:
@@ -332,6 +747,7 @@ class OpenVAFToJAX:
             cond_info = branch_conds[pred1].get(phi_block)
             if cond_info:
                 cond_var, is_true = cond_info
+                cond_var = f"{prefix}{cond_var}" if prefix else cond_var
                 if is_true:
                     return (cond_var, pred1, pred0)
                 else:
@@ -345,6 +761,7 @@ class OpenVAFToJAX:
                 cond_info = branch_conds[block_name]
                 if pred0 in cond_info and pred1 in cond_info:
                     cond_var, is_true0 = cond_info[pred0]
+                    cond_var = f"{prefix}{cond_var}" if prefix else cond_var
                     if is_true0:
                         return (cond_var, pred0, pred1)
                     else:
@@ -361,8 +778,37 @@ class OpenVAFToJAX:
                 return prefixed
             if op in self.init_constants:
                 return repr(self.init_constants[op])
+            if op in self.init_bool_constants:
+                return repr(self.init_bool_constants[op])
+            if op in self.init_int_constants:
+                return repr(self.init_int_constants[op])
             # Fallback to prefixed anyway
             return prefixed
+
+        # Handle PHI nodes specially for init function
+        opcode = inst.get('opcode', '').lower()
+        if opcode == 'phi':
+            phi_ops = inst.get('phi_operands', [])
+            phi_block = inst.get('block', '')
+            if phi_ops and len(phi_ops) >= 2:
+                # Get the predecessor blocks from PHI operands
+                pred_blocks = [op['block'] for op in phi_ops]
+                val_by_block = {op['block']: get_operand(op['value']) for op in phi_ops}
+
+                # Try to find the condition that determines the branch (using init version)
+                cond_info = self._get_init_phi_condition(phi_block, pred_blocks)
+                if cond_info:
+                    cond_var, true_block, false_block = cond_info
+                    true_val = val_by_block.get(true_block, '0.0')
+                    false_val = val_by_block.get(false_block, '0.0')
+                    return f"jnp.where({cond_var}, {true_val}, {false_val})"
+                else:
+                    # Fallback: just use first value (may be incorrect)
+                    val0 = get_operand(phi_ops[0]['value'])
+                    return val0
+            elif phi_ops:
+                return get_operand(phi_ops[0]['value'])
+            return '0.0'
 
         return self._translate_instruction_impl(inst, get_operand)
 
@@ -524,6 +970,114 @@ class OpenVAFToJAX:
 
             # Unknown function - return 0
             return '0.0'
+
+        elif opcode == 'ifcast':
+            # Integer to float cast - just pass through the operand
+            # In JAX, integers and floats are often compatible
+            ops = [get_operand(op) for op in operands]
+            if ops:
+                return f"jnp.float64({ops[0]})"
+            return '0.0'
+
+        elif opcode == 'ibcast':
+            # Integer to bool cast - check if non-zero
+            ops = [get_operand(op) for op in operands]
+            if ops:
+                return f"({ops[0]} != 0)"
+            return 'False'
+
+        elif opcode == 'ficast':
+            # Float to integer cast
+            ops = [get_operand(op) for op in operands]
+            if ops:
+                return f"jnp.int32({ops[0]})"
+            return '0'
+
+        elif opcode == 'ige':
+            # Integer greater-than-or-equal
+            ops = [get_operand(op) for op in operands]
+            return f"({ops[0]} >= {ops[1]})"
+
+        elif opcode == 'igt':
+            # Integer greater-than
+            ops = [get_operand(op) for op in operands]
+            return f"({ops[0]} > {ops[1]})"
+
+        elif opcode == 'ile':
+            # Integer less-than-or-equal
+            ops = [get_operand(op) for op in operands]
+            return f"({ops[0]} <= {ops[1]})"
+
+        elif opcode == 'ilt':
+            # Integer less-than
+            ops = [get_operand(op) for op in operands]
+            return f"({ops[0]} < {ops[1]})"
+
+        elif opcode == 'ieq':
+            # Integer equal
+            ops = [get_operand(op) for op in operands]
+            return f"({ops[0]} == {ops[1]})"
+
+        elif opcode == 'ine':
+            # Integer not-equal
+            ops = [get_operand(op) for op in operands]
+            return f"({ops[0]} != {ops[1]})"
+
+        elif opcode == 'fne':
+            # Float not-equal
+            ops = [get_operand(op) for op in operands]
+            return f"({ops[0]} != {ops[1]})"
+
+        elif opcode == 'bnot':
+            # Boolean not
+            ops = [get_operand(op) for op in operands]
+            if ops:
+                return f"(not {ops[0]})"
+            return 'True'
+
+        elif opcode == 'iand':
+            # Integer AND
+            ops = [get_operand(op) for op in operands]
+            return f"({ops[0]} & {ops[1]})"
+
+        elif opcode == 'ior':
+            # Integer OR
+            ops = [get_operand(op) for op in operands]
+            return f"({ops[0]} | {ops[1]})"
+
+        elif opcode == 'ixor':
+            # Integer XOR
+            ops = [get_operand(op) for op in operands]
+            return f"({ops[0]} ^ {ops[1]})"
+
+        elif opcode == 'ineg':
+            # Integer negate
+            ops = [get_operand(op) for op in operands]
+            if ops:
+                return f"(-{ops[0]})"
+            return '0'
+
+        elif opcode == 'iadd':
+            # Integer add
+            ops = [get_operand(op) for op in operands]
+            return f"({ops[0]} + {ops[1]})"
+
+        elif opcode == 'isub':
+            # Integer subtract
+            ops = [get_operand(op) for op in operands]
+            return f"({ops[0]} - {ops[1]})"
+
+        elif opcode == 'imul':
+            # Integer multiply
+            ops = [get_operand(op) for op in operands]
+            return f"({ops[0]} * {ops[1]})"
+
+        elif opcode == 'bicast':
+            # Bool to int cast
+            ops = [get_operand(op) for op in operands]
+            if ops:
+                return f"jnp.int32({ops[0]})"
+            return '0'
 
         elif opcode in ('br', 'jmp', 'exit'):
             # Control flow - handled at block level

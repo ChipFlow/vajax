@@ -141,9 +141,11 @@ impl VaModule {
         Python::with_gil(|py| {
             let mut result = std::collections::HashMap::new();
 
-            // Extract constants (float and boolean values)
+            // Extract constants (float, boolean, integer, and string values)
             let constants = PyDict::new(py);
             let bool_constants = PyDict::new(py);
+            let int_constants = PyDict::new(py);
+            let str_constants = PyDict::new(py);
             for val in self.eval_func.dfg.values.iter() {
                 if let mir::ValueDef::Const(data) = self.eval_func.dfg.value_def(val) {
                     match data {
@@ -154,17 +156,35 @@ impl VaModule {
                         mir::Const::Bool(b) => {
                             bool_constants.set_item(format!("v{}", u32::from(val)), b).unwrap();
                         }
-                        _ => {}
+                        mir::Const::Int(i) => {
+                            int_constants.set_item(format!("v{}", u32::from(val)), i).unwrap();
+                        }
+                        mir::Const::Str(spur) => {
+                            // String constants - store the spur key as a unique identifier
+                            // These are typically model type selectors like "TYPE", "NMOS", etc.
+                            // Spur is an interned string key - we use its raw key value
+                            str_constants.set_item(format!("v{}", u32::from(val)), spur.into_inner()).unwrap();
+                        }
                     }
                 }
             }
             result.insert("constants".to_string(), constants.into());
             result.insert("bool_constants".to_string(), bool_constants.into());
+            result.insert("int_constants".to_string(), int_constants.into());
+            result.insert("str_constants".to_string(), str_constants.into());
 
             // Extract parameters as v16, v17, etc.
+            // Use all func params to include Jacobian-related parameters (derivatives)
             let params = PyList::empty(py);
-            for (i, val_idx) in self.param_value_indices.iter().enumerate() {
-                params.append(format!("v{}", val_idx)).unwrap();
+            let mut all_params: Vec<(u32, mir::Value)> = Vec::new();
+            for val in self.eval_func.dfg.values.iter() {
+                if let mir::ValueDef::Param(p) = self.eval_func.dfg.value_def(val) {
+                    all_params.push((u32::from(p), val));
+                }
+            }
+            all_params.sort_by_key(|(param_idx, _)| *param_idx);
+            for (_, val) in all_params.iter() {
+                params.append(format!("v{}", u32::from(*val))).unwrap();
             }
             result.insert("params".to_string(), params.into());
 
@@ -302,17 +322,30 @@ impl VaModule {
         Python::with_gil(|py| {
             let mut result = std::collections::HashMap::new();
 
-            // Extract constants (fconst values)
+            // Extract constants (float, boolean, and integer values)
             let constants = PyDict::new(py);
+            let bool_constants = PyDict::new(py);
+            let int_constants = PyDict::new(py);
             for val in self.init_func.dfg.values.iter() {
                 if let mir::ValueDef::Const(data) = self.init_func.dfg.value_def(val) {
-                    if let mir::Const::Float(ieee64) = data {
-                        let float_val: f64 = ieee64.into();
-                        constants.set_item(format!("v{}", u32::from(val)), float_val).unwrap();
+                    match data {
+                        mir::Const::Float(ieee64) => {
+                            let float_val: f64 = ieee64.into();
+                            constants.set_item(format!("v{}", u32::from(val)), float_val).unwrap();
+                        }
+                        mir::Const::Bool(b) => {
+                            bool_constants.set_item(format!("v{}", u32::from(val)), b).unwrap();
+                        }
+                        mir::Const::Int(i) => {
+                            int_constants.set_item(format!("v{}", u32::from(val)), i).unwrap();
+                        }
+                        _ => {}
                     }
                 }
             }
             result.insert("constants".to_string(), constants.into());
+            result.insert("bool_constants".to_string(), bool_constants.into());
+            result.insert("int_constants".to_string(), int_constants.into());
 
             // Extract parameters using the correct indices (in param order)
             let params = PyList::empty(py);
@@ -383,6 +416,49 @@ impl VaModule {
                 }
             }
             result.insert("instructions".to_string(), instructions.into());
+
+            // Extract blocks with predecessors/successors (like eval function)
+            let blocks = PyDict::new(py);
+            for block in self.init_func.layout.blocks() {
+                let block_name = format!("block{}", u32::from(block));
+                let block_dict = PyDict::new(py);
+
+                // Get predecessors and successors from CFG
+                let mut predecessors = Vec::new();
+                let mut successors = Vec::new();
+
+                // Check all blocks for references to this block
+                for other_block in self.init_func.layout.blocks() {
+                    if let Some(inst) = self.init_func.layout.block_insts(other_block).last() {
+                        let inst_data = &self.init_func.dfg.insts[inst];
+                        match inst_data {
+                            mir::InstructionData::Branch { then_dst, else_dst, .. } => {
+                                if *then_dst == block || *else_dst == block {
+                                    predecessors.push(format!("block{}", u32::from(other_block)));
+                                }
+                                if other_block == block {
+                                    successors.push(format!("block{}", u32::from(*then_dst)));
+                                    successors.push(format!("block{}", u32::from(*else_dst)));
+                                }
+                            }
+                            mir::InstructionData::Jump { destination } => {
+                                if *destination == block {
+                                    predecessors.push(format!("block{}", u32::from(other_block)));
+                                }
+                                if other_block == block {
+                                    successors.push(format!("block{}", u32::from(*destination)));
+                                }
+                            }
+                            _ => {}
+                        }
+                    }
+                }
+
+                block_dict.set_item("predecessors", predecessors).unwrap();
+                block_dict.set_item("successors", successors).unwrap();
+                blocks.set_item(&block_name, block_dict).unwrap();
+            }
+            result.insert("blocks".to_string(), blocks.into());
 
             // Cache mapping - which init values map to which eval params
             let cache_map = PyList::empty(py);
