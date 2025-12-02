@@ -26,9 +26,12 @@ jobs:
         with:
           ssh-private-key: ${{ secrets.PDK_DEPLOY_KEY }}
 
-      - name: Clone GF130 PDK
+      - name: Clone GF130 PDK (sparse checkout)
         run: |
-          git clone --quiet git@github.com:ChipFlow/pdk-gf130.git /tmp/pdk-gf130
+          # Use sparse checkout to only fetch Verilog-A model directories
+          git clone --quiet --filter=blob:none --sparse git@github.com:ChipFlow/pdk-gf130.git /tmp/pdk-gf130
+          cd /tmp/pdk-gf130
+          git sparse-checkout set --no-cone '*/Models/HSPICE' '*/Models/Spectre'
           echo "PDK_GF130_PATH=/tmp/pdk-gf130" >> $GITHUB_ENV
           # Mask PDK path in all subsequent log output
           echo "::add-mask::/tmp/pdk-gf130"
