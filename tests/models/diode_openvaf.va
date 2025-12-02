@@ -1,0 +1,102 @@
+`include "constants.vams"
+`include "disciplines.vams"
+
+
+`define OPVARS
+
+module diode_va(A,C,dT);
+    // simple diode with self-heating network
+    inout A, C, dT;
+    electrical A,C,CI;
+    thermal dT;
+
+    branch (A,CI) br_a_ci;
+    branch (CI,C) br_ci_c;
+    branch (dT )  br_sht; //self-heating
+
+    (*desc= "Saturation current", units = "A"*) parameter real is = 1e-14 from [0:inf];
+
+    (*desc= "Ohmic res", units = "Ohm" *) parameter real rs = 0.0 from [0:inf];
+
+    (*desc= "Temperature coefficient of ohmic res"*) parameter real zetars = 0.0 from [-10:10];
+
+    (*desc= "Emission coefficient"*) parameter real n = 1.0 from [0:inf];
+
+    (*desc= "Junction capacitance", units = "F"*) parameter real cj0 = 0.0 from [0:inf];
+
+    (*desc= "Junction potential", units = "V"*) parameter real vj = 1.0 from [0.2:2];
+
+    (*desc= "Grading coefficient"*) parameter real m = 0.5 from [0:inf];
+
+    (*desc= "Thermal resistance", units = "K/W"*) parameter real rth = 0 from [0:inf];
+
+    (*desc= "Temperature coefficient of thermal res"*) parameter real zetarth = 0.0 from [-10:10];
+
+    (*desc= "Temperature coefficient of Is"*) parameter real zetais = 3.0 from [-10:10];
+    (*desc= "Acitvation Energy", units = "eV"*) parameter real ea = 1.11 from [-10:10];
+
+    (*desc= "Reference temperature", units = "Kelvin"*) parameter real tnom = 300 from [0:inf];
+
+    (*desc="minr is the value below which the simulator expects elimination of resitance and it will improve simulation efficiency without significantly altering the results.", units ="Ohm"*) parameter real minr = $simparam("minr", 1m) from (0:inf); 
+
+    real vd, vd_smooth, vr, id, qd, ist;
+
+`ifdef OPVARS
+    (*desc = "diode junction capcitance", units="F"*) real cd;
+    (*desc = "diode admittance", units="S"*) real gd;
+`endif
+
+    real vt,x,y,vf,tdev,pterm,rs_t, rth_t, is_t;
+
+    analog begin
+
+        if (rth > minr) begin
+            tdev = $temperature+Temp(br_sht);
+        end else begin
+            tdev = $temperature;
+        end
+        vt = `P_K*tdev/`P_Q;
+
+        is_t = is * exp(ln(tdev/tnom)*zetais/n + ((tdev / tnom) - 1) * ea / (vt * n));
+        rs_t = rs*pow(tdev/tnom,zetars);
+        rth_t = rth*pow(tdev/tnom,zetarth);
+
+        vd = V(br_a_ci);
+        vr = V(br_ci_c);
+        id =  is_t * (limexp(vd / (n * vt)) - 1);
+
+
+        //junction capacitance
+        //smoothing of voltage over cap
+        vf   = vj*(1 - pow(3.0, -1/m));
+        x    = (vf-vd)/vt;
+        y    = sqrt(x*x + 1.92);
+        vd_smooth   = vf-vt*(x + y)/(2);
+        qd   = cj0*vj * (1-pow(1-vd_smooth/vj, 1-m))/(1-m);
+        
+        I(br_a_ci) <+ id + ddt(qd) + $simparam("gmin", 1e-12) * vd + flicker_noise(abs(id), 1.0);
+
+        if (rs > minr) begin
+            I(br_ci_c) <+ vr / rs_t + white_noise(sqrt(4*`P_K*tdev/rs_t));
+        end else begin
+            V(br_ci_c) <+ 0.0;
+        end
+
+        if (rth > minr) begin
+            // dissipated power
+            pterm = id*vd;
+            if (rs > minr) begin
+                pterm = pterm + pow(vr,2.0)/rs_t;
+            end
+
+            Pwr(br_sht)  <+ pterm - Temp(br_sht)/rth_t;
+        end else begin
+            Temp(br_sht) <+ 0;
+        end
+
+`ifdef OPVARS
+        cd   = ddx(qd,V(A));
+        gd   = ddx(id,V(A));
+`endif
+    end
+endmodule

@@ -11,7 +11,15 @@ dependencies = [
     "scipy>=1.11.0",
     "matplotlib>=3.7.0",
     "pytest>=7.4.0",
+    "openvaf-py",
+    "lark>=1.3.1",
 ]
+
+[tool.uv]
+sources = { openvaf-py = { workspace = true } }
+
+[tool.uv.workspace]
+members = ["openvaf-py"]
 
 [project.optional-dependencies]
 gpu = [
