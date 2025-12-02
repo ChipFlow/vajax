@@ -14,8 +14,8 @@ import openvaf_py
 import openvaf_jax
 
 
-# Path to OpenVAF integration tests
-INTEGRATION_PATH = Path("/Users/roberttaylor/Code/ChipFlow/reference/OpenVAF/integration_tests")
+# Path to OpenVAF integration tests (relative to repo root)
+INTEGRATION_PATH = Path(__file__).parent.parent.parent / "OpenVAF" / "integration_tests"
 
 # All integration test models with their paths
 INTEGRATION_MODELS = [
