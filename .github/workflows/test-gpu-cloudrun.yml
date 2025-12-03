@@ -100,6 +100,10 @@ jobs:
 
       - name: Create or update Cloud Run Job
         run: |
+          # Use ^;;^ delimiter since JAX_PLATFORMS contains commas
+          # JAX_PLATFORMS=cuda,cpu tells JAX to prefer CUDA, fallback to CPU
+          ENV_VARS="^;;^JAX_ENABLE_X64=1;;RUN_GPU_BENCHMARKS=1;;JAX_PLATFORMS=cuda,cpu"
+
           # Check if job exists
           if gcloud run jobs describe ${{ env.JOB_NAME }} --region=${{ env.GCP_REGION }} 2>/dev/null; then
             echo "Updating existing job..."
@@ -114,7 +118,7 @@ jobs:
               --memory=16Gi \
               --max-retries=0 \
               --task-timeout=30m \
-              --set-env-vars="JAX_ENABLE_X64=1,RUN_GPU_BENCHMARKS=1" \
+              --set-env-vars="${ENV_VARS}" \
               --args="${{ env.TEST_ARGS }}"
           else
             echo "Creating new job..."
@@ -129,7 +133,7 @@ jobs:
               --memory=16Gi \
               --max-retries=0 \
               --task-timeout=30m \
-              --set-env-vars="JAX_ENABLE_X64=1,RUN_GPU_BENCHMARKS=1" \
+              --set-env-vars="${ENV_VARS}" \
               --args="${{ env.TEST_ARGS }}"
           fi
 
