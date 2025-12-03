@@ -69,8 +69,15 @@ jobs:
           file: Dockerfile.gpu-tests
           push: true
           tags: ${{ env.GCP_REGION }}-docker.pkg.dev/${{ env.GCP_PROJECT }}/${{ env.AR_REPOSITORY }}/${{ env.IMAGE_NAME }}:${{ github.sha }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+          # Disable provenance attestations (not needed, reduces push size)
+          provenance: false
+          # Use both GHA cache (for build speed) and registry cache (for push layer reuse)
+          cache-from: |
+            type=gha
+            type=registry,ref=${{ env.GCP_REGION }}-docker.pkg.dev/${{ env.GCP_PROJECT }}/${{ env.AR_REPOSITORY }}/${{ env.IMAGE_NAME }}:buildcache
+          cache-to: |
+            type=gha,mode=max
+            type=registry,ref=${{ env.GCP_REGION }}-docker.pkg.dev/${{ env.GCP_PROJECT }}/${{ env.AR_REPOSITORY }}/${{ env.IMAGE_NAME }}:buildcache,mode=max
 
       - name: Set image tag
         run: |
