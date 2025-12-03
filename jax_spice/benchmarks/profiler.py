@@ -109,37 +109,42 @@ class JAXProfiler:
         """Get list of available JAX backends"""
         backends = []
 
-        # Get all devices and categorize them
-        all_devices = jax.devices()
-        has_cpu = False
-        has_gpu = False
+        # Check for CPU backend explicitly (may not be in default devices)
+        try:
+            cpu_devices = jax.devices('cpu')
+            if cpu_devices:
+                backends.append('cpu')
+        except RuntimeError:
+            pass
 
-        for device in all_devices:
+        # Check for GPU/CUDA backend in default devices
+        for device in jax.devices():
             platform = device.platform.lower()
-            if platform == 'cpu':
-                has_cpu = True
-            elif platform in ('gpu', 'cuda'):
-                has_gpu = True
-
-        if has_cpu:
-            backends.append('cpu')
-        if has_gpu:
-            backends.append('gpu')
+            if platform in ('gpu', 'cuda'):
+                backends.append('gpu')
+                break
 
         return backends
 
     def _get_device_for_backend(self, backend: str):
         """Get a device for the specified backend"""
-        all_devices = jax.devices()
+        if backend == 'cpu':
+            try:
+                cpu_devices = jax.devices('cpu')
+                if cpu_devices:
+                    return cpu_devices[0]
+            except RuntimeError:
+                pass
+            raise RuntimeError("No CPU device found")
 
-        for device in all_devices:
-            platform = device.platform.lower()
-            if backend == 'cpu' and platform == 'cpu':
-                return device
-            elif backend == 'gpu' and platform in ('gpu', 'cuda'):
-                return device
+        elif backend == 'gpu':
+            for device in jax.devices():
+                platform = device.platform.lower()
+                if platform in ('gpu', 'cuda'):
+                    return device
+            raise RuntimeError("No GPU device found")
 
-        raise RuntimeError(f"No device found for backend: {backend}")
+        raise RuntimeError(f"Unknown backend: {backend}")
 
     def get_device_info(self) -> Dict[str, Any]:
         """Get information about available devices"""
@@ -148,24 +153,25 @@ class JAXProfiler:
             'devices': {}
         }
 
-        # Get all devices and group by backend
-        all_devices = jax.devices()
-        cpu_devices = []
+        # Get CPU devices explicitly
+        try:
+            cpu_devs = jax.devices('cpu')
+            info['devices']['cpu'] = [
+                {'id': d.id, 'platform': d.platform, 'device_kind': d.device_kind}
+                for d in cpu_devs
+            ]
+        except RuntimeError:
+            pass
+
+        # Get GPU devices from default devices
         gpu_devices = []
-
-        for d in all_devices:
-            device_info = {
-                'id': d.id,
-                'platform': d.platform,
-                'device_kind': d.device_kind,
-            }
-            if d.platform.lower() == 'cpu':
-                cpu_devices.append(device_info)
-            elif d.platform.lower() in ('gpu', 'cuda'):
-                gpu_devices.append(device_info)
-
-        if cpu_devices:
-            info['devices']['cpu'] = cpu_devices
+        for d in jax.devices():
+            if d.platform.lower() in ('gpu', 'cuda'):
+                gpu_devices.append({
+                    'id': d.id,
+                    'platform': d.platform,
+                    'device_kind': d.device_kind,
+                })
         if gpu_devices:
             info['devices']['gpu'] = gpu_devices
 
@@ -336,20 +342,26 @@ def measure_transfer_overhead(
         'bytes': [],
     }
 
-    # Find GPU and CPU devices from all available devices
+    # Find GPU device from default devices
     gpu_device = None
-    cpu_device = None
-
     for device in jax.devices():
         platform = device.platform.lower()
-        if platform == 'cpu' and cpu_device is None:
-            cpu_device = device
-        elif platform in ('gpu', 'cuda') and gpu_device is None:
+        if platform in ('gpu', 'cuda'):
             gpu_device = device
+            break
 
     if gpu_device is None:
         print("GPU not available for transfer measurement")
         return results
+
+    # Get CPU device explicitly
+    cpu_device = None
+    try:
+        cpu_devices = jax.devices('cpu')
+        if cpu_devices:
+            cpu_device = cpu_devices[0]
+    except RuntimeError:
+        pass
 
     if cpu_device is None:
         print("CPU device not available")
