@@ -27,7 +27,7 @@ on:
 env:
   CARGO_TERM_COLOR: always
   GCP_PROJECT: jax-spice-cuda-test
-  GCP_ZONE: us-central1-a
+  GCP_ZONE: us-central1-f
   GCP_VM_NAME: jax-spice-cuda
 
 jobs:

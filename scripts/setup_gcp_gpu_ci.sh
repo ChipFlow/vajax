@@ -18,7 +18,7 @@ set -euo pipefail
 
 # Configuration
 PROJECT_ID="${GCP_PROJECT:-jax-spice-cuda-test}"
-ZONE="${GCP_ZONE:-us-central1-a}"
+ZONE="${GCP_ZONE:-us-central1-f}"
 VM_NAME="${GCP_VM_NAME:-jax-spice-cuda}"
 SA_NAME="github-gpu-ci"
 SA_EMAIL="${SA_NAME}@${PROJECT_ID}.iam.gserviceaccount.com"
@@ -30,7 +30,7 @@ MACHINE_TYPE="n1-standard-4"
 GPU_TYPE="nvidia-tesla-t4"
 GPU_COUNT=1
 BOOT_DISK_SIZE="100GB"
-IMAGE_FAMILY="pytorch-latest-gpu"
+IMAGE_FAMILY="common-cu128-ubuntu-2204-nvidia-570"
 IMAGE_PROJECT="deeplearning-platform-release"
 
 # Colors for output
