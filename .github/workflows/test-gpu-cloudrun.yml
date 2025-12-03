@@ -17,15 +17,16 @@ env:
   GCP_PROJECT: jax-spice-cuda-test
   GCP_REGION: us-central1
   JOB_NAME: jax-spice-gpu-tests
-  REGISTRY: ghcr.io
-  IMAGE_NAME: chipflow/jax-spice-gpu-tests
+  # Cloud Run only supports gcr.io, docker.pkg.dev, or docker.io
+  # Using Artifact Registry (docker.pkg.dev) for Cloud Run compatibility
+  AR_REPOSITORY: gpu-tests
+  IMAGE_NAME: jax-spice-gpu-tests
 
 jobs:
   gpu-tests:
     runs-on: ubuntu-latest
     permissions:
       contents: read
-      packages: write
       id-token: write
 
     steps:
@@ -40,12 +41,23 @@ jobs:
       - name: Set up Cloud SDK
         uses: google-github-actions/setup-gcloud@v2
 
-      - name: Log in to GitHub Container Registry
-        uses: docker/login-action@v3
-        with:
-          registry: ${{ env.REGISTRY }}
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Create Artifact Registry repository
+        run: |
+          # Create repository if it doesn't exist (idempotent)
+          if ! gcloud artifacts repositories describe ${{ env.AR_REPOSITORY }} \
+               --location=${{ env.GCP_REGION }} 2>/dev/null; then
+            echo "Creating Artifact Registry repository..."
+            gcloud artifacts repositories create ${{ env.AR_REPOSITORY }} \
+              --repository-format=docker \
+              --location=${{ env.GCP_REGION }} \
+              --description="JAX-SPICE GPU test images"
+          else
+            echo "Artifact Registry repository already exists"
+          fi
+
+      - name: Configure Docker for Artifact Registry
+        run: |
+          gcloud auth configure-docker ${{ env.GCP_REGION }}-docker.pkg.dev --quiet
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
@@ -56,13 +68,13 @@ jobs:
           context: .
           file: Dockerfile.gpu-tests
           push: true
-          tags: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ github.sha }}
+          tags: ${{ env.GCP_REGION }}-docker.pkg.dev/${{ env.GCP_PROJECT }}/${{ env.AR_REPOSITORY }}/${{ env.IMAGE_NAME }}:${{ github.sha }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
       - name: Set image tag
         run: |
-          echo "IMAGE_TAG=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ github.sha }}" >> "$GITHUB_ENV"
+          echo "IMAGE_TAG=${{ env.GCP_REGION }}-docker.pkg.dev/${{ env.GCP_PROJECT }}/${{ env.AR_REPOSITORY }}/${{ env.IMAGE_NAME }}:${{ github.sha }}" >> "$GITHUB_ENV"
 
       - name: Determine test command
         run: |
