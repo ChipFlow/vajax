@@ -133,12 +133,17 @@ def create_rc_ladder(num_stages: int, R: float = 1000.0, C: float = 1e-6, V_s: f
     return system
 
 
-def benchmark_single_simulation(num_stages: int, num_timesteps: int) -> Tuple[float, float]:
+def benchmark_single_simulation(
+    num_stages: int,
+    num_timesteps: int,
+    use_jit: bool = True
+) -> Tuple[float, float]:
     """Benchmark a single RC ladder simulation
 
     Args:
         num_stages: Number of RC stages in ladder
         num_timesteps: Number of simulation timesteps
+        use_jit: Whether to use JIT-compiled version
 
     Returns:
         Tuple of (simulation_time_ms, setup_time_ms)
@@ -162,7 +167,8 @@ def benchmark_single_simulation(num_stages: int, num_timesteps: int) -> Tuple[fl
     sim_start = time.perf_counter()
     times, solutions, info = transient_analysis(
         system, t_stop=t_stop, t_step=t_step,
-        initial_conditions=initial_conditions
+        initial_conditions=initial_conditions,
+        use_jit=use_jit
     )
     # Force computation to complete
     solutions.block_until_ready()
@@ -215,6 +221,34 @@ def run_benchmarks():
         sim_time, _ = benchmark_single_simulation(10, num_timesteps)
         per_step = sim_time / num_timesteps
         print(f"{num_timesteps:>10} | {sim_time:>10.2f} | {per_step:>10.4f}")
+
+    print()
+
+    # Compare JIT vs Python loop
+    print("-" * 70)
+    print("JIT vs Python Loop Comparison (10-stage, 100 timesteps)")
+    print("-" * 70)
+
+    # Warm up both versions
+    _ = benchmark_single_simulation(10, 50, use_jit=True)
+    _ = benchmark_single_simulation(10, 50, use_jit=False)
+
+    # Run multiple iterations for stable measurements
+    jit_times = []
+    python_times = []
+    for _ in range(5):
+        jit_time, _ = benchmark_single_simulation(10, 100, use_jit=True)
+        jit_times.append(jit_time)
+        python_time, _ = benchmark_single_simulation(10, 100, use_jit=False)
+        python_times.append(python_time)
+
+    jit_avg = sum(jit_times) / len(jit_times)
+    python_avg = sum(python_times) / len(python_times)
+    speedup = python_avg / jit_avg if jit_avg > 0 else 0
+
+    print(f"JIT version:    {jit_avg:>10.2f} ms (avg of 5 runs)")
+    print(f"Python version: {python_avg:>10.2f} ms (avg of 5 runs)")
+    print(f"Speedup:        {speedup:>10.2f}x")
 
     print()
     print("=" * 70)
