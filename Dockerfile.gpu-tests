@@ -25,13 +25,10 @@ RUN python -m pip install --upgrade pip
 
 # Install Python dependencies BEFORE copying source code
 # This layer is cached unless requirements change
-# Note: In JAX 0.8+, CUDA support requires explicit plugin packages
-# jax-cuda12-plugin provides the NVIDIA GPU backend
+# Use jax[cuda12] which bundles CUDA/cuDNN dependencies via pip wheels
+# This is the JAX-recommended approach for easier CUDA support
 RUN pip install --no-cache-dir \
-    jax \
-    jaxlib \
-    jax-cuda12-plugin \
-    jax-cuda12-pjrt \
+    "jax[cuda12]" \
     numpy \
     scipy \
     lark \
@@ -39,7 +36,8 @@ RUN pip install --no-cache-dir \
     pytest
 
 # Verify installed packages
-RUN pip list | grep -i jax
+RUN pip list | grep -i jax && \
+    python -c "import jax; print('JAX devices:', jax.devices())" || echo "JAX device check failed (expected at build time)"
 
 # Create working directory
 WORKDIR /app
@@ -60,6 +58,11 @@ ENV JAX_ENABLE_X64=1
 ENV JAX_PLATFORMS=cuda,cpu
 ENV NVIDIA_VISIBLE_DEVICES=all
 ENV NVIDIA_DRIVER_CAPABILITIES=compute,utility
+# Cloud Run provides NVIDIA driver libs at /usr/local/nvidia/lib64
+# Ensure this path is in LD_LIBRARY_PATH for JAX/XLA to find the driver
+ENV LD_LIBRARY_PATH=/usr/local/nvidia/lib64:/usr/local/cuda/lib64:${LD_LIBRARY_PATH}
+# Enable verbose CUDA logging for debugging
+ENV TF_CPP_MIN_LOG_LEVEL=0
 
 # Entrypoint runs tests
 ENTRYPOINT ["python", "-m", "pytest"]
