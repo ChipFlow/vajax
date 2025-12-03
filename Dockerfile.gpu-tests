@@ -3,12 +3,12 @@
 
 FROM nvidia/cuda:12.2.0-runtime-ubuntu22.04
 
-# Install Python 3.11 and dependencies
+# Install Python 3.11, uv, and dependencies
 RUN apt-get update && apt-get install -y \
     python3.11 \
     python3.11-venv \
     python3.11-dev \
-    python3-pip \
+    curl \
     git \
     && rm -rf /var/lib/apt/lists/*
 
@@ -16,16 +16,27 @@ RUN apt-get update && apt-get install -y \
 RUN update-alternatives --install /usr/bin/python3 python3 /usr/bin/python3.11 1 \
     && update-alternatives --install /usr/bin/python python /usr/bin/python3.11 1
 
+# Install uv
+RUN curl -LsSf https://astral.sh/uv/install.sh | sh
+ENV PATH="/root/.local/bin:$PATH"
+
 # Create working directory
 WORKDIR /app
 
-# Copy project files
-COPY . /app/
+# Copy project files (excluding openvaf-py submodule for now)
+COPY pyproject.toml uv.lock /app/
+COPY jax_spice /app/jax_spice/
+COPY tests /app/tests/
 
-# Install dependencies
+# Install dependencies without openvaf-py (for GPU tests only)
+# We use pip directly since openvaf-py is optional for basic GPU tests
 RUN python -m pip install --upgrade pip \
-    && pip install -e ".[test]" \
-    && pip install pytest "jax[cuda12]"
+    && pip install jax numpy scipy lark matplotlib pytest \
+    && pip install "jax[cuda12]"
+
+# Install jax-spice in development mode without dependencies
+# (dependencies already installed above)
+RUN pip install -e . --no-deps
 
 # Set environment variables
 ENV JAX_ENABLE_X64=1
