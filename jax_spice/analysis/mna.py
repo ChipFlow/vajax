@@ -17,6 +17,7 @@ Where J is the Jacobian (partial derivatives of residual w.r.t. voltages).
 
 from dataclasses import dataclass, field
 from typing import Dict, List, Tuple, Optional, Callable, Any
+import jax
 import jax.numpy as jnp
 from jax import Array
 
@@ -131,10 +132,13 @@ class MNASystem:
                 residual: Shape [num_nodes-1]
         """
         n = self.num_nodes - 1  # Exclude ground
-        
+
+        # Use float32 on Metal (no float64 support), float64 elsewhere
+        dtype = jnp.float32 if jax.default_backend() == 'METAL' else jnp.float64
+
         # Initialize Jacobian and residual
-        jacobian = jnp.zeros((n, n))
-        residual = jnp.zeros(n)
+        jacobian = jnp.zeros((n, n), dtype=dtype)
+        residual = jnp.zeros(n, dtype=dtype)
         
         # Evaluate each device and stamp into matrix
         for device in self.devices:

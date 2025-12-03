@@ -14,6 +14,7 @@ Backward Euler formulation:
 """
 
 from typing import Dict, List, Optional, Tuple, Callable
+import jax
 import jax.numpy as jnp
 from jax import Array
 from jax.scipy.linalg import solve
@@ -57,11 +58,14 @@ def transient_analysis(
             info: Dict with simulation statistics
     """
     n = system.num_nodes
-    
+
+    # Use float32 on Metal (no float64 support), float64 elsewhere
+    dtype = jnp.float32 if jax.default_backend() == 'METAL' else jnp.float64
+
     # Find DC operating point for initial condition
     if initial_conditions is not None:
         # Build initial guess from ICs
-        V0 = jnp.zeros(n, dtype=jnp.float64)
+        V0 = jnp.zeros(n, dtype=dtype)
         for name, voltage in initial_conditions.items():
             idx = system.node_names.get(name)
             if idx is not None and idx > 0:
@@ -190,9 +194,12 @@ def _build_transient_system(
     """
     n = system.num_nodes - 1
 
+    # Use float32 on Metal (no float64 support), float64 elsewhere
+    dtype = jnp.float32 if jax.default_backend() == 'METAL' else jnp.float64
+
     # Initialize
-    jacobian = jnp.zeros((n, n))
-    residual = jnp.zeros(n)
+    jacobian = jnp.zeros((n, n), dtype=dtype)
+    residual = jnp.zeros(n, dtype=dtype)
 
     dt = context.dt
     c0 = context.c0  # 1/dt for backward Euler

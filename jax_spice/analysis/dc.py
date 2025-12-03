@@ -5,6 +5,7 @@ where all capacitor currents are zero and the circuit is in equilibrium.
 """
 
 from typing import Dict, Optional, Tuple
+import jax
 import jax.numpy as jnp
 from jax import Array
 from jax.scipy.linalg import solve
@@ -45,12 +46,15 @@ def dc_operating_point(
             info: Dict with convergence information
     """
     n = system.num_nodes
-    
+
+    # Use float32 on Metal (no float64 support), float64 elsewhere
+    dtype = jnp.float32 if jax.default_backend() == 'METAL' else jnp.float64
+
     # Initialize solution
     if initial_guess is not None:
-        V = jnp.array(initial_guess, dtype=jnp.float64)
+        V = jnp.array(initial_guess, dtype=dtype)
     else:
-        V = jnp.zeros(n, dtype=jnp.float64)
+        V = jnp.zeros(n, dtype=dtype)
     
     # Create DC context
     context = AnalysisContext(
