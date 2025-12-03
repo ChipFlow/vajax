@@ -93,7 +93,29 @@ class TestTransferOverhead:
         print("CPU <-> GPU Transfer Overhead")
         print("="*60)
 
+        # Debug: Print available devices before measurement
+        print(f"\nDEBUG: All JAX devices: {jax.devices()}")
+        print(f"DEBUG: Default backend: {jax.default_backend()}")
+        try:
+            print(f"DEBUG: GPU devices: {jax.devices('gpu')}")
+        except RuntimeError as e:
+            print(f"DEBUG: GPU devices error: {e}")
+        try:
+            print(f"DEBUG: CUDA devices: {jax.devices('cuda')}")
+        except RuntimeError as e:
+            print(f"DEBUG: CUDA devices error: {e}")
+        try:
+            print(f"DEBUG: CPU devices: {jax.devices('cpu')}")
+        except RuntimeError as e:
+            print(f"DEBUG: CPU devices error: {e}")
+
         results = measure_transfer_overhead(sizes)
+
+        # Debug: Print full results dict
+        print(f"\nDEBUG: results keys: {results.keys()}")
+        print(f"DEBUG: results['cpu_to_gpu'] length: {len(results.get('cpu_to_gpu', []))}")
+        print(f"DEBUG: results['gpu_to_cpu'] length: {len(results.get('gpu_to_cpu', []))}")
+        print(f"DEBUG: results['bytes'] length: {len(results.get('bytes', []))}")
 
         # Skip if CPU or GPU device not available for transfer measurement
         if not results['cpu_to_gpu']:
@@ -305,7 +327,7 @@ class TestDeviceInfo:
         try:
             result = subprocess.run(['pip', 'list'], capture_output=True, text=True, timeout=10)
             for line in result.stdout.split('\n'):
-                if 'jax' in line.lower():
+                if 'jax' in line.lower() or 'cuda' in line.lower() or 'nvidia' in line.lower():
                     print(f"  {line}")
         except Exception as e:
             print(f"  pip list error: {e}")
@@ -316,6 +338,8 @@ class TestDeviceInfo:
         print(f"  CUDA_VISIBLE_DEVICES: {os.environ.get('CUDA_VISIBLE_DEVICES', 'not set')}")
         print(f"  NVIDIA_VISIBLE_DEVICES: {os.environ.get('NVIDIA_VISIBLE_DEVICES', 'not set')}")
         print(f"  LD_LIBRARY_PATH: {os.environ.get('LD_LIBRARY_PATH', 'not set')}")
+        print(f"  XLA_FLAGS: {os.environ.get('XLA_FLAGS', 'not set')}")
+        print(f"  TF_CPP_MIN_LOG_LEVEL: {os.environ.get('TF_CPP_MIN_LOG_LEVEL', 'not set')}")
 
         # Check nvidia-smi
         try:
@@ -332,20 +356,39 @@ class TestDeviceInfo:
         except Exception as e:
             print(f"  NVIDIA driver: error - {e}")
 
-        # Check for CUDA libraries
-        print("\nCUDA Libraries:")
-        cuda_lib_paths = ['/usr/local/cuda/lib64', '/usr/lib/x86_64-linux-gnu']
-        for path in cuda_lib_paths:
+        # Check for Cloud Run's NVIDIA driver libs
+        print("\nNVIDIA Driver Libraries (Cloud Run provides at /usr/local/nvidia/lib64):")
+        nvidia_lib_paths = ['/usr/local/nvidia/lib64', '/usr/local/cuda/lib64', '/usr/lib/x86_64-linux-gnu']
+        for path in nvidia_lib_paths:
             try:
-                result = subprocess.run(['ls', '-la', path], capture_output=True, text=True, timeout=5)
+                result = subprocess.run(['ls', path], capture_output=True, text=True, timeout=5)
                 if result.returncode == 0:
-                    libs = [l for l in result.stdout.split('\n') if 'cuda' in l.lower() or 'nv' in l.lower()][:5]
+                    libs = [l for l in result.stdout.split('\n') if l and ('cuda' in l.lower() or 'nv' in l.lower() or 'libcu' in l.lower())][:8]
                     if libs:
-                        print(f"  {path}:")
-                        for lib in libs:
-                            print(f"    {lib.split()[-1] if lib else ''}")
-            except Exception:
-                pass
+                        print(f"  {path}: {len(libs)} libs found")
+                        for lib in libs[:5]:
+                            print(f"    {lib}")
+                        if len(libs) > 5:
+                            print(f"    ... and {len(libs)-5} more")
+                    else:
+                        print(f"  {path}: exists but no CUDA/NV libs")
+                else:
+                    print(f"  {path}: not found or empty")
+            except Exception as e:
+                print(f"  {path}: error - {e}")
+
+        # Check if we can load CUDA libraries
+        print("\nCUDA Library Loading Test:")
+        try:
+            import ctypes
+            for lib_name in ['libcuda.so.1', 'libcudart.so.12', 'libnvidia-ml.so.1']:
+                try:
+                    ctypes.CDLL(lib_name)
+                    print(f"  {lib_name}: loaded OK")
+                except OSError as e:
+                    print(f"  {lib_name}: FAILED - {e}")
+        except Exception as e:
+            print(f"  ctypes error: {e}")
 
         # Try to explicitly get CUDA backend info
         print("\nJAX Backend Discovery:")
@@ -368,6 +411,19 @@ class TestDeviceInfo:
             print(f"  jax.devices('cuda'): {cuda_devices}")
         except Exception as e:
             print(f"  jax.devices('cuda'): {e}")
+
+        # Check if JAX CUDA plugin is importable
+        print("\nJAX CUDA Plugin Check:")
+        try:
+            import jax_cuda12_plugin
+            print(f"  jax_cuda12_plugin: import OK, version={getattr(jax_cuda12_plugin, '__version__', 'unknown')}")
+        except ImportError as e:
+            print(f"  jax_cuda12_plugin: NOT INSTALLED - {e}")
+        try:
+            import jax_cuda12_pjrt
+            print(f"  jax_cuda12_pjrt: import OK")
+        except ImportError as e:
+            print(f"  jax_cuda12_pjrt: NOT INSTALLED - {e}")
 
         print(f"\nDefault backend: {info['default_backend']}")
         print(f"Available backends: {profiler.get_available_backends()}")
