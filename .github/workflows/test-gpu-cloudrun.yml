@@ -12,11 +12,6 @@ on:
           - quick
           - full
           - profile
-      no_cache:
-        description: 'Force rebuild without cache'
-        required: false
-        default: false
-        type: boolean
 
 env:
   GCP_PROJECT: jax-spice-cuda-test
@@ -76,8 +71,7 @@ jobs:
           tags: ${{ env.GCP_REGION }}-docker.pkg.dev/${{ env.GCP_PROJECT }}/${{ env.AR_REPOSITORY }}/${{ env.IMAGE_NAME }}:${{ github.sha }}
           # Disable provenance attestations (not needed, reduces push size)
           provenance: false
-          # Use cache unless no_cache input is true
-          no-cache: ${{ github.event.inputs.no_cache == 'true' }}
+          # Use both GHA cache (for build speed) and registry cache (for push layer reuse)
           cache-from: |
             type=gha
             type=registry,ref=${{ env.GCP_REGION }}-docker.pkg.dev/${{ env.GCP_PROJECT }}/${{ env.AR_REPOSITORY }}/${{ env.IMAGE_NAME }}:buildcache
