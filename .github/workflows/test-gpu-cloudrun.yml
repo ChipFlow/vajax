@@ -87,12 +87,13 @@ jobs:
         run: |
           TEST_TYPE="${{ github.event.inputs.test_type || 'quick' }}"
 
+          # Cloud Run --args takes comma-separated arguments
           if [ "$TEST_TYPE" = "quick" ]; then
-            TEST_ARGS="tests/test_vectorized_mna.py -v --tb=short"
+            TEST_ARGS="tests/test_vectorized_mna.py,-v,--tb=short"
           elif [ "$TEST_TYPE" = "full" ]; then
-            TEST_ARGS="tests/ -v --tb=short -x"
+            TEST_ARGS="tests/,-v,--tb=short,-x"
           elif [ "$TEST_TYPE" = "profile" ]; then
-            TEST_ARGS="tests/test_gpu_benchmarks.py -v -s --tb=short"
+            TEST_ARGS="tests/test_gpu_benchmarks.py,-v,-s,--tb=short"
           fi
 
           echo "TEST_ARGS=$TEST_ARGS" >> "$GITHUB_ENV"
