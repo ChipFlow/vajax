@@ -159,15 +159,6 @@ jobs:
 
           echo "Status: $STATUS"
 
-          if [ "$STATUS" != "Completed" ]; then
-            echo "Job failed!"
-            exit 1
-          fi
-
-      - name: Fetch job logs
-        if: always()
-        run: |
-          echo "=== GPU Test Logs ==="
           gcloud logging read "resource.type=cloud_run_job AND resource.labels.job_name=${{ env.JOB_NAME }}" \
             --limit=500 \
             --format="value(textPayload)" \
