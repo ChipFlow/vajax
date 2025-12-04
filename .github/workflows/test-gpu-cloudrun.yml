@@ -96,9 +96,7 @@ jobs:
 
           # Build the full command that clones repo, installs, and runs tests
           # Note: Using single quotes for the inner command to preserve $GITHUB_SHA
-          # Add diagnostic step to debug CUDA library loading and conftest.py
-          DIAG_CMD="echo '=== Diagnostics ===' && echo 'JAX_PLATFORMS='\\$JAX_PLATFORMS && echo 'LD_LIBRARY_PATH='\\$LD_LIBRARY_PATH && nvidia-smi 2>&1 || echo 'nvidia-smi not available' && python -c 'import sys; print(f\"Python: {sys.executable}\"); print(f\"Platform: {sys.platform}\")' && ls -la /app/src/tests/conftest.py 2>&1 && echo '=== End Diagnostics ==='"
-          RUN_CMD="git clone --depth 1 https://github.com/${{ github.repository }}.git /app/src && cd /app/src && git checkout ${{ github.sha }} && pip install -e . --no-deps && ${DIAG_CMD} && python -m pytest ${PYTEST_ARGS} 2>&1"
+          RUN_CMD="git clone --depth 1 https://github.com/${{ github.repository }}.git /app/src && cd /app/src && git checkout ${{ github.sha }} && pip install -e . --no-deps && echo DIAG_START && env | grep -E 'JAX|LD_LIBRARY' && nvidia-smi || true && ls -la tests/conftest.py && echo DIAG_END && python -m pytest ${PYTEST_ARGS} 2>&1"
           echo "RUN_CMD=$RUN_CMD" >> "$GITHUB_ENV"
 
       - name: Create or update Cloud Run Job
