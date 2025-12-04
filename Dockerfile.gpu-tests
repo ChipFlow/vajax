@@ -4,22 +4,13 @@
 # This image contains only pip dependencies - source code is mounted at runtime.
 # This allows the image to be cached and reused across commits.
 
-FROM nvidia/cuda:12.2.0-runtime-ubuntu22.04
+FROM nvidia/cuda:12.5.1-devel-ubuntu22.04
+COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /bin/
 
-# Install Python 3.11 and system dependencies
-RUN apt-get update && apt-get install -y \
-    python3.11 \
-    python3.11-venv \
-    python3.11-dev \
-    git \
-    && rm -rf /var/lib/apt/lists/*
+WORKDIR /app
 
-# Set Python 3.11 as default
-RUN update-alternatives --install /usr/bin/python3 python3 /usr/bin/python3.11 1 \
-    && update-alternatives --install /usr/bin/python python /usr/bin/python3.11 1
-
-# install uv
-RUN curl -LsSf https://astral.sh/uv/install.sh | sh
+RUN --mount=type=cache,target=/root/.cache/uv \
+    uv python install 3.12
 
 RUN --mount=type=cache,target=/root/.cache/uv \
     --mount=type=bind,source=uv.lock,target=uv.lock \
@@ -28,71 +19,13 @@ RUN --mount=type=cache,target=/root/.cache/uv \
 
 # Set environment variables
 ENV JAX_ENABLE_X64=1
-# Enable both CUDA and CPU platforms so we can measure CPU<->GPU transfers
 ENV JAX_PLATFORMS=cuda,cpu
-ENV NVIDIA_VISIBLE_DEVICES=all
-ENV NVIDIA_DRIVER_CAPABILITIES=compute,utility
-# Enable verbose CUDA logging for debugging
-ENV TF_CPP_MIN_LOG_LEVEL=0
-
-# Find nvidia pip package library directories and build LD_LIBRARY_PATH
-# The nvidia-*-cu12 pip packages install libraries in two possible locations:
-# 1. /usr/local/lib/python3.11/dist-packages/nvidia/*/lib/ (main location)
-# 2. /usr/local/lib/python3.11/dist-packages/nvidia_*_cu12.libs/ (auditwheel bundled deps)
-RUN echo "=== Discovering NVIDIA library paths ===" && \
-    # Find all nvidia lib directories
-    find /usr/local/lib/python3.11/dist-packages -type d -name "lib" -path "*/nvidia/*" 2>/dev/null | sort && \
-    find /usr/local/lib/python3.11/dist-packages -type d -name "*.libs" 2>/dev/null | sort && \
-    # List library contents
-    echo "=== cuSPARSE libs ===" && \
-    find /usr/local/lib/python3.11/dist-packages -name "*cusparse*" -o -name "*libcusparse*" 2>/dev/null | head -20 && \
-    echo "=== cuBLAS libs ===" && \
-    find /usr/local/lib/python3.11/dist-packages -name "*cublas*" -o -name "*libcublas*" 2>/dev/null | head -10 && \
-    echo "=== cuDNN libs ===" && \
-    find /usr/local/lib/python3.11/dist-packages -name "*cudnn*" -o -name "*libcudnn*" 2>/dev/null | head -10
-
-# Build LD_LIBRARY_PATH dynamically at build time and write to a file
-# This includes all nvidia lib directories from pip packages
-RUN NVIDIA_LIBS=$(find /usr/local/lib/python3.11/dist-packages -type d -name "lib" -path "*/nvidia/*" 2>/dev/null | tr '\n' ':') && \
-    NVIDIA_BUNDLED=$(find /usr/local/lib/python3.11/dist-packages -type d -name "*.libs" 2>/dev/null | tr '\n' ':') && \
-    echo "NVIDIA_LIBS=$NVIDIA_LIBS" && \
-    echo "NVIDIA_BUNDLED=$NVIDIA_BUNDLED" && \
-    # Write paths to ldconfig
-    find /usr/local/lib/python3.11/dist-packages -type d -name "lib" -path "*/nvidia/*" 2>/dev/null > /etc/ld.so.conf.d/nvidia-pip.conf && \
-    find /usr/local/lib/python3.11/dist-packages -type d -name "*.libs" 2>/dev/null >> /etc/ld.so.conf.d/nvidia-pip.conf && \
-    ldconfig 2>/dev/null || true
-
-# Static LD_LIBRARY_PATH with both nvidia/*/lib and *.libs directories
-# Cloud Run NVIDIA driver libs are at /usr/local/nvidia/lib64
-# Pip nvidia packages use /usr/local/lib/python3.11/dist-packages/nvidia/*/lib/
-ENV LD_LIBRARY_PATH=/usr/local/nvidia/lib64:/usr/local/cuda/lib64:/usr/local/lib/python3.11/dist-packages/nvidia/cublas/lib:/usr/local/lib/python3.11/dist-packages/nvidia/cuda_cupti/lib:/usr/local/lib/python3.11/dist-packages/nvidia/cuda_nvrtc/lib:/usr/local/lib/python3.11/dist-packages/nvidia/cuda_runtime/lib:/usr/local/lib/python3.11/dist-packages/nvidia/cudnn/lib:/usr/local/lib/python3.11/dist-packages/nvidia/cufft/lib:/usr/local/lib/python3.11/dist-packages/nvidia/cusolver/lib:/usr/local/lib/python3.11/dist-packages/nvidia/cusparse/lib:/usr/local/lib/python3.11/dist-packages/nvidia/nccl/lib:/usr/local/lib/python3.11/dist-packages/nvidia/nvjitlink/lib:/usr/local/lib/python3.11/dist-packages/nvidia_cublas_cu12.libs:/usr/local/lib/python3.11/dist-packages/nvidia_cuda_cupti_cu12.libs:/usr/local/lib/python3.11/dist-packages/nvidia_cuda_nvrtc_cu12.libs:/usr/local/lib/python3.11/dist-packages/nvidia_cuda_runtime_cu12.libs:/usr/local/lib/python3.11/dist-packages/nvidia_cudnn_cu12.libs:/usr/local/lib/python3.11/dist-packages/nvidia_cufft_cu12.libs:/usr/local/lib/python3.11/dist-packages/nvidia_cusolver_cu12.libs:/usr/local/lib/python3.11/dist-packages/nvidia_cusparse_cu12.libs:/usr/local/lib/python3.11/dist-packages/nvidia_nccl_cu12.libs:/usr/local/lib/python3.11/dist-packages/nvidia_nvjitlink_cu12.libs
-
-# Create unversioned symlinks for CUDA libraries
-# The nvidia pip packages install libXXX.so.12 but JAX may look for libXXX.so
-RUN echo "=== Creating CUDA library symlinks ===" && \
-    for lib_dir in /usr/local/lib/python3.11/dist-packages/nvidia/*/lib; do \
-        if [ -d "$lib_dir" ]; then \
-            cd "$lib_dir" && \
-            for versioned in lib*.so.*; do \
-                if [ -f "$versioned" ]; then \
-                    base=$(echo "$versioned" | sed 's/\.so\.[0-9]*$/\.so/') && \
-                    if [ ! -e "$base" ]; then \
-                        echo "Creating symlink: $base -> $versioned" && \
-                        ln -sf "$versioned" "$base"; \
-                    fi; \
-                fi; \
-            done; \
-        fi; \
-    done && \
-    echo "=== Verifying cuSPARSE ===" && \
-    ls -la /usr/local/lib/python3.11/dist-packages/nvidia/cusparse/lib/ 2>/dev/null || echo "nvidia/cusparse/lib not found"
 
 ADD . /app
 
 RUN --mount=type=cache,target=/root/.cache/uv \
     uv sync --locked
 
-# Default entrypoint - expects source to be cloned into /app at runtime
 # The CI workflow will clone the repo and pip install before running tests
 ENTRYPOINT ["/bin/bash", "-c"]
 CMD ["echo 'Source code should be mounted/cloned into /app'"]
