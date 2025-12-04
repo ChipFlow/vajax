@@ -105,9 +105,6 @@ jobs:
 
       - name: Create or update Cloud Run Job
         run: |
-          # Use ^;;^ delimiter since JAX_PLATFORMS contains commas
-          ENV_VARS="^;;^JAX_ENABLE_X64=1;;RUN_GPU_BENCHMARKS=1;;JAX_PLATFORMS=cuda,cpu"
-
           # Check if job exists
           if gcloud run jobs describe ${{ env.JOB_NAME }} --region=${{ env.GCP_REGION }} 2>/dev/null; then
             echo "Updating existing job..."

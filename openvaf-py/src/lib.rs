@@ -4,7 +4,7 @@ use pyo3::exceptions::PyValueError;
 
 use basedb::diagnostics::ConsoleSink;
 use hir::{CompilationDB, CompilationOpts};
-use hir_lower::{CallBackKind, CurrentKind, ParamKind};
+use hir_lower::{CurrentKind, ParamKind};
 use lasso::Rodeo;
 use mir::{FuncRef, Function, Param, Value};
 use mir_interpret::{Interpreter, InterpreterState, Data};
@@ -838,7 +838,7 @@ fn compile_va(path: &str, allow_analog_in_cond: bool) -> PyResult<Vec<VaModule>>
         let mut jacobian_react_indices = Vec::new();
         let mut jacobian_rows = Vec::new();
         let mut jacobian_cols = Vec::new();
-        for (i, entry) in compiled.dae_system.jacobian.iter().enumerate() {
+        for (_, entry) in compiled.dae_system.jacobian.iter().enumerate() {
             // SimUnknown row/col - use the index in the unknowns set
             jacobian_rows.push(u32::from(entry.row));
             jacobian_cols.push(u32::from(entry.col));
