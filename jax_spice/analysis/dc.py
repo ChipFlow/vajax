@@ -269,6 +269,314 @@ def dc_operating_point_sparse(
     return V_jax, info
 
 
+def dc_operating_point_source_stepping(
+    system: MNASystem,
+    initial_guess: Optional[Array] = None,
+    vdd_target: float = 1.2,
+    vdd_steps: int = 12,
+    max_iterations_per_step: int = 50,
+    abstol: float = 1e-9,
+    reltol: float = 1e-3,
+    damping: float = 1.0,
+    init_supplies: bool = True,
+    verbose: bool = False,
+) -> Tuple[Array, Dict]:
+    """Find DC operating point using source stepping for difficult circuits
+
+    Source stepping is a homotopy method that gradually ramps the supply voltage
+    from 0 to the target value. At Vdd=0, all transistors are OFF and the circuit
+    is trivially solved. As Vdd increases, the solution evolves continuously.
+
+    This is particularly effective for:
+    - Large digital circuits with many cascaded stages
+    - Circuits where all inputs are held at fixed values (e.g., logic low)
+    - Circuits that fail to converge because PMOS are ON but NMOS are OFF
+
+    The method works by:
+    1. Starting with Vdd=0 (or small value), where all devices are off
+    2. Solving at each Vdd step using previous solution as initial guess
+    3. Gradually increasing Vdd until target is reached
+
+    Args:
+        system: MNA system with devices
+        initial_guess: Initial voltage estimate (shape: [num_nodes])
+        vdd_target: Target supply voltage (default 1.2V)
+        vdd_steps: Number of voltage steps (default 12, so 0.1V increments)
+        max_iterations_per_step: Max NR iterations per source step
+        abstol: Absolute tolerance for convergence
+        reltol: Relative tolerance for convergence
+        damping: Damping factor (0 < damping <= 1)
+        init_supplies: If True, initialize vdd nodes to current step voltage
+        verbose: Print progress information
+
+    Returns:
+        Tuple of (solution, info) where:
+            solution: Node voltages (shape: [num_nodes])
+            info: Dict with convergence information including source_steps
+    """
+    n = system.num_nodes
+
+    # Initialize solution to zeros (all transistors off at Vdd=0)
+    if initial_guess is not None:
+        V = np.array(initial_guess, dtype=np.float64)
+    else:
+        V = np.zeros(n, dtype=np.float64)
+
+    # Find vdd node indices - we'll scale these during stepping
+    vdd_node_indices = []
+    for name, idx in system.node_names.items():
+        name_lower = name.lower()
+        if 'vdd' in name_lower and name_lower not in ('vss', 'gnd', '0'):
+            vdd_node_indices.append(idx)
+
+    total_iterations = 0
+    source_steps = 0
+    all_residual_history = []
+
+    # Generate voltage steps: start from small non-zero value to target
+    # Using linear steps from vdd_target/vdd_steps to vdd_target
+    vdd_values = np.linspace(vdd_target / vdd_steps, vdd_target, vdd_steps)
+
+    if verbose:
+        print(f"Source stepping: 0 -> {vdd_target:.2f}V in {vdd_steps} steps", flush=True)
+
+    converged_at_target = False
+    last_info = {'converged': False, 'iterations': 0, 'residual_norm': 1e20}
+
+    step_idx = 0
+    while step_idx < len(vdd_values):
+        vdd_step = vdd_values[step_idx]
+        source_steps += 1
+        is_final_step = (step_idx == len(vdd_values) - 1)
+
+        # Set vdd nodes to current step voltage
+        if init_supplies:
+            for idx in vdd_node_indices:
+                V[idx] = vdd_step
+
+        if verbose:
+            print(f"  Source step {source_steps}: Vdd={vdd_step:.3f}V", flush=True)
+
+        # Use relaxed tolerance for intermediate steps, tight tolerance only for final
+        step_abstol = abstol if is_final_step else max(abstol, 1e-4)
+
+        # First try with moderate GMIN
+        V_jax, info = _dc_solve_with_source_scaling(
+            system,
+            initial_guess=V,
+            vdd_scale=vdd_step / vdd_target,
+            vdd_target=vdd_target,
+            gmin=1e-9,  # Moderate GMIN for stability
+            max_iterations=max_iterations_per_step,
+            abstol=step_abstol,
+            reltol=reltol,
+            damping=damping,
+            verbose=False,
+        )
+
+        V = np.array(V_jax)
+        total_iterations += info['iterations']
+        all_residual_history.extend(info['residual_history'])
+        last_info = info
+
+        if verbose:
+            print(f"    -> iter={info['iterations']}, residual={info['residual_norm']:.2e}, "
+                  f"converged={info['converged']}", flush=True)
+
+        # For intermediate steps, accept partial convergence (residual < 1e-3)
+        # This allows us to continue the stepping process
+        if not info['converged'] and not is_final_step:
+            if info['residual_norm'] < 1e-3:
+                if verbose:
+                    print(f"    Accepting partial convergence for intermediate step", flush=True)
+            else:
+                # Try higher GMIN for this difficult step
+                if verbose:
+                    print(f"    Trying with higher GMIN...", flush=True)
+
+                V_jax_h, info_h = _dc_solve_with_source_scaling(
+                    system,
+                    initial_guess=V,
+                    vdd_scale=vdd_step / vdd_target,
+                    vdd_target=vdd_target,
+                    gmin=1e-6,  # Higher GMIN for difficult regions
+                    max_iterations=max_iterations_per_step * 2,
+                    abstol=1e-3,  # Relaxed tolerance
+                    reltol=reltol,
+                    damping=damping,
+                    verbose=False,
+                )
+
+                if info_h['residual_norm'] < info['residual_norm']:
+                    V = np.array(V_jax_h)
+                    total_iterations += info_h['iterations']
+                    all_residual_history.extend(info_h['residual_history'])
+                    last_info = info_h
+
+                if verbose:
+                    print(f"      -> iter={info_h['iterations']}, residual={info_h['residual_norm']:.2e}", flush=True)
+
+        # Only check for true convergence at final step
+        if is_final_step and last_info['converged']:
+            converged_at_target = True
+
+        step_idx += 1
+
+    result_info = {
+        'converged': converged_at_target,
+        'iterations': total_iterations,
+        'source_steps': source_steps,
+        'final_vdd': vdd_step,
+        'residual_norm': last_info['residual_norm'],
+        'delta_norm': last_info.get('delta_norm', 0.0),
+        'residual_history': all_residual_history,
+    }
+
+    if verbose:
+        print(f"  Source stepping complete: steps={source_steps}, "
+              f"total_iter={total_iterations}, converged={converged_at_target}", flush=True)
+
+    return jnp.array(V), result_info
+
+
+def _dc_solve_with_source_scaling(
+    system: MNASystem,
+    initial_guess: Optional[Array] = None,
+    vdd_scale: float = 1.0,
+    vdd_target: float = 1.2,
+    gmin: float = 1e-12,
+    max_iterations: int = 100,
+    abstol: float = 1e-9,
+    reltol: float = 1e-3,
+    damping: float = 1.0,
+    verbose: bool = False,
+) -> Tuple[Array, Dict]:
+    """Internal DC solver with voltage source scaling for source stepping
+
+    This solver scales all voltage source targets by vdd_scale factor,
+    allowing gradual ramping of supply voltage during source stepping.
+
+    Args:
+        system: MNA system with devices
+        initial_guess: Initial voltage estimate
+        vdd_scale: Scale factor for voltage sources (0 to 1)
+        vdd_target: Target Vdd value (used for clamping)
+        gmin: GMIN value for diagonal stabilization
+        max_iterations: Maximum NR iterations
+        abstol: Absolute tolerance
+        reltol: Relative tolerance
+        damping: Damping factor
+        verbose: Print iteration details
+
+    Returns:
+        Tuple of (solution, info)
+    """
+    n = system.num_nodes
+
+    # Initialize solution
+    if initial_guess is not None:
+        V = np.array(initial_guess, dtype=np.float64)
+    else:
+        V = np.zeros(n, dtype=np.float64)
+
+    # Find supply node indices for residual exclusion
+    supply_node_indices = set()
+    for name, idx in system.node_names.items():
+        name_lower = name.lower()
+        if name_lower in ('vdd', 'vss', 'gnd', '0') or 'vdd' in name_lower:
+            if idx > 0:
+                supply_node_indices.add(idx - 1)
+
+    # Create context with source scaling
+    context = AnalysisContext(
+        time=0.0,
+        dt=1e-9,
+        analysis_type='dc',
+        c0=0.0,
+        c1=0.0,
+        rhs_correction=0.0,
+        gmin=gmin,
+    )
+    # Store vdd_scale in context for voltage sources to use
+    context.vdd_scale = vdd_scale
+
+    converged = False
+    iterations = 0
+    residual_norm = 1e20
+    delta_norm = 0.0
+    residual_history = []
+
+    # Current scaled Vdd for clamping
+    vdd_current = vdd_target * vdd_scale
+
+    for iteration in range(max_iterations):
+        context.iteration = iteration
+
+        # Build sparse Jacobian and residual
+        (data, indices, indptr, shape), f = system.build_sparse_jacobian_and_residual(
+            jnp.array(V), context
+        )
+
+        # Check residual norm, excluding supply nodes
+        f_check = f.copy()
+        for idx in supply_node_indices:
+            f_check[idx] = 0.0
+        residual_norm = float(np.max(np.abs(f_check)))
+        residual_history.append(residual_norm)
+
+        if verbose and iteration < 20:
+            print(f"      Iter {iteration}: residual={residual_norm:.2e}")
+
+        if residual_norm < abstol:
+            converged = True
+            iterations = iteration + 1
+            break
+
+        # Solve for Newton update
+        delta_V = sparse_solve_csr(
+            jnp.array(data),
+            jnp.array(indices),
+            jnp.array(indptr),
+            jnp.array(-f),
+            shape
+        )
+        delta_V = np.array(delta_V)
+
+        # Apply damping with voltage step limiting
+        max_step = 2.0
+        max_delta = np.max(np.abs(delta_V))
+        step_scale = min(damping, max_step / (max_delta + 1e-15))
+
+        # Update solution
+        V[1:] += step_scale * delta_V
+
+        # Clamp to reasonable range based on current Vdd
+        v_clamp = max(vdd_current * 2.0, 0.5)  # At least 0.5V headroom
+        V = np.clip(V, -v_clamp, v_clamp)
+
+        iterations = iteration + 1
+
+        # Check delta for convergence
+        delta_norm = float(np.max(np.abs(step_scale * delta_V)))
+        v_norm = float(np.max(np.abs(V[1:])))
+
+        if delta_norm < abstol + reltol * max(v_norm, 1.0):
+            converged = True
+            break
+
+    V_jax = jnp.array(V)
+
+    info = {
+        'converged': converged,
+        'iterations': iterations,
+        'residual_norm': residual_norm,
+        'delta_norm': delta_norm,
+        'residual_history': residual_history,
+    }
+
+    return V_jax, info
+
+
 def dc_operating_point_gmin_stepping(
     system: MNASystem,
     initial_guess: Optional[Array] = None,

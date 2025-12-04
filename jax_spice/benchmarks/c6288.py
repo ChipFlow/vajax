@@ -135,6 +135,13 @@ def create_vsource_eval():
             params.get('v', params.get('dc', params.get('val0', 0.0))),
             _circuit_params
         )
+
+        # Support source stepping: scale voltage sources by vdd_scale from context
+        # This is used during dc_operating_point_source_stepping() to ramp Vdd
+        vdd_scale = getattr(context, 'vdd_scale', 1.0)
+        if vdd_scale != 1.0 and V_target != 0.0:
+            V_target = V_target * vdd_scale
+
         V_actual = Vp - Vn
         G_big = 1e6  # Reduced from 1e9 for better matrix conditioning
         I = G_big * (V_actual - V_target)
@@ -303,8 +310,6 @@ class C6288Benchmark:
 
     def parse(self) -> "C6288Benchmark":
         """Parse the c6288 netlist"""
-        global _circuit_params
-
         data_path = get_data_path()
         netlist_path = data_path / "c6288.sim"
 
@@ -316,7 +321,8 @@ class C6288Benchmark:
         self.circuit = parser.parse_file(str(netlist_path))
         elapsed = time.perf_counter() - start
 
-        _circuit_params = self.circuit.params.copy()
+        _circuit_params.clear()
+        _circuit_params.update(self.circuit.params)
         self.vdd = eval_param(self.circuit.params.get('vdd', 1.2), _circuit_params)
 
         if self.verbose:

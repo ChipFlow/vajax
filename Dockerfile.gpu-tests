@@ -11,7 +11,6 @@ RUN apt-get update && apt-get install -y \
     python3.11 \
     python3.11-venv \
     python3.11-dev \
-    python3-pip \
     git \
     && rm -rf /var/lib/apt/lists/*
 
@@ -19,25 +18,13 @@ RUN apt-get update && apt-get install -y \
 RUN update-alternatives --install /usr/bin/python3 python3 /usr/bin/python3.11 1 \
     && update-alternatives --install /usr/bin/python python /usr/bin/python3.11 1
 
-# Upgrade pip (cached layer)
-RUN python -m pip install --upgrade pip
+# install uv
+RUN curl -LsSf https://astral.sh/uv/install.sh | sh
 
-# Install Python dependencies
-# Use jax[cuda12] which bundles CUDA/cuDNN dependencies via pip wheels
-RUN pip install --no-cache-dir \
-    "jax[cuda12]" \
-    numpy \
-    scipy \
-    lark \
-    matplotlib \
-    pytest
-
-# Verify installed packages
-RUN pip list | grep -i jax && \
-    python -c "import jax; print('JAX devices:', jax.devices())" || echo "JAX device check failed (expected at build time)"
-
-# Create working directory
-WORKDIR /app
+RUN --mount=type=cache,target=/root/.cache/uv \
+    --mount=type=bind,source=uv.lock,target=uv.lock \
+    --mount=type=bind,source=pyproject.toml,target=pyproject.toml \
+    uv sync --frozen --no-install-workspace
 
 # Set environment variables
 ENV JAX_ENABLE_X64=1
@@ -99,6 +86,11 @@ RUN echo "=== Creating CUDA library symlinks ===" && \
     done && \
     echo "=== Verifying cuSPARSE ===" && \
     ls -la /usr/local/lib/python3.11/dist-packages/nvidia/cusparse/lib/ 2>/dev/null || echo "nvidia/cusparse/lib not found"
+
+ADD . /app
+
+RUN --mount=type=cache,target=/root/.cache/uv \
+    uv sync --locked
 
 # Default entrypoint - expects source to be cloned into /app at runtime
 # The CI workflow will clone the repo and pip install before running tests
