@@ -25,6 +25,11 @@ ENV JAX_PLATFORMS=cuda,cpu
 ENV RUSTC_WRAPPER=sccache
 ENV SCCACHE_DIR=/root/.cache/sccache
 
+# JAX/XLA debug logging for PTX compilation
+ENV TF_CPP_MIN_LOG_LEVEL=0
+ENV XLA_FLAGS="--xla_gpu_autotune_level=0"
+ENV JAX_LOG_COMPILES=1
+
 # Entrypoint script that checks out code and runs tests
 COPY scripts/run-gpu-tests.sh /run-gpu-tests.sh
 RUN chmod +x /run-gpu-tests.sh
