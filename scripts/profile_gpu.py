@@ -187,8 +187,15 @@ class GPUProfiler:
         return "\n".join(lines)
 
 
-def profile_c6288_simulation(profiler: GPUProfiler, circuit_name: str = 'c6288_test'):
-    """Profile a full C6288 circuit simulation"""
+def profile_c6288_simulation(profiler: GPUProfiler, circuit_name: str = 'c6288_test',
+                              max_iterations: int = 100):
+    """Profile a full C6288 circuit simulation
+
+    Args:
+        profiler: GPUProfiler instance
+        circuit_name: Circuit to profile
+        max_iterations: Maximum iterations (to avoid timeout on non-converging circuits)
+    """
     from jax_spice.benchmarks.c6288 import C6288Benchmark
 
     profiler.start()
@@ -211,10 +218,10 @@ def profile_c6288_simulation(profiler: GPUProfiler, circuit_name: str = 'c6288_t
     n_devices = len(bench.system.devices)
 
     # Phase 4: Run DC analysis (mixed CPU/GPU)
+    # Use sparse DC solver with limited iterations to avoid timeout
     with profiler.measure("dc_analysis_total"):
-        V, info = bench.run_gmin_stepping_dc(
-            start_gmin=1e-2,
-            target_gmin=1e-12,
+        V, info = bench.run_sparse_dc(
+            max_iterations=max_iterations,
             abstol=1e-9,
             verbose=False
         )
@@ -238,7 +245,6 @@ def profile_c6288_simulation(profiler: GPUProfiler, circuit_name: str = 'c6288_t
         'devices': n_devices,
         'converged': info.get('converged', False),
         'iterations': n_iterations,
-        'gmin_steps': info.get('gmin_steps', 0),
         'residual': info.get('residual_norm', 0),
     }
 
@@ -287,15 +293,17 @@ def main():
 
     profiler = GPUProfiler()
 
-    # Profile full simulation
-    print("Profiling C6288 circuit simulation...")
-    sim_info = profile_c6288_simulation(profiler, 'c6288_test')
+    # Profile full simulation with limited iterations to avoid timeout
+    # The C6288 circuit may not converge, but we want to measure GPU performance
+    print("Profiling C6288 circuit simulation (max 100 iterations)...")
+    sim_info = profile_c6288_simulation(profiler, 'c6288_test', max_iterations=100)
 
     print(f"  Circuit: {sim_info['circuit']}")
     print(f"  Nodes: {sim_info['nodes']}")
     print(f"  Devices: {sim_info['devices']}")
     print(f"  Converged: {sim_info['converged']}")
     print(f"  Iterations: {sim_info['iterations']}")
+    print(f"  Residual: {sim_info['residual']:.2e}")
     print()
 
     # Profile iteration breakdown on smaller circuit
