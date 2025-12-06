@@ -15,7 +15,6 @@ env:
   # Push to ghcr.io (fast from GitHub Actions), then Cloud Run pulls via
   # Artifact Registry remote repository (which caches the image in GCP)
   AR_REMOTE_REPO: ghcr-remote
-  GHCR_IMAGE: ghcr.io/${{ github.repository }}/gpu-tests
  
 jobs:
   gpu-tests:
@@ -68,6 +67,14 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
+      - name: Set image names (lowercase for ghcr.io)
+        run: |
+          # ghcr.io requires lowercase image names
+          REPO_LC=$(echo "${{ github.repository }}" | tr '[:upper:]' '[:lower:]')
+          GHCR_IMAGE="ghcr.io/${REPO_LC}/gpu-tests"
+          echo "GHCR_IMAGE=${GHCR_IMAGE}" >> "$GITHUB_ENV"
+          echo "GHCR_PATH=${REPO_LC}/gpu-tests" >> "$GITHUB_ENV"
+
       - name: Build and push Docker image to ghcr.io
         id: docker
         uses: docker/build-push-action@v6
@@ -86,9 +93,7 @@ jobs:
         run: |
           # Cloud Run pulls via AR remote repository which proxies ghcr.io
           # Format: {region}-docker.pkg.dev/{project}/{remote-repo}/{ghcr-path}:{tag}
-          # The ghcr path is: {owner}/{repo}/gpu-tests (without ghcr.io prefix)
-          GHCR_PATH="${{ github.repository }}/gpu-tests"
-          AR_IMAGE="${{ env.GCP_REGION }}-docker.pkg.dev/${{ env.GCP_PROJECT }}/${{ env.AR_REMOTE_REPO }}/${GHCR_PATH}:${{ github.run_id }}"
+          AR_IMAGE="${{ env.GCP_REGION }}-docker.pkg.dev/${{ env.GCP_PROJECT }}/${{ env.AR_REMOTE_REPO }}/${{ env.GHCR_PATH }}:${{ github.run_id }}"
           echo "IMAGE_TAG=${AR_IMAGE}" >> "$GITHUB_ENV"
           echo "Cloud Run will pull: ${AR_IMAGE}"
           echo "(proxying ghcr.io image: ${{ env.GHCR_IMAGE }}:${{ github.run_id }})"
