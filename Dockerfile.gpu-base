@@ -20,6 +20,7 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
         cuda-cudart-12-2 \
         cuda-nvrtc-12-2 \
         cudnn9-cuda-12 \
+        cuda-cupti-12-2 \
         libcublas-12-2 \
         libcusparse-12-2 \
         libcusolver-12-2 \
