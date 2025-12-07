@@ -19,56 +19,10 @@ References:
 
 from typing import Tuple
 import jax
-import jax.numpy as jnp
 from jax import Array
 import numpy as np
 from scipy.sparse import csc_matrix, csr_matrix
 from scipy.sparse.linalg import spsolve as scipy_spsolve
-
-
-# Global flag to track if cuSOLVER is available
-# We detect this once at first use and cache the result
-_CUSOLVER_AVAILABLE = None
-
-
-def _check_cusolver_available() -> bool:
-    """Check if cuSOLVER is available by running a small test solve.
-
-    This is cached after first call to avoid runtime overhead.
-    """
-    global _CUSOLVER_AVAILABLE
-    if _CUSOLVER_AVAILABLE is not None:
-        return _CUSOLVER_AVAILABLE
-
-    # On CPU, we don't need cuSOLVER
-    if jax.default_backend() == 'cpu':
-        _CUSOLVER_AVAILABLE = False
-        return False
-
-    # Try a tiny 2x2 sparse solve to check if cuSOLVER works
-    try:
-        from jax.experimental.sparse.linalg import spsolve as jax_spsolve
-
-        # Create minimal 2x2 identity-like matrix in CSR format: [[1,0],[0,1]]
-        data = jnp.array([1.0, 1.0], dtype=jnp.float64)
-        indices = jnp.array([0, 1], dtype=jnp.int32)
-        indptr = jnp.array([0, 1, 2], dtype=jnp.int32)
-        b = jnp.array([1.0, 1.0], dtype=jnp.float64)
-
-        # Try the solve - this will fail if cuSOLVER isn't available
-        result = jax_spsolve(data, indices, indptr, b, tol=0)
-        jax.block_until_ready(result)  # Force execution
-
-        _CUSOLVER_AVAILABLE = True
-        return True
-    except Exception as e:
-        import warnings
-        warnings.warn(
-            f"cuSOLVER sparse solver not available ({e}), will use CPU scipy fallback",
-            RuntimeWarning
-        )
-        _CUSOLVER_AVAILABLE = False
-        return False
 
 
 def sparse_solve(
@@ -143,7 +97,6 @@ def _spsolve_gpu(
     """GPU sparse solve using jax.experimental.sparse
 
     Uses cuSOLVER under the hood. Only supports 1D RHS vectors.
-    Falls back to CPU scipy if cuSOLVER is not available.
 
     Args:
         data: CSR data array (GPU expects CSR)
@@ -155,13 +108,6 @@ def _spsolve_gpu(
     Returns:
         Solution vector
     """
-    # Check if cuSOLVER is available (cached after first call)
-    if not _check_cusolver_available():
-        # cuSOLVER not available, use CPU scipy via pure_callback
-        # This is efficient because pure_callback is designed for this
-        return _spsolve_cpu_csr(data, indices, indptr, b, shape)
-
-    # Use cuSOLVER sparse solver
     from jax.experimental.sparse.linalg import spsolve as jax_spsolve
 
     # jax.experimental.sparse.linalg.spsolve expects CSR format
