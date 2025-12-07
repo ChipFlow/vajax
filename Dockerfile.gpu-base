@@ -4,7 +4,7 @@
 # Contains all dependencies but not the source code.
 # Code is checked out at runtime for faster iteration.
 
-FROM python:3.13-slim-trixie
+FROM python:3.13-slim-bullseye
 COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /bin/
 
 RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
@@ -13,7 +13,6 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
 RUN rustup default stable
 
 # Install CUDA 12.2 runtime libraries from NVIDIA's Debian 11 repo
-# (Debian 12 repo doesn't have 12.2, but Debian 11 repo does)
 RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     apt update && apt install -y wget gnupg2 && \
     wget https://developer.download.nvidia.com/compute/cuda/repos/debian11/x86_64/cuda-keyring_1.1-1_all.deb && \
