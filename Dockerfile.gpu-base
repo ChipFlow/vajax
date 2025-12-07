@@ -19,10 +19,12 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     apt install -y \
         cuda-cudart-12-2 \
         cuda-nvrtc-12-2 \
+        cudnn9-cuda-12 \
         libcublas-12-2 \
         libcusparse-12-2 \
         libcusolver-12-2 \
         libcufft-12-2 && \
+
     rm cuda-keyring_1.1-1_all.deb
 
 
