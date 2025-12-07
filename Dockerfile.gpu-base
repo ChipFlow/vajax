@@ -12,20 +12,20 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
 
 RUN rustup default stable
 
-# Install CUDA 12.2 runtime libraries from NVIDIA's repo
-# Using debian12 repo as it's closest to trixie
+# Install CUDA 12.2 runtime libraries from NVIDIA's Debian 11 repo
+# (Debian 12 repo doesn't have 12.2, but Debian 11 repo does)
 RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     apt update && apt install -y wget gnupg2 && \
-    wget https://developer.download.nvidia.com/compute/cuda/repos/debian12/x86_64/cuda-keyring_1.1-1_all.deb && \
+    wget https://developer.download.nvidia.com/compute/cuda/repos/debian11/x86_64/cuda-keyring_1.1-1_all.deb && \
     dpkg -i cuda-keyring_1.1-1_all.deb && \
     apt update && \
     apt install -y \
-        cuda-cudart-12-6 \
-        cuda-nvrtc-12-6 \
-        libcublas-12-6 \
-        libcusparse-12-6 \
-        libcusolver-12-6 \
-        libcufft-12-6 && \
+        cuda-cudart-12-2 \
+        cuda-nvrtc-12-2 \
+        libcublas-12-2 \
+        libcusparse-12-2 \
+        libcusolver-12-2 \
+        libcufft-12-2 && \
     rm cuda-keyring_1.1-1_all.deb
 
 WORKDIR /app
@@ -42,8 +42,8 @@ ENV RUSTC_WRAPPER=sccache
 ENV SCCACHE_DIR=/root/.cache/sccache
 
 # CUDA library paths
-ENV LD_LIBRARY_PATH=/usr/local/cuda-12.6/lib64
-ENV PATH=/usr/local/cuda-12.6/bin:$PATH
+ENV LD_LIBRARY_PATH=/usr/local/cuda-12.2/lib64
+ENV PATH=/usr/local/cuda-12.2/bin:$PATH
 
 # JAX/XLA debug logging for PTX compilation
 ENV TF_CPP_MIN_LOG_LEVEL=0
