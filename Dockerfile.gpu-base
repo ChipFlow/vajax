@@ -4,11 +4,26 @@
 # Contains all dependencies but not the source code.
 # Code is checked out at runtime for faster iteration.
 
-FROM python:3.13-slim-trixie
-COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /bin/
+# Use NVIDIA CUDA base image with Python - matches Cloud Run's CUDA 12.2
+FROM nvidia/cuda:12.2.2-cudnn8-runtime-ubuntu22.04
 
-RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
-    apt update && apt install -y sccache rustup build-essential git
+# Install Python 3.13 and other dependencies
+RUN apt-get update && apt-get install -y \
+    software-properties-common \
+    && add-apt-repository ppa:deadsnakes/ppa \
+    && apt-get update && apt-get install -y \
+    python3.13 \
+    python3.13-venv \
+    python3.13-dev \
+    sccache \
+    rustup \
+    build-essential \
+    git \
+    curl \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install uv
+COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /bin/
 
 RUN rustup default stable
 
