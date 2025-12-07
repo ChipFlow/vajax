@@ -139,9 +139,10 @@ def _spsolve_gpu_dense_fallback(
     b: Array,
     shape: Tuple[int, int]
 ) -> Array:
-    """GPU solve by converting sparse matrix to dense
+    """GPU solve fallback when cuSOLVER sparse is unavailable
 
-    This is slower but works when cuSOLVER sparse is not available.
+    First tries GPU dense solve via jnp.linalg.solve. If that also fails
+    (cuSOLVER dense not working), falls back to CPU scipy via pure_callback.
 
     Args:
         data: CSR data array
@@ -153,28 +154,29 @@ def _spsolve_gpu_dense_fallback(
     Returns:
         Solution vector
     """
-    from jax.experimental import sparse as jax_sparse
+    try:
+        from jax.experimental import sparse as jax_sparse
 
-    n, m = shape
+        n, m = shape
 
-    # Convert CSR to BCOO (JAX's native sparse format)
-    # Then convert to dense for the solve
-    # This approach works with JIT compilation
+        # Convert CSR to BCOO (JAX's native sparse format)
+        # Then convert to dense for the solve
+        row_indices = jnp.repeat(jnp.arange(n), jnp.diff(indptr))
+        bcoo_indices = jnp.stack([row_indices, indices], axis=1)
+        A_bcoo = jax_sparse.BCOO((data, bcoo_indices), shape=shape)
 
-    # Build row indices from CSR indptr
-    # Each row i has entries from indptr[i] to indptr[i+1]
-    row_indices = jnp.repeat(jnp.arange(n), jnp.diff(indptr))
-
-    # Create BCOO sparse matrix
-    bcoo_indices = jnp.stack([row_indices, indices], axis=1)
-    A_bcoo = jax_sparse.BCOO((data, bcoo_indices), shape=shape)
-
-    # Convert to dense (this is the slow part, but works on all GPUs)
-    A_dense = A_bcoo.todense()
-
-    # Use dense solve (cuBLAS, well-supported on all GPUs)
-    x = jnp.linalg.solve(A_dense, b)
-    return x
+        # Convert to dense and solve
+        A_dense = A_bcoo.todense()
+        x = jnp.linalg.solve(A_dense, b)
+        return x
+    except Exception as e:
+        # cuSOLVER dense also failed, fall back to CPU scipy
+        import warnings
+        warnings.warn(
+            f"GPU dense solve also failed ({e}), falling back to CPU scipy",
+            RuntimeWarning
+        )
+        return _spsolve_cpu_csr(data, indices, indptr, b, shape)
 
 
 # For autodiff support, we could add custom_vjp here if needed
