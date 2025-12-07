@@ -4,28 +4,23 @@
 # Contains all dependencies but not the source code.
 # Code is checked out at runtime for faster iteration.
 
-# Use NVIDIA CUDA base image with Python - matches Cloud Run's CUDA 12.2
-FROM nvidia/cuda:12.2.2-cudnn8-runtime-ubuntu22.04
-
-# Install Python 3.13 and other dependencies
-RUN apt-get update && apt-get install -y \
-    software-properties-common \
-    && add-apt-repository ppa:deadsnakes/ppa \
-    && apt-get update && apt-get install -y \
-    python3.13 \
-    python3.13-venv \
-    python3.13-dev \
-    sccache \
-    rustup \
-    build-essential \
-    git \
-    curl \
-    && rm -rf /var/lib/apt/lists/*
-
-# Install uv
+FROM python:3.13-slim-trixie
 COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /bin/
 
+RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
+    apt update && apt install -y sccache rustup build-essential git
+
 RUN rustup default stable
+
+# Install CUDA 12.2 runtime libraries
+# These are needed for JAX to find GPU drivers
+RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
+    apt update && apt install -y wget gnupg2 && \
+    wget https://developer.download.nvidia.com/compute/cuda/repos/debian12/x86_64/cuda-keyring_1.1-1_all.deb && \
+    dpkg -i cuda-keyring_1.1-1_all.deb && \
+    apt update && \
+    apt install -y cuda-cudart-12-2 cuda-nvrtc-12-2 libcublas-12-2 libcusparse-12-2 libcusolver-12-2 libcufft-12-2 && \
+    rm cuda-keyring_1.1-1_all.deb
 
 WORKDIR /app
 
@@ -39,6 +34,10 @@ ENV JAX_ENABLE_X64=1
 ENV JAX_PLATFORMS=cuda,cpu
 ENV RUSTC_WRAPPER=sccache
 ENV SCCACHE_DIR=/root/.cache/sccache
+
+# CUDA library paths
+ENV LD_LIBRARY_PATH=/usr/local/cuda-12.2/lib64:$LD_LIBRARY_PATH
+ENV PATH=/usr/local/cuda-12.2/bin:$PATH
 
 # JAX/XLA debug logging for PTX compilation
 ENV TF_CPP_MIN_LOG_LEVEL=0
