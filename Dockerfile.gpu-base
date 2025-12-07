@@ -8,26 +8,43 @@ FROM python:3.13-slim-bullseye
 COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /bin/
 
 RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
-    apt update && apt install -y build-essential git curl libssl-dev
+    apt update && apt install -y build-essential git curl libssl-dev software-properties-common
 
 # Install CUDA 12.2 runtime libraries from NVIDIA's Debian 11 repo
 RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
-    apt update && apt install -y wget gnupg2 && \
-    wget https://developer.download.nvidia.com/compute/cuda/repos/debian11/x86_64/cuda-keyring_1.1-1_all.deb && \
-    dpkg -i cuda-keyring_1.1-1_all.deb && \
-    apt update && \
-    apt install -y \
-        cuda-cudart-12-2 \
-        cuda-nvrtc-12-2 \
-        cudnn9-cuda-12 \
-        cuda-cupti-12-2 \
-	cusparselt-cuda-12 \
-        libcublas-12-2 \
-        libcusparse-12-2 \
-        libcusolver-12-2 \
-        libcufft-12-2 && \
+    apt update && apt install -y wget gnupg2 \
+    && wget https://developer.download.nvidia.com/compute/cuda/repos/debian11/x86_64/cuda-keyring_1.1-1_all.deb \
+    && dpkg -i cuda-keyring_1.1-1_all.deb \
+    && add-apt-repository contrib \
+    && apt update \
+    && apt install -y \
+    cuda-cudart-12-2=12.2.140-1 \
+    cuda-nvcc-12-2=12.2.140-1 \
+    cuda-nvprof-12-2=12.2.142-1 \
+    cuda-nvrtc-12-2=12.2.140-1 \
+    cuda-cupti-12-2=12.2.142-1 \
+    cudnn9-cuda-12-3 \
+    libcusparselt0=0.6.0.6-1 \
+    libcudnn9-static-cuda-12=9.0.0.312-1 \
+    libcudnn9-dev-cuda-12=9.0.0.312-1 \
+    libcudnn9-cuda-12=9.0.0.312-1 \
+    libnvjitlink-12-2=12.2.140-1 \
+    libcusparse-12-2=12.1.2.141-1 \
+    libcublas-12-2=12.2.5.6-1 \
+    libcusolver-12-2=11.5.2.141-1 \
+    libcufft-12-2=11.0.8.103-1 \
+    && rm cuda-keyring_1.1-1_all.deb
 
-    rm cuda-keyring_1.1-1_all.deb
+#        cuda-cudart-12-2 \
+#        cuda-nvrtc-12-2 \
+#        cudnn9-cuda-12 \
+#        cuda-cupti-12-2 \
+#	cusparselt-cuda-12 \
+#        libcublas-12-2 \
+#        libcusparse-12-2 \
+#        libcusolver-12-2 \
+#        libcufft-12-2 && \
+#
 
 
 RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | bash -s -- -y
