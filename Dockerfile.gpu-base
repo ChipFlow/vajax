@@ -8,9 +8,7 @@ FROM python:3.13-slim-bullseye
 COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /bin/
 
 RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
-    apt update && apt install -y sccache rustup build-essential git
-
-RUN rustup default stable
+    apt update && apt install -y build-essential git curl libssl-dev
 
 # Install CUDA 12.2 runtime libraries from NVIDIA's Debian 11 repo
 RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
@@ -26,6 +24,17 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
         libcusolver-12-2 \
         libcufft-12-2 && \
     rm cuda-keyring_1.1-1_all.deb
+
+
+RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | bash -s -- -y
+ENV PATH="$PATH:/root/.cargo/bin"
+
+RUN wget https://github.com/mozilla/sccache/releases/download/v0.12.0/sccache-v0.12.0-x86_64-unknown-linux-musl.tar.gz \
+    && tar xzf sccache-v0.12.0-x86_64-unknown-linux-musl.tar.gz \
+    && mv sccache-v0.12.0-x86_64-unknown-linux-musl/sccache /root/.cargo/bin \
+    && rm -r sccache-v0.12.0-x86_64-unknown-linux-musl.tar.gz sccache-v0.12.0-x86_64-unknown-linux-musl
+
+
 
 WORKDIR /app
 
