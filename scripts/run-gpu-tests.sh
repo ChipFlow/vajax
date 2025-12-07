@@ -37,6 +37,28 @@ echo "Installing workspace packages..."
 # Install the workspace in the pre-existing venv
 uv sync --locked --extra cuda12
 
+echo "=== CUDA Environment Diagnostics ==="
+# Check NVIDIA driver version
+nvidia-smi || echo "nvidia-smi not available"
+
+# Check installed CUDA packages
+uv pip list | grep -i nvidia || echo "No nvidia packages found"
+uv pip list | grep -i cuda || echo "No cuda packages found"
+
+# Check JAX CUDA detection
+uv run python -c "
+import jax
+print('JAX version:', jax.__version__)
+print('JAX backend:', jax.default_backend())
+print('JAX devices:', jax.devices())
+# Check if JAX can find CUDA
+try:
+    from jax._src.lib import xla_client
+    print('XLA client platform:', xla_client.make_gpu_client())
+except Exception as e:
+    print('XLA GPU client error:', e)
+"
+
 echo "Running GPU profiler..."
 uv run python scripts/profile_gpu.py
 
