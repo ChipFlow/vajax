@@ -295,8 +295,9 @@ def main():
 
     # Profile full simulation with limited iterations to avoid timeout
     # The C6288 circuit may not converge, but we want to measure GPU performance
-    print("Profiling C6288 circuit simulation (max 100 iterations)...")
-    sim_info = profile_c6288_simulation(profiler, 'c6288_test', max_iterations=100)
+    # Use only 10 iterations to stay within Cloud Run's 30-minute timeout
+    print("Profiling C6288 circuit simulation (max 10 iterations)...")
+    sim_info = profile_c6288_simulation(profiler, 'c6288_test', max_iterations=10)
 
     print(f"  Circuit: {sim_info['circuit']}")
     print(f"  Nodes: {sim_info['nodes']}")
