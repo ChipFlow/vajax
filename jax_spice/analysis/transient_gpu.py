@@ -19,6 +19,7 @@ reactive elements (capacitors, MOSFET capacitances).
 
 from typing import Callable, Dict, List, Tuple, Optional, Any, NamedTuple
 from functools import partial
+import time as _time
 import jax
 import jax.numpy as jnp
 from jax import Array
@@ -434,18 +435,39 @@ def transient_analysis_gpu(
         raise ImportError("sparsejac required for GPU transient analysis")
 
     # Build circuit data
+    if verbose:
+        print("  Building circuit data...")
+        _t0 = _time.perf_counter()
+
     circuit = build_transient_circuit_data(system, vdd=vdd, gmin=gmin)
     n_reduced = circuit.n_reduced
     num_nodes = circuit.num_nodes
 
+    if verbose:
+        print(f"    Circuit data built in {_time.perf_counter() - _t0:.2f}s")
+
     # Build residual function
+    if verbose:
+        print("  Building residual function...")
+        _t0 = _time.perf_counter()
+
     residual_fn = build_transient_residual_fn(circuit)
 
+    if verbose:
+        print(f"    Residual function built in {_time.perf_counter() - _t0:.2f}s")
+
     # Build sparsity pattern
+    if verbose:
+        print("  Building sparsity pattern...")
+        _t0 = _time.perf_counter()
+
     n_nnz = len(circuit.sparsity_rows)
     sparsity_data = jnp.ones(n_nnz, dtype=jnp.float64)
     sparsity_indices = jnp.stack([circuit.sparsity_rows, circuit.sparsity_cols], axis=-1)
     sparsity = jsparse.BCOO((sparsity_data, sparsity_indices), shape=(n_reduced, n_reduced))
+
+    if verbose:
+        print(f"    Sparsity pattern: {n_nnz} entries, built in {_time.perf_counter() - _t0:.2f}s")
 
     # Create Jacobian function (differentiate w.r.t. V_curr only)
     def residual_for_jac(V_curr, V_prev, dt):
@@ -522,14 +544,27 @@ def transient_analysis_gpu(
         return V, max_iterations, float(jnp.max(jnp.abs(f)))
 
     # Run simulation
+    if verbose:
+        print("  Starting simulation loop...")
+        _sim_start = _time.perf_counter()
+
     solutions = [V0]
     total_iterations = 0
     V_curr = V0_reduced
+    first_step_time = 0.0
 
     for i in range(num_timesteps):
+        if i == 0 and verbose:
+            print("    First timestep (includes JIT compilation)...")
+            _t0 = _time.perf_counter()
+
         dt = float(times[i + 1] - times[i])
         V_new, iters, res_norm = solve_timestep(V_curr, dt)
         total_iterations += iters
+
+        if i == 0 and verbose:
+            first_step_time = _time.perf_counter() - _t0
+            print(f"    First timestep completed in {first_step_time:.2f}s ({iters} iters)")
 
         # Build full voltage vector
         V_full = jnp.concatenate([jnp.array([0.0]), V_new])
@@ -541,11 +576,21 @@ def transient_analysis_gpu(
 
     solutions_array = jnp.stack(solutions)
 
+    if verbose:
+        total_sim_time = _time.perf_counter() - _sim_start
+        remaining_time = total_sim_time - first_step_time
+        avg_step_time = remaining_time / max(1, num_timesteps - 1) if num_timesteps > 1 else 0
+        print(f"  Simulation complete:")
+        print(f"    Total time: {total_sim_time:.2f}s")
+        print(f"    First step (w/ compile): {first_step_time:.2f}s")
+        print(f"    Remaining {num_timesteps - 1} steps: {remaining_time:.2f}s ({avg_step_time:.4f}s/step avg)")
+
     info = {
         'num_timepoints': num_timesteps + 1,
         'total_iterations': total_iterations,
         'avg_iterations_per_step': total_iterations / max(1, num_timesteps),
         'method': 'gpu_transient_sparsejac',
+        'first_step_time': first_step_time,
     }
 
     return times, solutions_array, info
