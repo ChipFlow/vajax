@@ -61,7 +61,11 @@ RUN --mount=type=bind,source=uv.lock,target=uv.lock \
 ENV JAX_ENABLE_X64=1
 ENV JAX_PLATFORMS=cuda,cpu
 ENV RUSTC_WRAPPER=sccache
-ENV SCCACHE_DIR=/root/.cache/sccache
+
+# sccache with GCS backend for persistent cache across Cloud Run executions
+# Uses workload identity / default service account credentials
+ENV SCCACHE_GCS_BUCKET=jax-spice-sccache
+ENV SCCACHE_GCS_RW_MODE=READ_WRITE
 
 # CUDA library paths
 ENV LD_LIBRARY_PATH=/usr/local/cuda-12.2/lib64

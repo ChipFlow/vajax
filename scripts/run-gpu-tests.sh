@@ -33,9 +33,15 @@ fi
 # Update submodules if needed
 git submodule update --init --recursive
 
+echo "=== sccache diagnostics (before build) ==="
+sccache --show-stats || echo "sccache stats not available"
+
 echo "Installing workspace packages..."
 # Install the workspace in the pre-existing venv
 uv sync --locked --extra cuda12
+
+echo "=== sccache diagnostics (after build) ==="
+sccache --show-stats || echo "sccache stats not available"
 
 echo "=== CUDA Environment Diagnostics ==="
 # Check NVIDIA driver version

@@ -52,6 +52,18 @@ jobs:
             echo "Artifact Registry remote repository already exists"
           fi
 
+      - name: Create sccache GCS bucket
+        run: |
+          # Create sccache bucket if it doesn't exist (idempotent)
+          if ! gcloud storage buckets describe gs://jax-spice-sccache 2>/dev/null; then
+            echo "Creating sccache GCS bucket..."
+            gcloud storage buckets create gs://jax-spice-sccache \
+              --location="${{ env.GCP_REGION }}" \
+              --uniform-bucket-level-access
+          else
+            echo "sccache bucket already exists"
+          fi
+
       - name: Login to GitHub Container Registry
         uses: docker/login-action@v3
         with:
