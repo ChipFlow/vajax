@@ -403,10 +403,16 @@ def build_transient_circuit_data_fast(
             mosfet_W.extend(W_arr.tolist())
             mosfet_L.extend(L_arr.tolist())
 
-            # Determine PMOS from device names (check for 'pmos' or 'psp' + 'p')
+            # Determine PMOS from model names (not device names!)
+            # Look up model_name from original devices
             for name in group.device_names:
-                name_lower = name.lower()
-                is_pmos = 'pmos' in name_lower or (name_lower.endswith('p') and 'psp' in name_lower)
+                # Find the original device to get model_name
+                is_pmos = False
+                for device in system.devices:
+                    if device.name == name:
+                        model_lower = device.model_name.lower()
+                        is_pmos = 'pmos' in model_lower or (model_lower.endswith('p') and 'psp' in model_lower)
+                        break
                 mosfet_is_pmos.append(is_pmos)
 
             # Sparsity for MOSFETs
