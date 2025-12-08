@@ -334,9 +334,9 @@ def main():
 
     profiler = GPUProfiler()
 
-    # Profile GPU-native solver on small circuits first (fast)
+    # Profile GPU-native solver on circuits
     print("Profiling GPU-native solver (sparsejac + cuSOLVER)...")
-    for circuit in ['inv_test', 'nor_test']:
+    for circuit in ['inv_test', 'nor_test', 'c6288_test']:
         try:
             gpu_info = profile_gpu_native_solver(profiler, circuit)
         except Exception as e:
