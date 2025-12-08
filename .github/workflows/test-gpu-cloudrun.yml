@@ -145,6 +145,7 @@ jobs:
             --format="value(metadata.name)")
 
           echo "Execution started: $exec_id"
+          echo "exec_id=$exec_id" >> "$GITHUB_ENV"
           echo
           echo "Waiting for run:"
 
@@ -160,8 +161,9 @@ jobs:
 
           echo
 
+          # Capture logs to file for parsing
           gcloud beta run jobs executions logs read $exec_id \
-            --region=${{ env.GCP_REGION }}
+            --region=${{ env.GCP_REGION }} | tee /tmp/job_logs.txt
 
           status=$(gcloud run jobs executions describe $exec_id \
             --region=${{ env.GCP_REGION }} \
@@ -171,4 +173,18 @@ jobs:
 
           if [ "$status" != "True" ]; then
             exit 1
+          fi
+
+      - name: Extract profiling report to summary
+        if: always()
+        run: |
+          # Extract the profiling report from logs (between "# JAX-SPICE" and "Report written")
+          if [ -f /tmp/job_logs.txt ]; then
+            echo "## GPU Profiling Results" >> "$GITHUB_STEP_SUMMARY"
+            echo "" >> "$GITHUB_STEP_SUMMARY"
+
+            # Extract profiling report section - strip timestamps and get markdown content
+            sed -n '/# JAX-SPICE GPU Profiling Report/,/Report written to:/p' /tmp/job_logs.txt | \
+              sed 's/^[0-9-]* [0-9:]* //' | \
+              head -n -1 >> "$GITHUB_STEP_SUMMARY" || echo "Could not extract profiling report"
           fi
