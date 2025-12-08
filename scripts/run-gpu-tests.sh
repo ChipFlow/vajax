@@ -51,12 +51,14 @@ import jax
 print('JAX version:', jax.__version__)
 print('JAX backend:', jax.default_backend())
 print('JAX devices:', jax.devices())
-# Check if JAX can find CUDA
-try:
-    from jax._src.lib import xla_client
-    print('XLA client platform:', xla_client.make_gpu_client())
-except Exception as e:
-    print('XLA GPU client error:', e)
+
+# Check for GPU devices
+gpu_devices = [d for d in jax.devices() if d.platform != 'cpu']
+if gpu_devices:
+    print('GPU devices found:', gpu_devices)
+    print('GPU device kind:', gpu_devices[0].device_kind)
+else:
+    print('No GPU devices found')
 "
 
 echo "Running GPU profiler..."
