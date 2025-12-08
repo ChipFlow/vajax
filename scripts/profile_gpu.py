@@ -327,7 +327,7 @@ def profile_gpu_native_solver(profiler: GPUProfiler, circuit_name: str = 'inv_te
 
 
 def profile_gpu_transient_solver(profiler: GPUProfiler, circuit_name: str = 'inv_test',
-                                  num_timesteps: int = 10):
+                                  num_timesteps: int = 10, t_step: float = 1e-9):
     """Profile the GPU-native transient solver using sparsejac
 
     This profiles:
@@ -345,15 +345,15 @@ def profile_gpu_transient_solver(profiler: GPUProfiler, circuit_name: str = 'inv
 
     print(f"  GPU-native transient solver on {circuit_name}:")
     print(f"    Nodes: {bench.system.num_nodes}, Devices: {len(bench.system.devices)}")
-    print(f"    Timesteps: {num_timesteps}")
+    print(f"    Timesteps: {num_timesteps}, t_step: {t_step*1e9:.2f}ns")
 
     # Run GPU-native transient solver
     with profiler.measure(f"transient_gpu_{circuit_name}"):
         t_points, V_history, info = transient_analysis_gpu(
             bench.system,
-            t_stop=1e-9 * num_timesteps,
-            t_step=1e-9,
-            vdd=1.2,
+            t_stop=t_step * num_timesteps,
+            t_step=t_step,
+            vdd=bench.vdd,
             verbose=False
         )
 
@@ -362,6 +362,8 @@ def profile_gpu_transient_solver(profiler: GPUProfiler, circuit_name: str = 'inv
         print(f"    First step (JIT compile): {info['first_step_time']:.3f}s")
     if 'avg_step_time' in info:
         print(f"    Avg step time: {info['avg_step_time']*1000:.2f}ms")
+    if 'total_iterations' in info:
+        print(f"    Total iterations: {info['total_iterations']}")
 
     return {
         'circuit': circuit_name,
@@ -370,6 +372,7 @@ def profile_gpu_transient_solver(profiler: GPUProfiler, circuit_name: str = 'inv
         'timesteps': len(t_points),
         'first_step_time': info.get('first_step_time', 0),
         'avg_step_time': info.get('avg_step_time', 0),
+        'total_iterations': info.get('total_iterations', 0),
     }
 
 
@@ -380,12 +383,13 @@ def main():
     print()
 
     profiler = GPUProfiler()
+    profiler.start()  # Track total time
 
     # Profile GPU-native solver on circuits that converge for DC analysis
     # Note: c6288_test is excluded because it doesn't converge for DC operating point
     # with our simplified Level-1 MOSFET model. The VACASK benchmarks for c6288 use
     # transient simulation (not DC), which requires MOSFET support in transient analysis.
-    print("Profiling GPU-native solver (sparsejac + cuSOLVER)...")
+    print("Profiling GPU-native DC solver (sparsejac + cuSOLVER)...")
     for circuit in ['inv_test', 'nor_test']:
         try:
             gpu_info = profile_gpu_native_solver(profiler, circuit)
@@ -394,7 +398,7 @@ def main():
     print()
 
     # Profile GPU transient solver on small circuits
-    print("Profiling GPU-native transient solver (sparsejac + cuSOLVER)...")
+    print("Profiling GPU-native transient solver on small circuits...")
     for circuit in ['inv_test', 'nor_test']:
         try:
             transient_info = profile_gpu_transient_solver(profiler, circuit, num_timesteps=10)
@@ -402,10 +406,28 @@ def main():
             print(f"  {circuit}: Error - {e}")
     print()
 
+    # Profile GPU transient solver on C6288 (the main benchmark)
+    # VACASK uses 1021 timepoints for c6288 with 0.1ns timestep (102.1ns total)
+    print("Profiling GPU-native transient solver on C6288...")
+    try:
+        c6288_info = profile_gpu_transient_solver(
+            profiler,
+            'c6288_test',
+            num_timesteps=100,  # Start with 100 timesteps (10ns)
+            t_step=0.1e-9      # 0.1ns timestep like VACASK
+        )
+    except Exception as e:
+        print(f"  c6288_test: Error - {e}")
+        import traceback
+        traceback.print_exc()
+    print()
+
     # Profile iteration breakdown on smaller circuit (old CPU solver for comparison)
     print("Profiling CPU-based iteration breakdown (inv_test)...")
     profile_iteration_breakdown(profiler)
     print()
+
+    profiler.stop()  # End total time tracking
 
     # Skip the slow C6288 CPU-based profiling by default
     # It takes ~77s per iteration with the old solver
