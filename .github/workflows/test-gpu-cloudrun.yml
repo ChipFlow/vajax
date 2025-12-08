@@ -76,8 +76,8 @@ jobs:
           DEPS_HASH=$(cat pyproject.toml uv.lock scripts/run-gpu-tests.sh Dockerfile.gpu-base | sha256sum | cut -c1-12)
           echo "deps_hash=${DEPS_HASH}" >> "$GITHUB_OUTPUT"
 
-          # Try to pull the image with this hash
-          if docker pull "${{ env.GHCR_IMAGE }}:${DEPS_HASH}" 2>/dev/null; then
+          # Check if image exists using manifest inspect (fast - only fetches metadata)
+          if docker manifest inspect "${{ env.GHCR_IMAGE }}:${DEPS_HASH}" > /dev/null 2>&1; then
             echo "Base image exists for deps hash ${DEPS_HASH}"
             echo "needs_rebuild=false" >> "$GITHUB_OUTPUT"
           else
