@@ -413,8 +413,8 @@ def main():
         c6288_info = profile_gpu_transient_solver(
             profiler,
             'c6288_test',
-            num_timesteps=100,  # Start with 100 timesteps (10ns)
-            t_step=0.1e-9      # 0.1ns timestep like VACASK
+            num_timesteps=1200,  # 1200 timesteps for VACASK comparison (~102ns like VACASK's 1021 points)
+            t_step=0.1e-9       # 0.1ns timestep like VACASK
         )
     except Exception as e:
         print(f"  c6288_test: Error - {e}")
