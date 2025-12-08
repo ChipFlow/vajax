@@ -50,9 +50,6 @@ def sparse_solve(
     backend = jax.default_backend()
     if backend == 'cpu':
         return _spsolve_cpu(data, indices, indptr, b, shape)
-    elif backend == 'tpu':
-        # TPU doesn't have native sparse solve; fall back to CPU via callback
-        return _spsolve_cpu(data, indices, indptr, b, shape)
     else:
         return _spsolve_gpu(data, indices, indptr, b, shape)
 
@@ -201,9 +198,6 @@ def sparse_solve_csr(
     """
     backend = jax.default_backend()
     if backend == 'cpu':
-        return _spsolve_cpu_csr(data, indices, indptr, b, shape)
-    elif backend == 'tpu':
-        # TPU doesn't have native sparse solve; fall back to CPU via callback
         return _spsolve_cpu_csr(data, indices, indptr, b, shape)
     else:
         return _spsolve_gpu(data, indices, indptr, b, shape)
