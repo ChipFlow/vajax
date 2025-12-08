@@ -30,6 +30,42 @@ from jax_spice.analysis.mna import MNASystem, DeviceInfo, DeviceType
 from jax_spice.analysis.context import AnalysisContext
 
 
+def _bcoo_to_csr(bcoo_matrix, n: int) -> Tuple[Array, Array, Array]:
+    """Convert BCOO sparse matrix to CSR arrays for spsolve.
+
+    BCOO format: data (n_nnz,), indices (n_nnz, 2) with [row, col]
+    CSR format: data (n_nnz,), indices (n_nnz,) columns, indptr (n+1,) row pointers
+
+    Args:
+        bcoo_matrix: JAX BCOO sparse matrix
+        n: Number of rows (= number of columns for square matrix)
+
+    Returns:
+        Tuple of (data, indices, indptr) in CSR format
+    """
+    # Extract BCOO components
+    data = bcoo_matrix.data
+    bcoo_indices = bcoo_matrix.indices  # (n_nnz, 2) with [row, col]
+
+    rows = bcoo_indices[:, 0]
+    cols = bcoo_indices[:, 1]
+
+    # Sort by row then column for CSR format
+    # Use lexsort: sort by cols first (secondary), then rows (primary)
+    sort_idx = jnp.lexsort((cols, rows))
+    data = data[sort_idx]
+    rows = rows[sort_idx]
+    cols = cols[sort_idx]
+
+    # Build indptr: count entries per row
+    # indptr[i] = number of entries in rows 0..i-1
+    row_counts = jnp.zeros(n + 1, dtype=jnp.int32)
+    row_counts = row_counts.at[rows + 1].add(1)
+    indptr = jnp.cumsum(row_counts)
+
+    return data, cols.astype(jnp.int32), indptr
+
+
 @dataclass
 class GPUResidualFunction:
     """Encapsulates a pure JAX residual function for a circuit.
@@ -579,19 +615,27 @@ def dc_operating_point_gpu(
             iterations = iteration + 1
             break
 
-        # Compute Jacobian using sparsejac
+        # Compute Jacobian using sparsejac (returns BCOO)
         J = jacobian_fn(V)
 
-        # Convert BCOO to dense for solving (TODO: use sparse solver)
-        J_dense = J.todense()
-
-        # Solve J @ delta_V = -f
-        try:
-            delta_V = jnp.linalg.solve(J_dense, -f)
-        except Exception:
-            # Add regularization if singular
-            reg = 1e-10 * jnp.eye(n_reduced)
-            delta_V = jnp.linalg.solve(J_dense + reg, -f)
+        # Use sparse solver on GPU, dense solver on CPU
+        backend = jax.default_backend()
+        if backend in ('gpu', 'cuda'):
+            # Convert BCOO to CSR arrays for sparse solver
+            # BCOO has: J.data (values), J.indices (n_nnz, 2) with [row, col]
+            # CSR needs: data, col_indices, row_indptr
+            from jax.experimental.sparse.linalg import spsolve as jax_spsolve
+            J_data, J_csr_indices, J_csr_indptr = _bcoo_to_csr(J, n_reduced)
+            delta_V = jax_spsolve(J_data, J_csr_indices, J_csr_indptr, -f, tol=0)
+        else:
+            # CPU: use dense solver (spsolve falls back to scipy anyway)
+            J_dense = J.todense()
+            try:
+                delta_V = jnp.linalg.solve(J_dense, -f)
+            except Exception:
+                # Add regularization if singular
+                reg = 1e-10 * jnp.eye(n_reduced)
+                delta_V = jnp.linalg.solve(J_dense + reg, -f)
 
         # Apply damping with voltage limiting
         max_step = 2.0
