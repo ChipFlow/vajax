@@ -334,9 +334,12 @@ def main():
 
     profiler = GPUProfiler()
 
-    # Profile GPU-native solver on circuits
+    # Profile GPU-native solver on circuits that converge for DC analysis
+    # Note: c6288_test is excluded because it doesn't converge for DC operating point
+    # with our simplified Level-1 MOSFET model. The VACASK benchmarks for c6288 use
+    # transient simulation (not DC), which requires MOSFET support in transient analysis.
     print("Profiling GPU-native solver (sparsejac + cuSOLVER)...")
-    for circuit in ['inv_test', 'nor_test', 'c6288_test']:
+    for circuit in ['inv_test', 'nor_test']:
         try:
             gpu_info = profile_gpu_native_solver(profiler, circuit)
         except Exception as e:
