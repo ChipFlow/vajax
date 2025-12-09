@@ -431,14 +431,15 @@ def main():
     log()
 
     # Profile GPU transient solver on C6288 (the main benchmark)
-    # VACASK uses 1021 timepoints for c6288 with 0.1ns timestep (102.1ns total)
+    # Note: Full VACASK benchmark uses 1021 timepoints, but we reduce to 50 for CI timeout constraints
+    # The 31-minute Cloud Run timeout is tight for large circuits with JIT compilation overhead
     log("[Stage 5/7] Profiling GPU-native transient solver on C6288...")
-    log("  This may take several minutes (1200 timesteps)...")
+    log("  Running 50 timesteps (reduced for CI timeout)...")
     try:
         c6288_info = profile_gpu_transient_solver(
             profiler,
             'c6288_test',
-            num_timesteps=1200,  # 1200 timesteps for VACASK comparison (~102ns like VACASK's 1021 points)
+            num_timesteps=50,   # Reduced from 1200 to fit within CI timeout
             t_step=0.1e-9       # 0.1ns timestep like VACASK
         )
         log("  Completed c6288_test")
