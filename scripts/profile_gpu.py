@@ -377,38 +377,63 @@ def profile_gpu_transient_solver(profiler: GPUProfiler, circuit_name: str = 'inv
 
 
 def main():
-    print("=" * 70)
-    print("JAX-SPICE GPU Profiling")
-    print("=" * 70)
-    print()
+    # Use explicit flush for all prints to ensure output is visible in CI logs
+    def log(msg=""):
+        print(msg)
+        sys.stdout.flush()
 
+    log("=" * 70)
+    log("JAX-SPICE GPU Profiling")
+    log("=" * 70)
+    log()
+
+    log("[Stage 1/7] Checking JAX configuration...")
+    log(f"  JAX backend: {jax.default_backend()}")
+    log(f"  JAX devices: {jax.devices()}")
+    log(f"  Float64 enabled: {jax.config.jax_enable_x64}")
+    log()
+
+    log("[Stage 2/7] Creating profiler...")
     profiler = GPUProfiler()
     profiler.start()  # Track total time
+    log("  Profiler started")
+    log()
 
     # Profile GPU-native solver on circuits that converge for DC analysis
     # Note: c6288_test is excluded because it doesn't converge for DC operating point
     # with our simplified Level-1 MOSFET model. The VACASK benchmarks for c6288 use
     # transient simulation (not DC), which requires MOSFET support in transient analysis.
-    print("Profiling GPU-native DC solver (sparsejac + cuSOLVER)...")
+    log("[Stage 3/7] Profiling GPU-native DC solver (sparsejac + cuSOLVER)...")
     for circuit in ['inv_test', 'nor_test']:
+        log(f"  Starting {circuit}...")
         try:
             gpu_info = profile_gpu_native_solver(profiler, circuit)
+            log(f"  Completed {circuit}")
         except Exception as e:
-            print(f"  {circuit}: Error - {e}")
-    print()
+            log(f"  {circuit}: Error - {e}")
+            import traceback
+            traceback.print_exc()
+            sys.stdout.flush()
+    log()
 
     # Profile GPU transient solver on small circuits
-    print("Profiling GPU-native transient solver on small circuits...")
+    log("[Stage 4/7] Profiling GPU-native transient solver on small circuits...")
     for circuit in ['inv_test', 'nor_test']:
+        log(f"  Starting {circuit}...")
         try:
             transient_info = profile_gpu_transient_solver(profiler, circuit, num_timesteps=10)
+            log(f"  Completed {circuit}")
         except Exception as e:
-            print(f"  {circuit}: Error - {e}")
-    print()
+            log(f"  {circuit}: Error - {e}")
+            import traceback
+            traceback.print_exc()
+            sys.stdout.flush()
+    log()
 
     # Profile GPU transient solver on C6288 (the main benchmark)
     # VACASK uses 1021 timepoints for c6288 with 0.1ns timestep (102.1ns total)
-    print("Profiling GPU-native transient solver on C6288...")
+    log("[Stage 5/7] Profiling GPU-native transient solver on C6288...")
+    log("  This may take several minutes (1200 timesteps)...")
     try:
         c6288_info = profile_gpu_transient_solver(
             profiler,
@@ -416,16 +441,25 @@ def main():
             num_timesteps=1200,  # 1200 timesteps for VACASK comparison (~102ns like VACASK's 1021 points)
             t_step=0.1e-9       # 0.1ns timestep like VACASK
         )
+        log("  Completed c6288_test")
     except Exception as e:
-        print(f"  c6288_test: Error - {e}")
+        log(f"  c6288_test: Error - {e}")
         import traceback
         traceback.print_exc()
-    print()
+        sys.stdout.flush()
+    log()
 
     # Profile iteration breakdown on smaller circuit (old CPU solver for comparison)
-    print("Profiling CPU-based iteration breakdown (inv_test)...")
-    profile_iteration_breakdown(profiler)
-    print()
+    log("[Stage 6/7] Profiling CPU-based iteration breakdown (inv_test)...")
+    try:
+        profile_iteration_breakdown(profiler)
+        log("  Completed iteration breakdown")
+    except Exception as e:
+        log(f"  Error in iteration breakdown: {e}")
+        import traceback
+        traceback.print_exc()
+        sys.stdout.flush()
+    log()
 
     profiler.stop()  # End total time tracking
 
@@ -434,32 +468,44 @@ def main():
     run_c6288_cpu_profile = False
     sim_info = None
     if run_c6288_cpu_profile:
-        print("Profiling C6288 circuit simulation (max 10 iterations)...")
+        log("Profiling C6288 circuit simulation (max 10 iterations)...")
         sim_info = profile_c6288_simulation(profiler, 'c6288_test', max_iterations=10)
-        print(f"  Circuit: {sim_info['circuit']}")
-        print(f"  Nodes: {sim_info['nodes']}")
-        print(f"  Devices: {sim_info['devices']}")
-        print(f"  Converged: {sim_info['converged']}")
-        print(f"  Iterations: {sim_info['iterations']}")
-        print(f"  Residual: {sim_info['residual']:.2e}")
-        print()
+        log(f"  Circuit: {sim_info['circuit']}")
+        log(f"  Nodes: {sim_info['nodes']}")
+        log(f"  Devices: {sim_info['devices']}")
+        log(f"  Converged: {sim_info['converged']}")
+        log(f"  Iterations: {sim_info['iterations']}")
+        log(f"  Residual: {sim_info['residual']:.2e}")
+        log()
 
     # Generate report
-    report = profiler.generate_report()
+    log("[Stage 7/7] Generating report...")
+    try:
+        report = profiler.generate_report()
+        log("  Report generated")
+    except Exception as e:
+        log(f"  Error generating report: {e}")
+        import traceback
+        traceback.print_exc()
+        sys.stdout.flush()
+        report = f"Error generating report: {e}"
 
     # Print to stdout
-    print(report)
+    log()
+    log(report)
 
     # Write to file for CI
+    log()
+    log("Writing report files...")
     report_path = Path(__file__).parent.parent / "profile_report.md"
     report_path.write_text(report)
-    print(f"\nReport written to: {report_path}")
+    log(f"  Report written to: {report_path}")
 
     # Write to GitHub step summary if available
     if 'GITHUB_STEP_SUMMARY' in os.environ:
         with open(os.environ['GITHUB_STEP_SUMMARY'], 'a') as f:
             f.write(report)
-        print("Report appended to GitHub step summary")
+        log("  Report appended to GitHub step summary")
 
     # Also output JSON for programmatic use
     json_report = {
@@ -481,8 +527,21 @@ def main():
 
     json_path = Path(__file__).parent.parent / "profile_report.json"
     json_path.write_text(json.dumps(json_report, indent=2))
-    print(f"JSON report written to: {json_path}")
+    log(f"  JSON report written to: {json_path}")
+
+    log()
+    log("=" * 70)
+    log("Profiling complete!")
+    log("=" * 70)
 
 
 if __name__ == '__main__':
-    main()
+    try:
+        main()
+    except Exception as e:
+        print(f"\n*** FATAL ERROR ***")
+        print(f"Unhandled exception: {e}")
+        import traceback
+        traceback.print_exc()
+        sys.stdout.flush()
+        sys.exit(1)
