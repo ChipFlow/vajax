@@ -10,7 +10,7 @@ This is a BSIM-like model with the essential physics for analog circuit simulati
 All derivatives (gm, gds, gmb) are computed automatically via JAX!
 """
 
-from typing import Dict, NamedTuple, Optional, TYPE_CHECKING
+from typing import Dict, NamedTuple, Optional, Tuple, TYPE_CHECKING
 import jax
 import jax.numpy as jnp
 from jax import Array
@@ -19,6 +19,11 @@ from jax_spice.devices.base import DeviceStamps
 
 if TYPE_CHECKING:
     from jax_spice.analysis.context import AnalysisContext
+
+
+# =============================================================================
+# MOSFET Parameters
+# =============================================================================
 
 
 class MOSFETParams(NamedTuple):
@@ -245,3 +250,202 @@ class MOSFETSimple:
     def __repr__(self):
         ptype = "PMOS" if self.params.pmos else "NMOS"
         return f"MOSFET{ptype}(W={self.params.W*1e6:.2f}um, L={self.params.L*1e6:.3f}um)"
+
+
+# =============================================================================
+# Vectorized Batch Functions
+# =============================================================================
+
+
+def _mosfet_ids_batched(
+    Vgs: Array,
+    Vds: Array,
+    Vbs: Array,
+    W: Array,
+    L: Array,
+    Vth0: Array,
+    gamma: Array,
+    phiB: Array,
+    u0: Array,
+    theta: Array,
+    vsat: Array,
+    a0: Array,
+    lambda_: Array,
+    tox: Array,
+    epsilon_ox: Array,
+    n_sub: Array,
+    Ioff: Array,
+    temp: Array,
+    pmos: Array,
+) -> Array:
+    """MOSFET drain current - pure JAX function for batched evaluation.
+
+    All arguments are arrays of shape (n,) for n devices.
+    This function handles PMOS via pmos array (1.0 for PMOS, 0.0 for NMOS).
+
+    Returns:
+        Ids: Drain current (n,)
+    """
+    # PMOS sign: flip voltages for PMOS (pmos=1), keep for NMOS (pmos=0)
+    sign = 1.0 - 2.0 * pmos  # +1 for NMOS, -1 for PMOS
+    Vgs_eff = sign * Vgs
+    Vds_eff = sign * Vds
+    Vbs_eff = sign * Vbs
+
+    # Thermal voltage
+    k_B = 1.381e-23
+    q = 1.602e-19
+    Vt = k_B * temp / q
+
+    # Oxide capacitance
+    Cox = epsilon_ox / tox
+
+    # Threshold voltage with body effect
+    sqrt_term = jnp.sqrt(jnp.maximum(2 * phiB - Vbs_eff, 0.1))
+    sqrt_2phiB = jnp.sqrt(2 * phiB)
+    Vth = Vth0 + gamma * (sqrt_term - sqrt_2phiB)
+
+    # Gate overdrive
+    Vgst = Vgs_eff - Vth
+
+    # Subthreshold region (Vgst < 0)
+    # The exponential model is only valid for weak inversion (Vgst < 0)
+    # For Vgst >= 0, cap the subthreshold current at Ioff (the knee point)
+    Ioff_scaled = Ioff * W / 1e-6
+    Vgst_sub = jnp.minimum(Vgst, 0.0)  # Cap at 0 to prevent huge exponential
+    I_sub = Ioff_scaled * jnp.exp(Vgst_sub / (n_sub * Vt))
+
+    # Strong inversion - use effective overdrive that's zero in cutoff
+    # This prevents negative Vgst from causing spurious positive current
+    Vgst_pos = jnp.maximum(Vgst, 0.0)
+
+    Eeff = (Vgst_pos + Vds_eff / 2) / tox
+    ueff = u0 / (1 + theta * jnp.maximum(Eeff, 0.0) * tox)
+
+    beta_eff = ueff * Cox * W / L
+
+    # Saturation voltage with velocity saturation
+    Ecrit = vsat / ueff
+    EcritL = Ecrit * L
+    # Use Vgst_pos for Vdsat to avoid negative saturation voltage
+    Vdsat = Vgst_pos / (1 + a0 * Vgst_pos / EcritL + 1e-9)  # Add small term to avoid division issues
+
+    # Smooth transition linear/saturation
+    Vdseff = Vdsat * jnp.tanh(Vds_eff / jnp.maximum(Vdsat, 0.01))
+
+    # Drain current in strong inversion (using Vgst_pos)
+    I_strong = beta_eff * Vgst_pos * Vdseff * (1 + lambda_ * Vds_eff)
+
+    # Smooth transition subthreshold/strong
+    # Ensure I_strong is non-negative before log
+    I_strong_safe = jnp.maximum(I_strong, 1e-30)
+    I_total = jnp.exp(jnp.logaddexp(
+        jnp.log(I_sub + 1e-30),
+        jnp.log(I_strong_safe)
+    ))
+
+    # Ensure positive, then flip sign for PMOS
+    Ids = jnp.maximum(I_total, 0.0) * sign
+
+    return Ids
+
+
+def mosfet_batch(
+    V_batch: Array,
+    params: Dict[str, Array],
+) -> Tuple[Array, Array, Array, Array]:
+    """Vectorized MOSFET evaluation for batch processing.
+
+    Evaluates multiple MOSFETs in parallel using JAX operations.
+    This is the GPU-friendly batch version for use in GPU-native stamping.
+
+    Args:
+        V_batch: Terminal voltages (n, 4) - [[V_d, V_g, V_s, V_b], ...] per device
+        params: Dict with (n,) arrays for each parameter:
+            - W: Width (m)
+            - L: Length (m)
+            - Vth0: Threshold voltage (V)
+            - gamma: Body effect coefficient (V^0.5)
+            - phiB: Surface potential (V)
+            - u0: Low-field mobility (m^2/V/s)
+            - theta: Mobility degradation (1/V)
+            - vsat: Saturation velocity (m/s)
+            - a0: Saturation parameter
+            - lambda_: Channel length modulation (1/V)
+            - tox: Oxide thickness (m)
+            - epsilon_ox: Oxide permittivity (F/m)
+            - n_sub: Subthreshold slope factor
+            - Ioff: Off current (A/um)
+            - temp: Temperature (K)
+            - pmos: 1.0 for PMOS, 0.0 for NMOS
+
+    Returns:
+        Tuple of (n,) arrays:
+            Ids: Drain current
+            gm: Transconductance (dIds/dVgs)
+            gds: Output conductance (dIds/dVds)
+            gmb: Body transconductance (dIds/dVbs)
+
+    Note:
+        Stamps into MNA system (4-terminal device):
+        - Residual: f[d] += Ids, f[s] -= Ids
+        - Jacobian: gm, gds, gmb stamps (see MOSFETSimple.evaluate for pattern)
+    """
+    # Extract voltages (source-referenced)
+    Vd = V_batch[:, 0]
+    Vg = V_batch[:, 1]
+    Vs = V_batch[:, 2]
+    Vb = V_batch[:, 3]
+
+    Vgs = Vg - Vs
+    Vds = Vd - Vs
+    Vbs = Vb - Vs
+
+    # Extract parameters
+    W = params['W']
+    L = params['L']
+    Vth0 = params['Vth0']
+    gamma = params['gamma']
+    phiB = params['phiB']
+    u0 = params['u0']
+    theta = params['theta']
+    vsat = params['vsat']
+    a0 = params['a0']
+    lambda_ = params['lambda_']
+    tox = params['tox']
+    epsilon_ox = params['epsilon_ox']
+    n_sub = params['n_sub']
+    Ioff = params['Ioff']
+    temp = params['temp']
+    pmos = params['pmos']
+
+    # Compute Ids
+    Ids = _mosfet_ids_batched(
+        Vgs, Vds, Vbs,
+        W, L, Vth0, gamma, phiB, u0, theta, vsat, a0, lambda_,
+        tox, epsilon_ox, n_sub, Ioff, temp, pmos
+    )
+
+    # Compute derivatives via JAX autodiff
+    # gm = dIds/dVgs
+    grad_fn = jax.grad(_mosfet_ids_batched, argnums=0)
+    gm = jax.vmap(lambda vgs, vds, vbs, w, l, vth0, g, pb, u, th, vs, a, lam, tx, eox, ns, io, t, p:
+        grad_fn(vgs, vds, vbs, w, l, vth0, g, pb, u, th, vs, a, lam, tx, eox, ns, io, t, p)
+    )(Vgs, Vds, Vbs, W, L, Vth0, gamma, phiB, u0, theta, vsat, a0, lambda_,
+      tox, epsilon_ox, n_sub, Ioff, temp, pmos)
+
+    # gds = dIds/dVds
+    grad_fn = jax.grad(_mosfet_ids_batched, argnums=1)
+    gds = jax.vmap(lambda vgs, vds, vbs, w, l, vth0, g, pb, u, th, vs, a, lam, tx, eox, ns, io, t, p:
+        grad_fn(vgs, vds, vbs, w, l, vth0, g, pb, u, th, vs, a, lam, tx, eox, ns, io, t, p)
+    )(Vgs, Vds, Vbs, W, L, Vth0, gamma, phiB, u0, theta, vsat, a0, lambda_,
+      tox, epsilon_ox, n_sub, Ioff, temp, pmos)
+
+    # gmb = dIds/dVbs
+    grad_fn = jax.grad(_mosfet_ids_batched, argnums=2)
+    gmb = jax.vmap(lambda vgs, vds, vbs, w, l, vth0, g, pb, u, th, vs, a, lam, tx, eox, ns, io, t, p:
+        grad_fn(vgs, vds, vbs, w, l, vth0, g, pb, u, th, vs, a, lam, tx, eox, ns, io, t, p)
+    )(Vgs, Vds, Vbs, W, L, Vth0, gamma, phiB, u0, theta, vsat, a0, lambda_,
+      tox, epsilon_ox, n_sub, Ioff, temp, pmos)
+
+    return Ids, gm, gds, gmb

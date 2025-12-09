@@ -517,13 +517,17 @@ class MNASystem:
 
         return (data, indices, indptr, (n, n)), residual
 
-    def build_device_groups(self) -> None:
+    def build_device_groups(self, vdd: float = 1.2) -> None:
         """Build vectorized device groups from the devices list
 
         Groups devices by type and creates VectorizedDeviceGroup instances
         with pre-computed node indices and parameter arrays.
+
+        Args:
+            vdd: Supply voltage for resolving 'vdd' parameter references
         """
         from collections import defaultdict
+        from jax_spice.analysis.dc_gpu import eval_param_simple
 
         # Group devices by type
         type_to_devices: Dict[DeviceType, List[DeviceInfo]] = defaultdict(list)
@@ -532,9 +536,9 @@ class MNASystem:
             # Determine device type from model name or eval_fn
             model_lower = device.model_name.lower()
 
-            if 'vsource' in model_lower or 'vdc' in model_lower:
+            if 'vsource' in model_lower or 'vdc' in model_lower or model_lower == 'v':
                 dtype = DeviceType.VSOURCE
-            elif 'isource' in model_lower or 'idc' in model_lower:
+            elif 'isource' in model_lower or 'idc' in model_lower or model_lower == 'i':
                 dtype = DeviceType.ISOURCE
             elif 'resistor' in model_lower or model_lower.startswith('r'):
                 dtype = DeviceType.RESISTOR
@@ -568,12 +572,23 @@ class MNASystem:
             )
 
             # Build parameter arrays
-            # Collect all unique parameter names
+            # Collect all unique parameter names, resolving string references
             all_params: Dict[str, List[float]] = defaultdict(list)
             for device in devices:
                 for key, val in device.params.items():
-                    if isinstance(val, (int, float)):
-                        all_params[key].append(float(val))
+                    # Use eval_param_simple to resolve references like 'vdd'
+                    resolved = eval_param_simple(val, vdd=vdd)
+                    all_params[key].append(float(resolved))
+
+            # For MOSFETs, add pmos flag based on model name
+            if dtype == DeviceType.MOSFET:
+                pmos_flags = []
+                for device in devices:
+                    model_lower = device.model_name.lower()
+                    # Detect PMOS by model name patterns
+                    is_pmos = 'pmos' in model_lower or model_lower.endswith('p')
+                    pmos_flags.append(1.0 if is_pmos else 0.0)
+                all_params['pmos'] = pmos_flags
 
             # Convert to JAX arrays
             params = {}
@@ -589,3 +604,133 @@ class MNASystem:
                 params=params
             )
             self.device_groups.append(group)
+
+    def build_gpu_residual_fn(
+        self,
+        vdd: float = 1.0,
+        gmin: float = 1e-12,
+    ) -> Callable[[Array], Array]:
+        """Build pure JAX residual function for GPU execution.
+
+        Returns a function f(V) -> residual that uses only JAX operations,
+        enabling automatic differentiation and GPU-native execution.
+
+        This replaces Python stamping loops with JAX scatter operations
+        for significant speedup on GPU.
+
+        Args:
+            vdd: Supply voltage for voltage sources
+            gmin: GMIN conductance for numerical stability
+
+        Returns:
+            f(V) -> residual function, where V has shape (num_nodes,)
+            and residual has shape (num_nodes-1,) excluding ground
+
+        Note:
+            Requires device_groups to be populated (via build_device_groups()).
+        """
+        from jax_spice.devices.resistor import resistor_batch
+        from jax_spice.devices.mosfet_simple import mosfet_batch
+        from jax_spice.analysis.mna_gpu import (
+            stamp_2terminal_residual_gpu,
+            stamp_4terminal_residual_gpu,
+            stamp_gmin_residual_gpu,
+            build_mosfet_params_from_group,
+        )
+
+        # Pre-extract static data from device groups
+        # This is done once at function build time, not during evaluation
+        group_data = []
+        for group in self.device_groups:
+            if group.n_devices == 0:
+                continue
+
+            data = {
+                'type': group.device_type,
+                'n_devices': group.n_devices,
+                'node_indices': group.node_indices,
+                'params': group.params,
+            }
+
+            # Pre-build parameter arrays for MOSFETs
+            if group.device_type == DeviceType.MOSFET:
+                data['mosfet_params'] = build_mosfet_params_from_group(group)
+
+            group_data.append(data)
+
+        n = self.num_nodes - 1
+        ground_node = self.ground_node
+
+        def residual_fn(V: Array) -> Array:
+            """Compute residual vector using GPU-native operations.
+
+            Args:
+                V: Node voltages (num_nodes,) including ground
+
+            Returns:
+                Residual vector (num_nodes-1,) excluding ground
+            """
+            residual = jnp.zeros(n, dtype=V.dtype)
+
+            for data in group_data:
+                dtype_enum = data['type']
+                node_indices = data['node_indices']
+                params = data['params']
+
+                # Get terminal voltages for all devices
+                V_batch = V[node_indices]  # (n_devices, n_terminals)
+
+                if dtype_enum == DeviceType.RESISTOR:
+                    # Resistor: I = (V_p - V_n) / R
+                    R_batch = params.get('r', params.get('R', jnp.ones(data['n_devices']) * 1000.0))
+                    V_diff = V_batch[:, 0] - V_batch[:, 1]  # V_p - V_n
+                    I_batch = V_diff / R_batch
+
+                    node_p = node_indices[:, 0]
+                    node_n = node_indices[:, 1]
+
+                    residual = stamp_2terminal_residual_gpu(
+                        residual, node_p, node_n, I_batch, ground_node
+                    )
+
+                elif dtype_enum == DeviceType.VSOURCE:
+                    # Voltage source: enforce V_p - V_n = V_target
+                    # Using large conductance method (penalty approach)
+                    # Must match VoltageSource.G_BIG = 1e12 in vsource.py
+                    V_target = params.get('v', params.get('dc', jnp.zeros(data['n_devices'])))
+                    V_diff = V_batch[:, 0] - V_batch[:, 1]
+                    # Current = G * (V_diff - V_target) where G is large
+                    # V_target is already the resolved voltage value (e.g., 1.2V for VDD)
+                    G_vsource = 1e12  # Must match VoltageSource.G_BIG
+                    I_batch = G_vsource * (V_diff - V_target)
+
+                    node_p = node_indices[:, 0]
+                    node_n = node_indices[:, 1]
+
+                    residual = stamp_2terminal_residual_gpu(
+                        residual, node_p, node_n, I_batch, ground_node
+                    )
+
+                elif dtype_enum == DeviceType.MOSFET:
+                    # MOSFET: evaluate drain current using batched model
+                    mosfet_params = data['mosfet_params']
+
+                    # V_batch is (n_devices, 4) with [V_d, V_g, V_s, V_b]
+                    Ids, _gm, _gds, _gmb = mosfet_batch(V_batch, mosfet_params)
+
+                    node_d = node_indices[:, 0]
+                    node_g = node_indices[:, 1]
+                    node_s = node_indices[:, 2]
+                    node_b = node_indices[:, 3]
+
+                    residual = stamp_4terminal_residual_gpu(
+                        residual, node_d, node_g, node_s, node_b,
+                        Ids, ground_node
+                    )
+
+            # Add GMIN contribution
+            residual = stamp_gmin_residual_gpu(residual, V, gmin, ground_node)
+
+            return residual
+
+        return residual_fn
