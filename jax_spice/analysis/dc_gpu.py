@@ -1052,3 +1052,470 @@ def dc_operating_point_gpu_jit(
     }
 
     return V_full, info
+
+
+def dc_operating_point_gpu_vectorized(
+    system: MNASystem,
+    initial_guess: Optional[Array] = None,
+    max_iterations: int = 100,
+    abstol: float = 1e-9,
+    reltol: float = 1e-3,
+    vdd: float = 1.2,
+    gmin: float = 1e-9,
+    verbose: bool = False,
+) -> Tuple[Array, Dict]:
+    """GPU DC solver using vectorized device evaluation from MNASystem.
+
+    This solver uses build_gpu_residual_fn() which evaluates all devices
+    of the same type in parallel using mosfet_batch() and other vectorized
+    device functions. The Jacobian is computed via JAX autodiff.
+
+    This uses the more sophisticated BSIM-like MOSFET model from mosfet_simple.py
+    rather than the simpler Level-1 model.
+
+    Args:
+        system: MNA system with devices
+        initial_guess: Initial voltage estimate (shape: [num_nodes])
+        max_iterations: Maximum NR iterations
+        abstol: Absolute tolerance for convergence
+        reltol: Relative tolerance for convergence
+        vdd: Supply voltage
+        gmin: Minimum conductance from each node to ground
+        verbose: Print iteration details
+
+    Returns:
+        Tuple of (solution, info) where:
+            solution: Node voltages (shape: [num_nodes])
+            info: Dict with convergence information
+    """
+    if sparsejac is None:
+        raise ImportError("sparsejac is required for GPU-native DC analysis. "
+                         "Install with: pip install sparsejac")
+
+    n = system.num_nodes
+    n_reduced = n - 1
+
+    # Build device groups for vectorized evaluation
+    system.build_device_groups(vdd=vdd)
+
+    # Build the GPU residual function using vectorized device evaluation
+    gpu_residual_fn = system.build_gpu_residual_fn(vdd=vdd, gmin=gmin)
+
+    # Wrapper that takes reduced voltage vector (excluding ground)
+    def residual_fn(V_reduced: Array) -> Array:
+        V_full = jnp.concatenate([jnp.array([0.0]), V_reduced])
+        return gpu_residual_fn(V_full)
+
+    # Build sparsity pattern for efficient sparse Jacobian
+    sparsity_rows, sparsity_cols = system.build_sparsity_pattern()
+
+    # Create BCOO sparsity matrix for sparsejac
+    n_nnz = len(sparsity_rows)
+    sparsity_data = jnp.ones(n_nnz, dtype=jnp.float64)
+    sparsity_indices = jnp.stack([sparsity_rows, sparsity_cols], axis=-1)
+    sparsity = jsparse.BCOO((sparsity_data, sparsity_indices), shape=(n_reduced, n_reduced))
+
+    # Create sparse Jacobian function using sparsejac
+    jacobian_fn = sparsejac.jacrev(residual_fn, sparsity=sparsity)
+
+    # Initialize solution
+    if initial_guess is not None:
+        V = jnp.array(initial_guess[1:], dtype=jnp.float64)
+    else:
+        # Initialize all internal nodes to vdd/2 for better starting point
+        # This helps avoid the extreme Jacobian entries when nodes are at 0
+        V = jnp.full(n_reduced, vdd / 2, dtype=jnp.float64)
+        # Initialize vdd nodes to full vdd
+        for name, idx in system.node_names.items():
+            if 'vdd' in name.lower() and idx > 0:
+                V = V.at[idx - 1].set(vdd)
+            # Initialize vss and ground-referenced nodes to 0
+            elif 'vss' in name.lower() and idx > 0:
+                V = V.at[idx - 1].set(0.0)
+            # Initialize input nodes to 0 (assuming low inputs)
+            elif 'in' in name.lower() and idx > 0:
+                V = V.at[idx - 1].set(0.0)
+
+    # Direct Newton-Raphson without source stepping
+    # Source stepping doesn't work well with BSIM-like models at low VDD
+    converged = False
+    iterations = 0
+    residual_norm = 1e20
+    delta_norm = 0.0
+    residual_history = []
+
+    for iteration in range(max_iterations):
+        f = residual_fn(V)
+        residual_norm = float(jnp.max(jnp.abs(f)))
+        residual_history.append(residual_norm)
+
+        if verbose and iterations < 5:
+            print(f"  Iter {iterations}: residual={residual_norm:.2e}, V[out]={float(V[2]) if len(V) > 2 else 0:.4f}")
+
+        # Check convergence
+        # Account for GMIN contribution: GMIN * Vnode can add to residual
+        gmin_floor = gmin * float(jnp.max(jnp.abs(V)))
+        effective_tol = max(abstol, gmin_floor * 2.0)
+        if residual_norm < effective_tol:
+            converged = True
+            break
+
+        # Compute sparse Jacobian using sparsejac (returns BCOO)
+        J = jacobian_fn(V)
+
+        # Solve linear system
+        # Use sparse solver on GPU, dense solver on CPU
+        backend = jax.default_backend()
+        if backend in ('gpu', 'cuda'):
+            # Convert BCOO to CSR arrays for sparse solver
+            from jax.experimental.sparse.linalg import spsolve as jax_spsolve
+            J_data, J_csr_indices, J_csr_indptr = _bcoo_to_csr(J, n_reduced)
+            delta_V = jax_spsolve(J_data, J_csr_indices, J_csr_indptr, -f, tol=0)
+        else:
+            # CPU: use dense solver
+            J_dense = J.todense()
+            try:
+                delta_V = jnp.linalg.solve(J_dense, -f)
+            except Exception:
+                # Add regularization if singular
+                J_reg = J_dense + 1e-12 * jnp.eye(n_reduced)
+                delta_V = jnp.linalg.solve(J_reg, -f)
+
+        # Voltage limiting
+        max_step = 0.5 * vdd
+        max_delta = float(jnp.max(jnp.abs(delta_V)))
+        if verbose and iterations < 5:
+            print(f"    raw delta_V[out] = {float(delta_V[2]) if len(delta_V) > 2 else 0:.4f}, max_delta = {max_delta:.4f}")
+        if max_delta > max_step:
+            delta_V = delta_V * (max_step / max_delta)
+            if verbose and iterations < 5:
+                print(f"    limited delta_V[out] = {float(delta_V[2]) if len(delta_V) > 2 else 0:.4f}")
+
+        # Line search backtracking to prevent residual from increasing
+        alpha = 1.0
+        V_new = V + alpha * delta_V
+        V_new = jnp.clip(V_new, -vdd * 2.0, vdd * 2.0)
+        f_new = residual_fn(V_new)
+        new_residual = float(jnp.max(jnp.abs(f_new)))
+
+        # Backtrack only if residual increases dramatically (more than 5x)
+        # and we're not already close to convergence
+        backtrack_count = 0
+        while (new_residual > 5.0 * residual_norm and
+               residual_norm > 1e-6 and
+               backtrack_count < 3 and
+               alpha > 0.1):
+            alpha *= 0.5
+            V_new = V + alpha * delta_V
+            V_new = jnp.clip(V_new, -vdd * 2.0, vdd * 2.0)
+            f_new = residual_fn(V_new)
+            new_residual = float(jnp.max(jnp.abs(f_new)))
+            backtrack_count += 1
+
+        if verbose and iterations < 5 and backtrack_count > 0:
+            print(f"    backtracked {backtrack_count}x, alpha={alpha:.3f}")
+
+        # Update solution
+        V = V_new
+        delta_norm = float(jnp.max(jnp.abs(alpha * delta_V)))
+
+        # Clamp to reasonable range
+        v_clamp = vdd * 2.0
+        V = jnp.clip(V, -v_clamp, v_clamp)
+
+        iterations += 1
+
+    # Build full voltage vector with ground
+    V_full = jnp.concatenate([jnp.array([0.0]), V])
+
+    info = {
+        'converged': converged,
+        'iterations': iterations,
+        'residual_norm': residual_norm,
+        'delta_norm': delta_norm,
+        'residual_history': residual_history,
+        'method': 'gpu_vectorized',
+    }
+
+    return V_full, info
+
+
+def dc_operating_point_gpu_vectorized_source_stepping(
+    system: MNASystem,
+    initial_guess: Optional[Array] = None,
+    vdd_target: float = 1.2,
+    vdd_steps: int = 6,
+    max_iterations_per_step: int = 50,
+    abstol: float = 1e-9,
+    reltol: float = 1e-3,
+    gmin: float = 1e-9,
+    gmin_fallback: float = 1e-6,
+    verbose: bool = False,
+) -> Tuple[Array, Dict]:
+    """GPU DC solver with BSIM model and source stepping.
+
+    This combines the vectorized BSIM-like MOSFET model from mosfet_simple.py
+    with source stepping for robust convergence on multi-stage circuits.
+
+    Args:
+        system: MNA system with devices
+        initial_guess: Initial voltage estimate (shape: [num_nodes])
+        vdd_target: Target supply voltage (default 1.2V)
+        vdd_steps: Number of voltage steps (default 6)
+        max_iterations_per_step: Max NR iterations per source step
+        abstol: Absolute tolerance for convergence
+        reltol: Relative tolerance for convergence
+        gmin: GMIN value for matrix conditioning
+        gmin_fallback: Higher GMIN for fallback on difficult steps
+        verbose: Print progress information
+
+    Returns:
+        Tuple of (solution, info)
+    """
+    if sparsejac is None:
+        raise ImportError("sparsejac is required for GPU-native DC analysis. "
+                         "Install with: pip install sparsejac")
+
+    n = system.num_nodes
+    n_reduced = n - 1
+
+    # Find vdd node indices
+    vdd_node_indices = []
+    for name, idx in system.node_names.items():
+        name_lower = name.lower()
+        if 'vdd' in name_lower and name_lower not in ('vss', 'gnd', '0'):
+            vdd_node_indices.append(idx)
+
+    # Initialize solution
+    if initial_guess is not None:
+        V = np.array(initial_guess, dtype=np.float64)
+    else:
+        V = np.zeros(n, dtype=np.float64)
+
+    total_iterations = 0
+    source_steps = 0
+    all_residual_history = []
+
+    # Generate voltage steps
+    vdd_values = np.linspace(vdd_target / vdd_steps, vdd_target, vdd_steps)
+
+    if verbose:
+        print(f"BSIM Source stepping: 0 -> {vdd_target:.2f}V in {vdd_steps} steps", flush=True)
+
+    converged_at_target = False
+    last_info = {'converged': False, 'iterations': 0, 'residual_norm': 1e20}
+
+    for step_idx, vdd_step in enumerate(vdd_values):
+        source_steps += 1
+        is_final_step = (step_idx == len(vdd_values) - 1)
+
+        # Set vdd nodes to current step voltage
+        for idx in vdd_node_indices:
+            V[idx] = vdd_step
+
+        if verbose:
+            print(f"  Step {source_steps}: Vdd={vdd_step:.3f}V", flush=True)
+
+        # Use relaxed tolerance for intermediate steps
+        step_abstol = abstol if is_final_step else max(abstol, 1e-4)
+        current_gmin = gmin
+
+        # Build device groups for this VDD
+        system.build_device_groups(vdd=vdd_step)
+
+        # Run Newton-Raphson at this step
+        V_jax, info = _newton_raphson_bsim(
+            system,
+            initial_guess=V,
+            max_iterations=max_iterations_per_step,
+            abstol=step_abstol,
+            reltol=reltol,
+            vdd=vdd_step,
+            gmin=current_gmin,
+        )
+
+        V = np.array(V_jax)
+        total_iterations += info['iterations']
+        all_residual_history.extend(info['residual_history'])
+        last_info = info
+
+        if verbose:
+            print(f"    -> iter={info['iterations']}, residual={info['residual_norm']:.2e}, "
+                  f"converged={info['converged']}", flush=True)
+
+        # Fallback with higher GMIN for difficult steps
+        if not info['converged']:
+            if not is_final_step and info['residual_norm'] < 1e-3:
+                if verbose:
+                    print(f"    Accepting partial convergence", flush=True)
+            else:
+                if verbose:
+                    print(f"    Trying with higher GMIN ({gmin_fallback:.0e})...", flush=True)
+
+                V_jax_h, info_h = _newton_raphson_bsim(
+                    system,
+                    initial_guess=V,
+                    max_iterations=max_iterations_per_step * 2,
+                    abstol=1e-3 if not is_final_step else abstol,
+                    reltol=reltol,
+                    vdd=vdd_step,
+                    gmin=gmin_fallback,
+                )
+
+                if info_h['residual_norm'] < info['residual_norm']:
+                    V = np.array(V_jax_h)
+                    total_iterations += info_h['iterations']
+                    all_residual_history.extend(info_h['residual_history'])
+                    last_info = info_h
+
+                if verbose:
+                    print(f"      -> iter={info_h['iterations']}, "
+                          f"residual={info_h['residual_norm']:.2e}", flush=True)
+
+        if is_final_step and last_info['converged']:
+            converged_at_target = True
+
+    result_info = {
+        'converged': converged_at_target,
+        'iterations': total_iterations,
+        'source_steps': source_steps,
+        'final_vdd': vdd_values[-1],
+        'residual_norm': last_info['residual_norm'],
+        'delta_norm': last_info.get('delta_norm', 0.0),
+        'residual_history': all_residual_history,
+        'method': 'gpu_vectorized_bsim_source_stepping',
+    }
+
+    if verbose:
+        print(f"  Complete: steps={source_steps}, iter={total_iterations}, "
+              f"converged={converged_at_target}", flush=True)
+
+    return jnp.array(V), result_info
+
+
+def _newton_raphson_bsim(
+    system: MNASystem,
+    initial_guess: Array,
+    max_iterations: int = 50,
+    abstol: float = 1e-9,
+    reltol: float = 1e-3,
+    vdd: float = 1.2,
+    gmin: float = 1e-9,
+) -> Tuple[Array, Dict]:
+    """Internal Newton-Raphson solver using BSIM model with sparsejac.
+
+    Args:
+        system: MNA system with device groups built
+        initial_guess: Initial voltage estimate (full array including ground)
+        max_iterations: Maximum NR iterations
+        abstol: Absolute tolerance
+        reltol: Relative tolerance
+        vdd: Current supply voltage for clamping
+        gmin: GMIN conductance
+
+    Returns:
+        Tuple of (solution, info)
+    """
+    n = system.num_nodes
+    n_reduced = n - 1
+
+    # Build the GPU residual function using vectorized device evaluation
+    gpu_residual_fn = system.build_gpu_residual_fn(vdd=vdd, gmin=gmin)
+
+    # Wrapper that takes reduced voltage vector (excluding ground)
+    def residual_fn(V_reduced: Array) -> Array:
+        V_full = jnp.concatenate([jnp.array([0.0]), V_reduced])
+        return gpu_residual_fn(V_full)
+
+    # Build sparsity pattern for efficient sparse Jacobian
+    sparsity_rows, sparsity_cols = system.build_sparsity_pattern()
+
+    # Create BCOO sparsity matrix for sparsejac
+    n_nnz = len(sparsity_rows)
+    sparsity_data = jnp.ones(n_nnz, dtype=jnp.float64)
+    sparsity_indices = jnp.stack([sparsity_rows, sparsity_cols], axis=-1)
+    sparsity = jsparse.BCOO((sparsity_data, sparsity_indices), shape=(n_reduced, n_reduced))
+
+    # Create sparse Jacobian function using sparsejac
+    jacobian_fn = sparsejac.jacrev(residual_fn, sparsity=sparsity)
+
+    # Initialize (skip ground)
+    V = jnp.array(initial_guess[1:], dtype=jnp.float64)
+
+    converged = False
+    iterations = 0
+    residual_norm = 1e20
+    delta_norm = 0.0
+    residual_history = []
+
+    for iteration in range(max_iterations):
+        # Compute residual
+        f = residual_fn(V)
+        residual_norm = float(jnp.max(jnp.abs(f)))
+        residual_history.append(residual_norm)
+
+        # Check convergence with GMIN floor
+        gmin_floor = gmin * float(jnp.max(jnp.abs(V)))
+        effective_tol = max(abstol, gmin_floor * 2.0)
+        if residual_norm < effective_tol:
+            converged = True
+            iterations = iteration + 1
+            break
+
+        # Compute Jacobian using sparsejac (returns BCOO)
+        J = jacobian_fn(V)
+
+        # Solve (dense on CPU, sparse on GPU)
+        backend = jax.default_backend()
+        if backend in ('gpu', 'cuda'):
+            from jax.experimental.sparse.linalg import spsolve as jax_spsolve
+            J_data, J_csr_indices, J_csr_indptr = _bcoo_to_csr(J, n_reduced)
+            delta_V = jax_spsolve(J_data, J_csr_indices, J_csr_indptr, -f, tol=0)
+        else:
+            J_dense = J.todense()
+            try:
+                delta_V = jnp.linalg.solve(J_dense, -f)
+            except Exception:
+                reg = 1e-10 * jnp.eye(n_reduced)
+                delta_V = jnp.linalg.solve(J_dense + reg, -f)
+
+        # Voltage limiting
+        max_step = 0.5 * vdd
+        max_delta = float(jnp.max(jnp.abs(delta_V)))
+        if max_delta > max_step:
+            delta_V = delta_V * (max_step / max_delta)
+
+        # Line search backtracking
+        alpha = 1.0
+        V_new = V + alpha * delta_V
+        V_new = jnp.clip(V_new, -vdd * 2.0, vdd * 2.0)
+        f_new = residual_fn(V_new)
+        new_residual = float(jnp.max(jnp.abs(f_new)))
+
+        backtrack_count = 0
+        while (new_residual > 5.0 * residual_norm and
+               residual_norm > 1e-6 and
+               backtrack_count < 3 and
+               alpha > 0.1):
+            alpha *= 0.5
+            V_new = V + alpha * delta_V
+            V_new = jnp.clip(V_new, -vdd * 2.0, vdd * 2.0)
+            f_new = residual_fn(V_new)
+            new_residual = float(jnp.max(jnp.abs(f_new)))
+            backtrack_count += 1
+
+        V = V_new
+        delta_norm = float(jnp.max(jnp.abs(alpha * delta_V)))
+        iterations = iteration + 1
+
+    V_full = jnp.concatenate([jnp.array([0.0]), V])
+
+    info = {
+        'converged': converged,
+        'iterations': iterations,
+        'residual_norm': residual_norm,
+        'delta_norm': delta_norm,
+        'residual_history': residual_history,
+    }
+
+    return V_full, info

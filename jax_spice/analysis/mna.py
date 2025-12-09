@@ -734,3 +734,71 @@ class MNASystem:
             return residual
 
         return residual_fn
+
+    def build_sparsity_pattern(self) -> Tuple[Array, Array]:
+        """Build sparsity pattern (row, col indices) for Jacobian.
+
+        Returns sparse indices for the Jacobian matrix based on device connectivity.
+        This is used by sparsejac for efficient sparse autodiff.
+
+        Returns:
+            Tuple of (row_indices, col_indices) arrays
+        """
+        import jax.numpy as jnp
+
+        n = self.num_nodes
+        ground_node = 0
+
+        # Collect all (row, col) pairs where Jacobian is nonzero
+        # Using sets to avoid duplicates
+        nonzero_pairs = set()
+
+        for group in self.device_groups:
+            if group.n_devices == 0:
+                continue
+
+            node_indices = group.node_indices  # (n_devices, n_terminals)
+
+            if group.device_type == DeviceType.RESISTOR:
+                # 2-terminal: J[p,p], J[p,n], J[n,p], J[n,n]
+                for dev_idx in range(group.n_devices):
+                    p, n_node = int(node_indices[dev_idx, 0]), int(node_indices[dev_idx, 1])
+                    for row in [p, n_node]:
+                        for col in [p, n_node]:
+                            if row != ground_node and col != ground_node:
+                                nonzero_pairs.add((row - 1, col - 1))
+
+            elif group.device_type == DeviceType.VSOURCE:
+                # 2-terminal penalty method: same as resistor
+                for dev_idx in range(group.n_devices):
+                    p, n_node = int(node_indices[dev_idx, 0]), int(node_indices[dev_idx, 1])
+                    for row in [p, n_node]:
+                        for col in [p, n_node]:
+                            if row != ground_node and col != ground_node:
+                                nonzero_pairs.add((row - 1, col - 1))
+
+            elif group.device_type == DeviceType.MOSFET:
+                # 4-terminal: d, g, s, b affect d and s currents
+                for dev_idx in range(group.n_devices):
+                    d, g, s, b = [int(node_indices[dev_idx, i]) for i in range(4)]
+                    # Rows affected: d and s (current flows d->s)
+                    # Cols affecting: d, g, s, b (all terminal voltages)
+                    for row in [d, s]:
+                        for col in [d, g, s, b]:
+                            if row != ground_node and col != ground_node:
+                                nonzero_pairs.add((row - 1, col - 1))
+
+        # Add GMIN diagonal entries
+        for i in range(n - 1):
+            nonzero_pairs.add((i, i))
+
+        # Convert to arrays
+        if nonzero_pairs:
+            pairs = list(nonzero_pairs)
+            rows = jnp.array([p[0] for p in pairs], dtype=jnp.int32)
+            cols = jnp.array([p[1] for p in pairs], dtype=jnp.int32)
+        else:
+            rows = jnp.array([], dtype=jnp.int32)
+            cols = jnp.array([], dtype=jnp.int32)
+
+        return rows, cols

@@ -319,7 +319,10 @@ def _mosfet_ids_batched(
     # This prevents negative Vgst from causing spurious positive current
     Vgst_pos = jnp.maximum(Vgst, 0.0)
 
-    Eeff = (Vgst_pos + Vds_eff / 2) / tox
+    # Effective field for mobility degradation
+    # Use only Vgst (not Vds) to avoid negative gds issues
+    # This simplification ensures gds remains positive while preserving key physics
+    Eeff = Vgst_pos / tox
     ueff = u0 / (1 + theta * jnp.maximum(Eeff, 0.0) * tox)
 
     beta_eff = ueff * Cox * W / L
@@ -334,7 +337,9 @@ def _mosfet_ids_batched(
     Vdseff = Vdsat * jnp.tanh(Vds_eff / jnp.maximum(Vdsat, 0.01))
 
     # Drain current in strong inversion (using Vgst_pos)
-    I_strong = beta_eff * Vgst_pos * Vdseff * (1 + lambda_ * Vds_eff)
+    # Use |Vds_eff| for channel length modulation to ensure positive gds
+    # This is more physically accurate: CLM increases current with |Vds| magnitude
+    I_strong = beta_eff * Vgst_pos * Vdseff * (1 + lambda_ * jnp.abs(Vds_eff))
 
     # Smooth transition subthreshold/strong
     # Ensure I_strong is non-negative before log
