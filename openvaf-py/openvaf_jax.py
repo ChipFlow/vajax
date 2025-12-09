@@ -3,6 +3,15 @@
 Compiles Verilog-A models to JAX functions using openvaf-py.
 """
 
+# Force CPU backend on Apple Silicon to avoid Metal backend compatibility issues
+# This must be done before any JAX imports
+import os
+import platform
+
+if platform.system() == "Darwin" and platform.machine() == "arm64":
+    # Apple Silicon - force CPU backend to avoid Metal/GPU issues
+    os.environ.setdefault("JAX_PLATFORMS", "cpu")
+
 from typing import Dict, List, Callable, Any, Tuple, Set, Optional
 from dataclasses import dataclass
 import openvaf_py
@@ -1270,6 +1279,16 @@ class OpenVAFToJAX:
             if ops:
                 return f"(not {ops[0]})"
             return 'True'
+
+        elif opcode == 'beq':
+            # Boolean equality
+            ops = [get_operand(op) for op in operands]
+            return f"({ops[0]} == {ops[1]})"
+
+        elif opcode == 'bne':
+            # Boolean not-equal
+            ops = [get_operand(op) for op in operands]
+            return f"({ops[0]} != {ops[1]})"
 
         elif opcode == 'iand':
             # Integer AND

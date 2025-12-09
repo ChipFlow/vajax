@@ -5,6 +5,15 @@ compiled using OpenVAF. It uses direct Python bindings to the MIR interpreter,
 providing better integration than text-based snapshot parsing.
 """
 
+# Force CPU backend on Apple Silicon to avoid Metal backend compatibility issues
+# This must be done before any JAX imports
+import os
+import platform
+
+if platform.system() == "Darwin" and platform.machine() == "arm64":
+    # Apple Silicon - force CPU backend to avoid Metal/GPU issues
+    os.environ.setdefault("JAX_PLATFORMS", "cpu")
+
 from typing import Dict, List, Tuple, Callable, Optional, Any
 from dataclasses import dataclass, field
 from pathlib import Path
