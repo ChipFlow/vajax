@@ -593,8 +593,11 @@ def build_transient_residual_fn(
             Ids = jnp.maximum(Ids, 0.0)
 
             # Stamp currents
-            Id_out = jnp.where(is_pmos, -Ids, Ids)
-            Is_out = jnp.where(is_pmos, Ids, -Ids)
+            # Convention: positive residual = current INTO node
+            # NMOS: current flows D→S when ON, so +Ids leaves D, -Ids enters S
+            # PMOS: current flows S→D when ON, so +Ids enters D, -Ids leaves S
+            Id_out = jnp.where(is_pmos, Ids, -Ids)
+            Is_out = jnp.where(is_pmos, -Ids, Ids)
 
             residual = residual.at[circuit.mosfet_node_d].add(Id_out)
             residual = residual.at[circuit.mosfet_node_s].add(Is_out)

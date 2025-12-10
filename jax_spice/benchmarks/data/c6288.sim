@@ -39,6 +39,9 @@ subckt nor_test()
 ends
 
 subckt and_test()
+  // Drive inputs to 0V to avoid floating nodes in series nMOS stack
+  v1 (in1 0) v dc=0
+  v2 (in2 0) v dc=0
   x1 (out in1 in2) and
 ends
 

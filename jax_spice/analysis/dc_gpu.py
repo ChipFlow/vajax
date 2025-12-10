@@ -207,10 +207,11 @@ def build_mosfet_residual_fn(
         # PMOS: current flows S -> D (Id into D, out of S) after sign flip
         residual = jnp.zeros(num_nodes, dtype=V.dtype)
 
-        # For NMOS: f[D] += Ids, f[S] -= Ids
-        # For PMOS: f[D] -= Ids, f[S] += Ids (current direction reversed)
-        Id_out = jnp.where(is_pmos, -Ids, Ids)
-        Is_out = jnp.where(is_pmos, Ids, -Ids)
+        # Convention: positive residual = current INTO node
+        # NMOS: current flows D→S when ON, so -Ids leaves D, +Ids enters S
+        # PMOS: current flows S→D when ON, so +Ids enters D, -Ids leaves S
+        Id_out = jnp.where(is_pmos, Ids, -Ids)
+        Is_out = jnp.where(is_pmos, -Ids, Ids)
 
         residual = residual.at[node_d_indices].add(Id_out)
         residual = residual.at[node_s_indices].add(Is_out)
@@ -494,10 +495,11 @@ def build_circuit_residual_fn(
             Ids = jnp.maximum(Ids, 0.0)
 
             # Stamp currents
-            # NMOS: I_D positive (out), I_S negative (in)
-            # PMOS: reversed
-            Id_out = jnp.where(is_pmos, -Ids, Ids)
-            Is_out = jnp.where(is_pmos, Ids, -Ids)
+            # Convention: positive residual = current INTO node
+            # NMOS: current flows D→S when ON, so -Ids leaves D, +Ids enters S
+            # PMOS: current flows S→D when ON, so +Ids enters D, -Ids leaves S
+            Id_out = jnp.where(is_pmos, Ids, -Ids)
+            Is_out = jnp.where(is_pmos, -Ids, Ids)
 
             residual = residual.at[mosfet_arrays['node_d']].add(Id_out)
             residual = residual.at[mosfet_arrays['node_s']].add(Is_out)
