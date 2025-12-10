@@ -2,6 +2,14 @@
 
 Parses VACASK format netlists for circuit simulation.
 Adapted from VACASK dflparser grammar.
+
+TODO: To run all VACASK test cases (vendor/VACASK/test/*.sim), the parser needs:
+  1. Handle titles with parentheses (e.g., "SPICE JFET (verilog-A)")
+  2. Support @if/@endif conditional blocks
+  3. Support vector parameters (e.g., vec=[0, 1, 10k])
+  4. Parse control block content (analysis commands, sweeps, save statements)
+Currently passes 40/46 VACASK-format test files (87%).
+See docs/vacask_sim_format.md for details.
 """
 
 import re
