@@ -292,6 +292,7 @@ echo "Traces uploaded to: {trace_gcs_path}"
         "--cpu=4",
         "--memory=16Gi",
         "--task-timeout=30m",
+        "--max-retries=0",
         "--command=bash",
         f"--args=-c,{job_args}",
     ]
