@@ -138,34 +138,48 @@ print("Warmup complete")
 
     profile_python = f'''import os
 import sys
+sys.stdout.reconfigure(line_buffering=True)  # Force line buffering
 sys.path.insert(0, ".")
 
+print("=== Python profiling script started ===", flush=True)
+
+print("Importing JAX...", flush=True)
 import jax
 jax.config.update("jax_enable_x64", True)
 
-print(f"JAX backend: {{jax.default_backend()}}")
-print(f"JAX devices: {{jax.devices()}}")
+print(f"JAX backend: {{jax.default_backend()}}", flush=True)
+print(f"JAX devices: {{jax.devices()}}", flush=True)
 
+print("Importing jax_spice modules...", flush=True)
 from jax_spice.benchmarks.c6288 import C6288Benchmark
 from jax_spice.analysis.transient_gpu import transient_analysis_gpu
 
 # Setup circuit
+print("Setting up circuit...", flush=True)
 bench = C6288Benchmark(verbose=False)
+print("  Parsing...", flush=True)
 bench.parse()
+print("  Flattening...", flush=True)
 bench.flatten("{args.circuit}")
+print("  Building system...", flush=True)
 bench.build_system("{args.circuit}")
 
 system = bench.system
+print("  Building device groups...", flush=True)
 system.build_device_groups()
 
-print(f"Circuit: {{system.num_nodes}} nodes, {{len(system.devices)}} devices")
+print(f"Circuit: {{system.num_nodes}} nodes, {{len(system.devices)}} devices", flush=True)
 {warmup_code}
 # Profiled run with trace
-print("Starting traced run...")
+print("Starting traced run...", flush=True)
 trace_dir = "/tmp/jax-trace"
 os.makedirs(trace_dir, exist_ok=True)
 
+print(f"Trace directory: {{trace_dir}}", flush=True)
+print("Entering jax.profiler.trace context...", flush=True)
+
 with jax.profiler.trace(trace_dir, create_perfetto_link=False):
+    print("Running transient_analysis_gpu...", flush=True)
     times, solutions, info = transient_analysis_gpu(
         system,
         t_stop={args.timesteps}e-12,
@@ -175,8 +189,8 @@ with jax.profiler.trace(trace_dir, create_perfetto_link=False):
         verbose=True,
     )
 
-print(f"Completed: {{len(times)}} timesteps, {{info['total_iterations']}} iterations")
-print(f"Trace saved to: {{trace_dir}}")
+print(f"Completed: {{len(times)}} timesteps, {{info['total_iterations']}} iterations", flush=True)
+print(f"Trace saved to: {{trace_dir}}", flush=True)
 '''
 
     # Upload the Python script to GCS
