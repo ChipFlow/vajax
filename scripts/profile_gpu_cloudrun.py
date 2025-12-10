@@ -113,32 +113,31 @@ def main():
     )
     print()
 
-    # Generate the inline Python profiling script
-    # This script will be run inside the Cloud Run container
+    # Generate the Python profiling script
+    # This script will be written to a file and executed
     warmup_code = "" if args.skip_warmup else """
 # Warmup (JIT compile)
-print('Warmup run...')
+print("Warmup run...")
 _, _, _ = transient_analysis_gpu(
     system,
     t_stop=1e-12,
     t_step=1e-12,
     vdd=1.2,
-    icmode='uic',
+    icmode="uic",
     verbose=False,
 )
-print('Warmup complete')
+print("Warmup complete")
 """
 
-    profile_python = f'''
-import os
+    profile_python = f'''import os
 import sys
-sys.path.insert(0, '.')
+sys.path.insert(0, ".")
 
 import jax
-jax.config.update('jax_enable_x64', True)
+jax.config.update("jax_enable_x64", True)
 
-print(f'JAX backend: {{jax.default_backend()}}')
-print(f'JAX devices: {{jax.devices()}}')
+print(f"JAX backend: {{jax.default_backend()}}")
+print(f"JAX devices: {{jax.devices()}}")
 
 from jax_spice.benchmarks.c6288 import C6288Benchmark
 from jax_spice.analysis.transient_gpu import transient_analysis_gpu
@@ -146,17 +145,17 @@ from jax_spice.analysis.transient_gpu import transient_analysis_gpu
 # Setup circuit
 bench = C6288Benchmark(verbose=False)
 bench.parse()
-bench.flatten('{args.circuit}')
-bench.build_system('{args.circuit}')
+bench.flatten("{args.circuit}")
+bench.build_system("{args.circuit}")
 
 system = bench.system
 system.build_device_groups()
 
-print(f'Circuit: {{system.num_nodes}} nodes, {{len(system.devices)}} devices')
+print(f"Circuit: {{system.num_nodes}} nodes, {{len(system.devices)}} devices")
 {warmup_code}
 # Profiled run with trace
-print('Starting traced run...')
-trace_dir = '/tmp/jax-trace'
+print("Starting traced run...")
+trace_dir = "/tmp/jax-trace"
 os.makedirs(trace_dir, exist_ok=True)
 
 with jax.profiler.trace(trace_dir):
@@ -165,13 +164,17 @@ with jax.profiler.trace(trace_dir):
         t_stop={args.timesteps}e-12,
         t_step=1e-12,
         vdd=1.2,
-        icmode='uic',
+        icmode="uic",
         verbose=True,
     )
 
-print(f'Completed: {{len(times)}} timesteps, {{info["total_iterations"]}} iterations')
-print(f'Trace saved to: {{trace_dir}}')
+print(f"Completed: {{len(times)}} timesteps, {{info['total_iterations']}} iterations")
+print(f"Trace saved to: {{trace_dir}}")
 '''
+
+    # Base64 encode the Python script to avoid shell escaping issues
+    import base64
+    python_b64 = base64.b64encode(profile_python.encode()).decode()
 
     # Create the bash script that runs the profiling
     profile_script = f'''#!/bin/bash
@@ -190,8 +193,9 @@ echo "=== Starting GPU Profiling ==="
 echo "Circuit: {args.circuit}"
 echo "Trace output: {trace_gcs_path}"
 
-# Run profiling with JAX trace
-uv run python -c '{profile_python}'
+# Decode and run the profiling script
+echo "{python_b64}" | base64 -d > /tmp/profile_run.py
+uv run python /tmp/profile_run.py
 
 # Upload traces to GCS
 echo "=== Uploading traces to GCS ==="
@@ -210,7 +214,6 @@ echo "Traces uploaded to: {trace_gcs_path}"
     print("[3/5] Creating/updating Cloud Run job...")
 
     # Use a base64-encoded script to avoid shell escaping issues
-    import base64
     script_b64 = base64.b64encode(profile_script.encode()).decode()
 
     # The command decodes and runs the script
