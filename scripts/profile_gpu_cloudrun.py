@@ -158,7 +158,7 @@ print("Starting traced run...")
 trace_dir = "/tmp/jax-trace"
 os.makedirs(trace_dir, exist_ok=True)
 
-with jax.profiler.trace(trace_dir):
+with jax.profiler.trace(trace_dir, create_perfetto_link=False):
     times, solutions, info = transient_analysis_gpu(
         system,
         t_stop={args.timesteps}e-12,
