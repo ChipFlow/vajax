@@ -29,6 +29,422 @@ JAX_SPICE_ROOT = Path(__file__).parent.parent
 VACASK_ROOT = JAX_SPICE_ROOT.parent / "VACASK"
 VACASK_TEST = VACASK_ROOT / "test"
 VACASK_DEVICES = VACASK_ROOT / "devices"
+VACASK_BENCHMARK = JAX_SPICE_ROOT / "vendor" / "VACASK" / "benchmark"
+
+
+class VACASKBenchmarkRunner:
+    """Generic runner for VACASK benchmark circuits.
+
+    Parses a benchmark .sim file and runs transient analysis using our solver.
+    Handles resistors, capacitors, diodes, and voltage sources automatically.
+    """
+
+    # Map OSDI module names to device types
+    MODULE_TO_DEVICE = {
+        'sp_resistor': 'resistor',
+        'sp_capacitor': 'capacitor',
+        'sp_diode': 'diode',
+        'vsource': 'vsource',
+        'isource': 'isource',
+    }
+
+    # SPICE number suffixes
+    SUFFIXES = {
+        't': 1e12, 'g': 1e9, 'meg': 1e6, 'k': 1e3,
+        'm': 1e-3, 'u': 1e-6, 'n': 1e-9, 'p': 1e-12, 'f': 1e-15
+    }
+
+    def __init__(self, sim_path: Path, verbose: bool = False):
+        self.sim_path = sim_path
+        self.verbose = verbose
+        self.circuit = None
+        self.devices = []
+        self.node_names = {}
+        self.num_nodes = 0
+        self.analysis_params = {}
+
+    def parse_spice_number(self, s: str) -> float:
+        """Parse SPICE number with suffix (e.g., 1u, 100n, 1.5k)"""
+        if not isinstance(s, str):
+            return float(s)
+        s = s.strip().lower().strip('"')
+        if not s:
+            return 0.0
+
+        for suffix, multiplier in sorted(self.SUFFIXES.items(), key=lambda x: -len(x[0])):
+            if s.endswith(suffix):
+                try:
+                    return float(s[:-len(suffix)]) * multiplier
+                except ValueError:
+                    continue
+        try:
+            return float(s)
+        except ValueError:
+            return 0.0
+
+    def parse(self):
+        """Parse the sim file and extract circuit information."""
+        from jax_spice.netlist.parser import VACASKParser
+
+        parser = VACASKParser()
+        self.circuit = parser.parse_file(self.sim_path)
+
+        if self.verbose:
+            print(f"Parsed: {self.circuit.title}")
+            print(f"Models: {list(self.circuit.models.keys())}")
+
+        # Build node mapping
+        node_set = {'0'}
+        for inst in self.circuit.top_instances:
+            for t in inst.terminals:
+                node_set.add(t)
+
+        self.node_names = {'0': 0}
+        for i, name in enumerate(sorted(n for n in node_set if n != '0'), start=1):
+            self.node_names[name] = i
+        self.num_nodes = len(self.node_names)
+
+        # Build devices
+        self._build_devices()
+
+        # Extract analysis parameters
+        self._extract_analysis_params()
+
+        return self
+
+    def _get_device_type(self, model_name: str) -> str:
+        """Map model name to device type."""
+        model = self.circuit.models.get(model_name)
+        if model:
+            module = model.module.lower()
+            return self.MODULE_TO_DEVICE.get(module, module)
+        # Direct lookup for built-in types
+        return self.MODULE_TO_DEVICE.get(model_name.lower(), model_name.lower())
+
+    def _get_model_params(self, model_name: str) -> Dict[str, float]:
+        """Get parsed parameters from a model definition."""
+        model = self.circuit.models.get(model_name)
+        if not model:
+            return {}
+        return {k: self.parse_spice_number(v) for k, v in model.params.items()}
+
+    def _build_devices(self):
+        """Build device list from parsed instances."""
+        self.devices = []
+
+        # Parameters that should be kept as strings (not parsed as numbers)
+        STRING_PARAMS = {'type'}
+
+        for inst in self.circuit.top_instances:
+            model_name = inst.model.lower()
+            device_type = self._get_device_type(model_name)
+            nodes = [self.node_names[t] for t in inst.terminals]
+
+            # Get model parameters and instance parameters
+            model_params = self._get_model_params(model_name)
+
+            # Parse instance params, but keep string params as strings
+            inst_params = {}
+            for k, v in inst.params.items():
+                if k in STRING_PARAMS:
+                    # Keep as string, strip quotes
+                    inst_params[k] = str(v).strip('"').strip("'")
+                else:
+                    inst_params[k] = self.parse_spice_number(v)
+
+            # Merge model params with instance params (instance overrides model)
+            params = {**model_params, **inst_params}
+
+            self.devices.append({
+                'name': inst.name,
+                'model': device_type,
+                'nodes': nodes,
+                'params': params,
+            })
+
+        if self.verbose:
+            print(f"Devices: {len(self.devices)}")
+            for dev in self.devices:
+                print(f"  {dev['name']}: {dev['model']} nodes={dev['nodes']}")
+
+    def _extract_analysis_params(self):
+        """Extract analysis parameters from control block."""
+        text = self.sim_path.read_text()
+
+        # Find tran analysis: analysis <name> tran step=X stop=Y [maxstep=Z] [icmode="..."]
+        match = re.search(
+            r'analysis\s+\w+\s+tran\s+'
+            r'(?:step=(\S+)\s+)?'
+            r'(?:stop=(\S+)\s*)?'
+            r'(?:maxstep=(\S+)\s*)?'
+            r'(?:icmode="(\w+)")?',
+            text
+        )
+        if match:
+            step = self.parse_spice_number(match.group(1) or '1u')
+            stop = self.parse_spice_number(match.group(2) or '1m')
+            self.analysis_params = {
+                'type': 'tran',
+                'step': step,
+                'stop': stop,
+                'icmode': match.group(4) or 'op',
+            }
+        else:
+            # Default values
+            self.analysis_params = {
+                'type': 'tran',
+                'step': 1e-6,
+                'stop': 1e-3,
+                'icmode': 'op',
+            }
+
+        if self.verbose:
+            print(f"Analysis: {self.analysis_params}")
+
+    def _build_source_fn(self):
+        """Build time-varying source function from device parameters."""
+        sources = {}
+
+        for dev in self.devices:
+            if dev['model'] not in ('vsource', 'isource'):
+                continue
+
+            params = dev['params']
+            source_type = str(params.get('type', 'dc')).lower()
+
+            if self.verbose:
+                print(f"  Source {dev['name']}: type={source_type}")
+
+            if source_type in ('dc', '0', '0.0', ''):
+                # DC source - constant value
+                dc_val = params.get('dc', 0)
+                sources[dev['name']] = lambda t, v=dc_val: v
+
+            elif source_type == 'pulse':
+                # Pulse source
+                val0 = params.get('val0', 0)
+                val1 = params.get('val1', 1)
+                rise = params.get('rise', 1e-9)
+                fall = params.get('fall', 1e-9)
+                width = params.get('width', 1e-6)
+                period = params.get('period', 2e-6)
+                delay = params.get('delay', 0)
+
+                def pulse_fn(t, v0=val0, v1=val1, r=rise, f=fall, w=width, p=period, d=delay):
+                    if t < d:
+                        return v0
+                    t_in_period = (t - d) % p
+                    if t_in_period < r:
+                        return v0 + (v1 - v0) * t_in_period / r
+                    elif t_in_period < r + w:
+                        return v1
+                    elif t_in_period < r + w + f:
+                        return v1 - (v1 - v0) * (t_in_period - r - w) / f
+                    else:
+                        return v0
+
+                sources[dev['name']] = pulse_fn
+
+            elif source_type == 'sine':
+                # Sine source
+                ampl = params.get('ampl', 1)
+                freq = params.get('freq', 1e3)
+                sinedc = params.get('sinedc', 0)
+                phase = params.get('phase', 0)
+
+                def sine_fn(t, a=ampl, f=freq, dc=sinedc, ph=phase):
+                    return dc + a * np.sin(2 * np.pi * f * t + ph)
+
+                sources[dev['name']] = sine_fn
+
+            else:
+                # Unknown type - log warning and treat as DC
+                if self.verbose:
+                    print(f"    WARNING: Unknown source type '{source_type}', treating as DC")
+                dc_val = params.get('dc', 0)
+                sources[dev['name']] = lambda t, v=dc_val: v
+
+        def source_fn(t):
+            return {name: fn(t) for name, fn in sources.items()}
+
+        return source_fn
+
+    def run_transient(self, t_stop=None, dt=None, max_steps=10000):
+        """Run transient analysis.
+
+        Args:
+            t_stop: Stop time (default: from analysis params or 1ms)
+            dt: Time step (default: from analysis params or 1µs)
+            max_steps: Maximum number of time steps
+
+        Returns:
+            (times, voltages) tuple
+        """
+        if t_stop is None:
+            t_stop = self.analysis_params.get('stop', 1e-3)
+        if dt is None:
+            dt = self.analysis_params.get('step', 1e-6)
+
+        # Limit number of steps
+        num_steps = int(t_stop / dt)
+        if num_steps > max_steps:
+            dt = t_stop / max_steps
+            if self.verbose:
+                print(f"Limiting to {max_steps} steps, dt={dt:.2e}s")
+
+        source_fn = self._build_source_fn()
+
+        # Run simple transient solver
+        V = np.zeros(self.num_nodes)
+        V_prev = np.zeros(self.num_nodes)
+
+        times = []
+        voltages = {i: [] for i in range(self.num_nodes)}
+
+        t = 0.0
+        while t <= t_stop:
+            # Update sources
+            source_values = source_fn(t)
+            for dev in self.devices:
+                if dev['name'] in source_values:
+                    dev['params']['_time_value'] = source_values[dev['name']]
+
+            # Newton-Raphson
+            for nr_iter in range(100):
+                J = np.zeros((self.num_nodes - 1, self.num_nodes - 1))
+                f = np.zeros(self.num_nodes - 1)
+
+                for dev in self.devices:
+                    self._stamp_device(dev, V, V_prev, dt, f, J)
+
+                if np.max(np.abs(f)) < 1e-9:
+                    break
+
+                delta = np.linalg.solve(J + 1e-15 * np.eye(J.shape[0]), -f)
+                V[1:] += delta
+
+            # Record
+            times.append(t)
+            for i in range(self.num_nodes):
+                voltages[i].append(V[i])
+
+            V_prev = V.copy()
+            t += dt
+
+        return np.array(times), {k: np.array(v) for k, v in voltages.items()}
+
+    def _stamp_device(self, dev, V, V_prev, dt, f, J):
+        """Stamp device into system matrices."""
+        model = dev['model']
+        nodes = dev['nodes']
+        params = dev['params']
+        ground = 0
+
+        if model == 'vsource':
+            V_target = params.get('_time_value', params.get('dc', 0))
+            np_idx, nn_idx = nodes[0], nodes[1]
+            G = 1e12
+
+            I = G * (V[np_idx] - V[nn_idx] - V_target)
+
+            if np_idx != ground:
+                f[np_idx - 1] += I
+                J[np_idx - 1, np_idx - 1] += G
+                if nn_idx != ground:
+                    J[np_idx - 1, nn_idx - 1] -= G
+            if nn_idx != ground:
+                f[nn_idx - 1] -= I
+                J[nn_idx - 1, nn_idx - 1] += G
+                if np_idx != ground:
+                    J[nn_idx - 1, np_idx - 1] -= G
+
+        elif model == 'resistor':
+            R = params.get('r', 1000)
+            G = 1.0 / max(R, 1e-12)
+            np_idx, nn_idx = nodes[0], nodes[1]
+            Vd = V[np_idx] - V[nn_idx]
+            I = G * Vd
+
+            if np_idx != ground:
+                f[np_idx - 1] += I
+                J[np_idx - 1, np_idx - 1] += G
+                if nn_idx != ground:
+                    J[np_idx - 1, nn_idx - 1] -= G
+            if nn_idx != ground:
+                f[nn_idx - 1] -= I
+                J[nn_idx - 1, nn_idx - 1] += G
+                if np_idx != ground:
+                    J[nn_idx - 1, np_idx - 1] -= G
+
+        elif model == 'capacitor':
+            C = params.get('c', 1e-12)
+            np_idx, nn_idx = nodes[0], nodes[1]
+            G_eq = C / dt
+            Vd = V[np_idx] - V[nn_idx]
+            Vd_prev = V_prev[np_idx] - V_prev[nn_idx]
+            I = G_eq * (Vd - Vd_prev)
+
+            if np_idx != ground:
+                f[np_idx - 1] += I
+                J[np_idx - 1, np_idx - 1] += G_eq
+                if nn_idx != ground:
+                    J[np_idx - 1, nn_idx - 1] -= G_eq
+            if nn_idx != ground:
+                f[nn_idx - 1] -= I
+                J[nn_idx - 1, nn_idx - 1] += G_eq
+                if np_idx != ground:
+                    J[nn_idx - 1, np_idx - 1] -= G_eq
+
+        elif model == 'diode':
+            np_idx, nn_idx = nodes[0], nodes[1]
+            Is = params.get('is', 1e-14)
+            n = params.get('n', 1.0)
+            Vt = 0.0258
+
+            Vd = V[np_idx] - V[nn_idx]
+            nVt = n * Vt
+            Vd_norm = Vd / nVt
+
+            if Vd_norm > 40:
+                exp_40 = np.exp(40)
+                I = Is * (exp_40 + exp_40 * (Vd_norm - 40) - 1)
+                gd = Is * exp_40 / nVt
+            elif Vd_norm < -40:
+                I = -Is
+                gd = 1e-12
+            else:
+                exp_term = np.exp(Vd_norm)
+                I = Is * (exp_term - 1)
+                gd = Is * exp_term / nVt
+
+            gd = max(gd, 1e-12)
+
+            if np_idx != ground:
+                f[np_idx - 1] += I
+                J[np_idx - 1, np_idx - 1] += gd
+                if nn_idx != ground:
+                    J[np_idx - 1, nn_idx - 1] -= gd
+            if nn_idx != ground:
+                f[nn_idx - 1] -= I
+                J[nn_idx - 1, nn_idx - 1] += gd
+                if np_idx != ground:
+                    J[nn_idx - 1, np_idx - 1] -= gd
+
+
+def discover_benchmark_dirs() -> List[Path]:
+    """Find all benchmark directories with runme.sim files."""
+    if not VACASK_BENCHMARK.exists():
+        return []
+    benchmarks = []
+    for d in sorted(VACASK_BENCHMARK.iterdir()):
+        sim_file = d / "vacask" / "runme.sim"
+        if sim_file.exists():
+            benchmarks.append(d)
+    return benchmarks
+
+
+# Discover benchmarks for parameterized tests
+BENCHMARK_DIRS = discover_benchmark_dirs()
 
 
 def discover_sim_files() -> List[Path]:
@@ -2237,6 +2653,72 @@ class TestVACASKBenchmarks:
         assert max(v_out) > 15, f"Peak output should be >15V, got {max(v_out):.1f}V"
 
         print(f"  ✓ Graetz benchmark passed (parsed from sim file)")
+
+
+class TestVACASKBenchmarksGeneric:
+    """Generic parameterized tests for all VACASK benchmarks.
+
+    Uses VACASKBenchmarkRunner to automatically parse and simulate
+    any benchmark circuit without benchmark-specific code.
+    """
+
+    # Benchmarks that can be run with supported device types
+    SUPPORTED_BENCHMARKS = ['rc', 'graetz', 'mul']
+
+    # Benchmarks that need MOSFET support (ring, c6288)
+    MOSFET_BENCHMARKS = ['ring', 'c6288']
+
+    @pytest.mark.parametrize("benchmark_name", SUPPORTED_BENCHMARKS)
+    def test_benchmark_generic(self, benchmark_name):
+        """Test benchmark using generic runner.
+
+        This test automatically:
+        1. Parses the benchmark sim file
+        2. Extracts models and devices
+        3. Runs transient analysis
+        4. Verifies the simulation completes without errors
+        """
+        benchmark_dir = VACASK_BENCHMARK / benchmark_name
+        sim_file = benchmark_dir / "vacask" / "runme.sim"
+
+        if not sim_file.exists():
+            pytest.skip(f"Benchmark {benchmark_name} not found")
+
+        print(f"\n{'='*60}")
+        print(f"Running {benchmark_name} benchmark (generic)")
+        print(f"{'='*60}")
+
+        # Create and run the benchmark
+        runner = VACASKBenchmarkRunner(sim_file, verbose=True)
+        runner.parse()
+
+        # Run with limited steps for faster testing
+        # Use shorter stop time for tests
+        t_stop = min(runner.analysis_params.get('stop', 1e-3), 10e-3)
+        times, voltages = runner.run_transient(t_stop=t_stop, max_steps=1000)
+
+        print(f"\nResults:")
+        print(f"  Time points: {len(times)}")
+        print(f"  Time range: 0 to {times[-1]:.2e}s")
+
+        # Print voltage ranges for each non-ground node
+        for name, idx in sorted(runner.node_names.items(), key=lambda x: x[1]):
+            if idx == 0:
+                continue
+            v = voltages[idx]
+            print(f"  V({name}): {min(v):.3f}V to {max(v):.3f}V")
+
+        # Basic verification - simulation should complete
+        assert len(times) > 1, "Simulation should produce multiple time points"
+        assert not np.any(np.isnan(list(voltages.values()))), "No NaN values in output"
+        assert not np.any(np.isinf(list(voltages.values()))), "No Inf values in output"
+
+        print(f"\n  ✓ {benchmark_name} benchmark passed")
+
+    @pytest.mark.parametrize("benchmark_name", MOSFET_BENCHMARKS)
+    def test_benchmark_mosfet_skip(self, benchmark_name):
+        """Placeholder for MOSFET benchmarks - currently unsupported."""
+        pytest.skip(f"Benchmark {benchmark_name} requires MOSFET support (not yet implemented in generic runner)")
 
 
 class TestVACASKSummary:
