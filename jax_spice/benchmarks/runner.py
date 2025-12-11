@@ -561,6 +561,53 @@ class VACASKBenchmarkRunner:
 
         return jnp.array(inputs)
 
+    def _update_voltage_inputs_gpu(self, static_inputs: jnp.ndarray, voltage_indices: List[int],
+                                    device_contexts: List[Dict], V: np.ndarray,
+                                    device: Any, dtype: Any) -> jnp.ndarray:
+        """Update voltage parameters - GPU-optimized version.
+
+        For GPU backend, this minimizes host-device transfers by:
+        1. Building voltage updates on CPU as a numpy array
+        2. Transferring all updates in a single batch
+        3. Using JAX scatter operations to update the array on device
+
+        Args:
+            static_inputs: JAX array on GPU device with static parameters
+            voltage_indices: Indices of voltage parameters to update
+            device_contexts: Per-device context with node mappings
+            V: Current voltage solution (numpy array)
+            device: JAX device to use
+            dtype: Data type for GPU arrays
+
+        Returns:
+            Updated inputs array as JAX array on device
+        """
+        n_devices = len(device_contexts)
+        n_voltages = len(voltage_indices)
+
+        # Build all voltage updates on CPU
+        voltage_updates = np.zeros((n_devices, n_voltages), dtype=np.float64)
+
+        for dev_idx, ctx in enumerate(device_contexts):
+            voltage_node_pairs = ctx['voltage_node_pairs']
+            for i, (n1, n2) in enumerate(voltage_node_pairs):
+                v1 = V[n1] if n1 < len(V) else 0.0
+                v2 = V[n2] if n2 < len(V) else 0.0
+                voltage_updates[dev_idx, i] = v1 - v2
+
+        # Transfer to GPU in single batch
+        with jax.default_device(device):
+            voltage_updates_jax = jnp.array(voltage_updates, dtype=dtype)
+
+            # Update voltage columns using scatter
+            # static_inputs has shape (n_devices, n_params)
+            # We update columns at voltage_indices with values from voltage_updates_jax
+            inputs = static_inputs
+            for i, vid in enumerate(voltage_indices):
+                inputs = inputs.at[:, vid].set(voltage_updates_jax[:, i])
+
+        return inputs
+
     def _prepare_batched_inputs(self, model_type: str, openvaf_devices: List[Dict],
                                  V: np.ndarray, device_internal_nodes: Dict[str, Dict[str, int]],
                                  ground: int) -> Tuple[jnp.ndarray, List[Dict]]:
@@ -830,7 +877,8 @@ class VACASKBenchmarkRunner:
         return system
 
     def run_transient(self, t_stop: Optional[float] = None, dt: Optional[float] = None,
-                      max_steps: int = 10000, use_sparse: Optional[bool] = None) -> Tuple[np.ndarray, Dict[int, np.ndarray]]:
+                      max_steps: int = 10000, use_sparse: Optional[bool] = None,
+                      backend: Optional[str] = None) -> Tuple[np.ndarray, Dict[int, np.ndarray]]:
         """Run transient analysis.
 
         Uses the JIT-compiled solver for circuits with only simple devices.
@@ -842,10 +890,14 @@ class VACASKBenchmarkRunner:
             dt: Time step (default: from analysis params or 1µs)
             max_steps: Maximum number of time steps
             use_sparse: Force sparse (True) or dense (False) solver. If None, auto-detect.
+            backend: 'gpu', 'cpu', or None (auto-select based on circuit size).
+                     For circuits >500 nodes with GPU available, uses GPU acceleration.
 
         Returns:
             (times, voltages) tuple where voltages is dict mapping node index to voltage array
         """
+        from jax_spice.analysis.gpu_backend import select_backend, is_gpu_available
+
         if t_stop is None:
             t_stop = self.analysis_params.get('stop', 1e-3)
         if dt is None:
@@ -858,8 +910,12 @@ class VACASKBenchmarkRunner:
             if self.verbose:
                 print(f"Limiting to {max_steps} steps, dt={dt:.2e}s")
 
+        # Select backend if not specified
+        if backend is None or backend == "auto":
+            backend = select_backend(self.num_nodes)
+
         if self.verbose:
-            print(f"Running transient: t_stop={t_stop:.2e}s, dt={dt:.2e}s")
+            print(f"Running transient: t_stop={t_stop:.2e}s, dt={dt:.2e}s, backend={backend}")
 
         # Use hybrid solver if we have OpenVAF devices
         if self._has_openvaf_devices:
@@ -871,21 +927,22 @@ class VACASKBenchmarkRunner:
             if use_sparse:
                 if self.verbose:
                     print(f"Using sparse hybrid solver ({self.num_nodes} nodes, OpenVAF devices)")
-                return self._run_transient_hybrid_sparse(t_stop, dt)
+                return self._run_transient_hybrid_sparse(t_stop, dt, backend=backend)
             else:
                 if self.verbose:
                     print("Using dense hybrid solver (OpenVAF devices detected)")
-                return self._run_transient_hybrid(t_stop, dt)
+                return self._run_transient_hybrid(t_stop, dt, backend=backend)
 
         # Convert to MNA system
         system = self.to_mna_system()
 
-        # Run production transient analysis
+        # Run production transient analysis with backend selection
         times, voltages_array, stats = transient_analysis_jit(
             system=system,
             t_stop=t_stop,
             t_step=dt,
-            t_start=0.0
+            t_start=0.0,
+            backend=backend,
         )
 
         # Convert JAX arrays to numpy and create voltage dict
@@ -1018,7 +1075,8 @@ class VACASKBenchmarkRunner:
 
         return rows, cols
 
-    def _run_transient_hybrid(self, t_stop: float, dt: float) -> Tuple[np.ndarray, Dict[int, np.ndarray]]:
+    def _run_transient_hybrid(self, t_stop: float, dt: float,
+                               backend: str = "cpu") -> Tuple[np.ndarray, Dict[int, np.ndarray]]:
         """Run transient analysis with OpenVAF devices using Python-based Newton-Raphson.
 
         This solver handles a mix of simple devices (resistor, capacitor, etc.)
@@ -1027,8 +1085,20 @@ class VACASKBenchmarkRunner:
         Uses batched vmap evaluation for OpenVAF devices for better performance.
         Internal nodes of OpenVAF devices are added to the system matrix and
         solved simultaneously with external circuit nodes.
+
+        Args:
+            t_stop: Simulation stop time
+            dt: Time step
+            backend: 'gpu' or 'cpu' for device evaluation. GPU keeps OpenVAF
+                     evaluation arrays on GPU device for reduced transfer overhead.
         """
+        from jax_spice.analysis.gpu_backend import get_device, get_default_dtype
+
         ground = 0
+
+        # Get target device for JAX operations
+        device = get_device(backend)
+        dtype = get_default_dtype(backend)
 
         # Set up internal nodes for OpenVAF devices
         n_total, device_internal_nodes = self._setup_internal_nodes()
@@ -1036,6 +1106,7 @@ class VACASKBenchmarkRunner:
 
         if self.verbose:
             print(f"Total nodes: {n_total} ({n_external} external, {n_total - n_external} internal)")
+            print(f"Backend: {backend}, device: {device.platform}")
 
         # Initialize voltages (external + internal nodes)
         V = np.zeros(n_total)
@@ -1057,8 +1128,9 @@ class VACASKBenchmarkRunner:
                 simple_devices.append(dev)
 
         # Get cached JIT-compiled vmapped functions and prepare static inputs
+        # When using GPU backend, pre-convert static inputs to JAX arrays on device
         vmapped_fns: Dict[str, Callable] = {}
-        static_inputs_cache: Dict[str, Tuple[np.ndarray, List[int], List[Dict]]] = {}
+        static_inputs_cache: Dict[str, Tuple[Any, List[int], List[Dict]]] = {}
         for model_type in openvaf_by_type:
             compiled = self._compiled_models.get(model_type)
             if compiled and 'vmapped_fn' in compiled:
@@ -1067,6 +1139,10 @@ class VACASKBenchmarkRunner:
                 static_inputs, voltage_indices, device_contexts = self._prepare_static_inputs(
                     model_type, openvaf_by_type[model_type], device_internal_nodes, ground
                 )
+                # For GPU backend, keep static inputs as JAX array on device
+                if backend == "gpu":
+                    with jax.default_device(device):
+                        static_inputs = jnp.array(static_inputs, dtype=dtype)
                 static_inputs_cache[model_type] = (static_inputs, voltage_indices, device_contexts)
                 if self.verbose:
                     n_devs = len(openvaf_by_type[model_type])
@@ -1101,14 +1177,22 @@ class VACASKBenchmarkRunner:
                     if model_type in vmapped_fns and model_type in static_inputs_cache:
                         # Fast path: update only voltage parameters
                         static_inputs, voltage_indices, device_contexts = static_inputs_cache[model_type]
-                        batch_inputs = self._update_voltage_inputs(
-                            static_inputs, voltage_indices, device_contexts, V
-                        )
 
-                        # Evaluate all devices in parallel
+                        # Use GPU-optimized path if backend is GPU
+                        if backend == "gpu":
+                            batch_inputs = self._update_voltage_inputs_gpu(
+                                static_inputs, voltage_indices, device_contexts, V,
+                                device, dtype
+                            )
+                        else:
+                            batch_inputs = self._update_voltage_inputs(
+                                static_inputs, voltage_indices, device_contexts, V
+                            )
+
+                        # Evaluate all devices in parallel (on GPU if available)
                         batch_residuals, batch_jacobian = vmapped_fns[model_type](batch_inputs)
 
-                        # Stamp results into system
+                        # Stamp results into system (transfer back to CPU for matrix assembly)
                         self._stamp_batched_results(
                             model_type, batch_residuals, batch_jacobian,
                             device_contexts, f, J, ground
@@ -1165,15 +1249,27 @@ class VACASKBenchmarkRunner:
 
         return np.array(times), {k: np.array(v) for k, v in voltages.items()}
 
-    def _run_transient_hybrid_sparse(self, t_stop: float, dt: float) -> Tuple[np.ndarray, Dict[int, np.ndarray]]:
+    def _run_transient_hybrid_sparse(self, t_stop: float, dt: float,
+                                       backend: str = "cpu") -> Tuple[np.ndarray, Dict[int, np.ndarray]]:
         """Run transient analysis with sparse matrix support for large circuits.
 
         Uses scipy.sparse for efficient memory usage with large circuits like c6288.
+
+        Args:
+            t_stop: Simulation stop time
+            dt: Time step
+            backend: 'gpu' or 'cpu' for device evaluation. GPU keeps OpenVAF
+                     evaluation arrays on GPU device for reduced transfer overhead.
         """
         from scipy.sparse import csr_matrix, lil_matrix
         from scipy.sparse.linalg import spsolve as scipy_spsolve
+        from jax_spice.analysis.gpu_backend import get_device, get_default_dtype
 
         ground = 0
+
+        # Get target device for JAX operations
+        device = get_device(backend)
+        dtype = get_default_dtype(backend)
 
         # Set up internal nodes for OpenVAF devices
         n_total, device_internal_nodes = self._setup_internal_nodes()
@@ -1182,6 +1278,7 @@ class VACASKBenchmarkRunner:
 
         if self.verbose:
             print(f"Total nodes: {n_total} ({n_external} external, {n_total - n_external} internal)")
+            print(f"Backend: {backend}, device: {device.platform}")
 
         # Initialize voltages
         V = np.zeros(n_total)
@@ -1216,8 +1313,9 @@ class VACASKBenchmarkRunner:
         coord_to_idx = {(r, c): i for i, (r, c) in enumerate(zip(rows, cols))}
 
         # Get cached JIT-compiled vmapped functions and prepare static inputs
+        # When using GPU backend, pre-convert static inputs to JAX arrays on device
         vmapped_fns: Dict[str, Callable] = {}
-        static_inputs_cache: Dict[str, Tuple[np.ndarray, List[int], List[Dict]]] = {}
+        static_inputs_cache: Dict[str, Tuple[Any, List[int], List[Dict]]] = {}
         for model_type in openvaf_by_type:
             compiled = self._compiled_models.get(model_type)
             if compiled and 'vmapped_fn' in compiled:
@@ -1225,6 +1323,10 @@ class VACASKBenchmarkRunner:
                 static_inputs, voltage_indices, device_contexts = self._prepare_static_inputs(
                     model_type, openvaf_by_type[model_type], device_internal_nodes, ground
                 )
+                # For GPU backend, keep static inputs as JAX array on device
+                if backend == "gpu":
+                    with jax.default_device(device):
+                        static_inputs = jnp.array(static_inputs, dtype=dtype)
                 static_inputs_cache[model_type] = (static_inputs, voltage_indices, device_contexts)
                 if self.verbose:
                     n_devs = len(openvaf_by_type[model_type])
@@ -1254,10 +1356,22 @@ class VACASKBenchmarkRunner:
                 for model_type, devices in openvaf_by_type.items():
                     if model_type in vmapped_fns and model_type in static_inputs_cache:
                         static_inputs, voltage_indices, device_contexts = static_inputs_cache[model_type]
-                        batch_inputs = self._update_voltage_inputs(
-                            static_inputs, voltage_indices, device_contexts, V
-                        )
+
+                        # Use GPU-optimized path if backend is GPU
+                        if backend == "gpu":
+                            batch_inputs = self._update_voltage_inputs_gpu(
+                                static_inputs, voltage_indices, device_contexts, V,
+                                device, dtype
+                            )
+                        else:
+                            batch_inputs = self._update_voltage_inputs(
+                                static_inputs, voltage_indices, device_contexts, V
+                            )
+
+                        # Evaluate all devices in parallel (on GPU if available)
                         batch_residuals, batch_jacobian = vmapped_fns[model_type](batch_inputs)
+
+                        # Stamp results into system (transfer back to CPU for matrix assembly)
                         self._stamp_batched_results_sparse(
                             model_type, batch_residuals, batch_jacobian,
                             device_contexts, f, J_lil, ground
