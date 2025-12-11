@@ -1,12 +1,12 @@
-"""GPU-native transient analysis using sparsejac
+"""GPU-native transient analysis with analytical Jacobians
 
 This module implements fully GPU-resident transient simulation with MOSFET support.
-Uses automatic differentiation via sparsejac for sparse Jacobian computation
+Uses analytical Jacobian computation (Shichman-Hodges model) for reliable convergence
 and backward Euler integration.
 
 Key features:
 1. MOSFET + voltage source + resistor + capacitor support
-2. Sparse Jacobian via sparsejac (no explicit stamping)
+2. Analytical Jacobian stamps (no autodiff) for reliable convergence
 3. All timesteps compiled via jax.lax.scan for GPU efficiency
 4. No Python interpreter overhead in inner loop
 
@@ -37,7 +37,6 @@ from jax_spice.analysis.mna import MNASystem, DeviceType
 from jax_spice.analysis.dc_gpu import (
     eval_param_simple,
     _bcoo_to_csr,
-    GPUResidualFunction,
 )
 from jax_spice.analysis.dc import dc_operating_point_source_stepping
 
@@ -643,6 +642,258 @@ def build_transient_residual_fn(
     return residual_fn
 
 
+def build_transient_residual_and_jacobian_fn(
+    circuit: TransientCircuitData,
+) -> Callable[[Array, Array, float], Tuple[Array, jsparse.BCOO]]:
+    """Build transient residual AND analytical Jacobian function.
+
+    This avoids autodiff by computing analytical Jacobian stamps directly.
+    Uses Shichman-Hodges MOSFET model with explicit gm/gds computation.
+
+    Args:
+        circuit: Pre-compiled circuit data
+
+    Returns:
+        Function f(V_curr, V_prev, dt) -> (residual, Jacobian)
+    """
+    num_nodes = circuit.num_nodes
+    n_reduced = circuit.n_reduced
+    vth0 = circuit.vth0
+    kp = circuit.kp
+    lambda_ = circuit.lambda_
+    gmin = circuit.gmin
+    gds_min = 1e-9  # Minimum conductance for numerical stability
+
+    # Build sparsity pattern and index lookup
+    n_nnz = len(circuit.sparsity_rows)
+    sparsity_to_idx = {}
+    for i in range(n_nnz):
+        r, c = int(circuit.sparsity_rows[i]), int(circuit.sparsity_cols[i])
+        sparsity_to_idx[(r, c)] = i
+
+    # Precompute Jacobian stamp indices for each device
+
+    # Voltage source stamps
+    vsource_jac_indices = []
+    for i in range(len(circuit.vsource_node_p)):
+        np_i = int(circuit.vsource_node_p[i])
+        nn_i = int(circuit.vsource_node_n[i])
+        indices = {}
+        for (ni, nj), sign in [((np_i, np_i), 1), ((np_i, nn_i), -1),
+                                ((nn_i, np_i), -1), ((nn_i, nn_i), 1)]:
+            if ni > 0 and nj > 0:
+                idx = sparsity_to_idx.get((ni - 1, nj - 1))
+                if idx is not None:
+                    indices[(ni, nj)] = (idx, sign)
+        vsource_jac_indices.append(indices)
+
+    # Resistor stamps
+    resistor_jac_indices = []
+    for i in range(len(circuit.resistor_node_p)):
+        np_i = int(circuit.resistor_node_p[i])
+        nn_i = int(circuit.resistor_node_n[i])
+        indices = {}
+        for (ni, nj), sign in [((np_i, np_i), 1), ((np_i, nn_i), -1),
+                                ((nn_i, np_i), -1), ((nn_i, nn_i), 1)]:
+            if ni > 0 and nj > 0:
+                idx = sparsity_to_idx.get((ni - 1, nj - 1))
+                if idx is not None:
+                    indices[(ni, nj)] = (idx, sign)
+        resistor_jac_indices.append(indices)
+
+    # Capacitor stamps (same pattern as resistor - G_eq conductance)
+    capacitor_jac_indices = []
+    for i in range(len(circuit.capacitor_node_p)):
+        np_i = int(circuit.capacitor_node_p[i])
+        nn_i = int(circuit.capacitor_node_n[i])
+        indices = {}
+        for (ni, nj), sign in [((np_i, np_i), 1), ((np_i, nn_i), -1),
+                                ((nn_i, np_i), -1), ((nn_i, nn_i), 1)]:
+            if ni > 0 and nj > 0:
+                idx = sparsity_to_idx.get((ni - 1, nj - 1))
+                if idx is not None:
+                    indices[(ni, nj)] = (idx, sign)
+        capacitor_jac_indices.append(indices)
+
+    # MOSFET stamps: D and S rows, D/G/S/B columns
+    mosfet_jac_indices = []
+    for i in range(len(circuit.mosfet_node_d)):
+        nd = int(circuit.mosfet_node_d[i])
+        ng = int(circuit.mosfet_node_g[i])
+        ns = int(circuit.mosfet_node_s[i])
+        nb = int(circuit.mosfet_node_b[i])
+        indices = {}
+        for row_node, row_name in [(nd, 'D'), (ns, 'S')]:
+            for col_node, col_name in [(nd, 'D'), (ng, 'G'), (ns, 'S'), (nb, 'B')]:
+                if row_node > 0 and col_node > 0:
+                    idx = sparsity_to_idx.get((row_node - 1, col_node - 1))
+                    if idx is not None:
+                        indices[(row_name, col_name)] = idx
+        mosfet_jac_indices.append(indices)
+
+    # GMIN diagonal indices
+    gmin_indices = [sparsity_to_idx.get((i, i), -1) for i in range(n_reduced)]
+
+    def residual_and_jacobian_fn(
+        V_reduced: Array, V_prev_reduced: Array, dt: float
+    ) -> Tuple[Array, jsparse.BCOO]:
+        """Compute residual and analytical Jacobian."""
+        V_full = jnp.concatenate([jnp.array([0.0]), V_reduced])
+        V_prev_full = jnp.concatenate([jnp.array([0.0]), V_prev_reduced])
+
+        residual = jnp.zeros(num_nodes, dtype=V_full.dtype)
+        jac_data = jnp.zeros(n_nnz, dtype=V_full.dtype)
+
+        # === Voltage sources ===
+        n_vsources = len(circuit.vsource_node_p)
+        if n_vsources > 0:
+            G_big = 1e6
+            Vp = V_full[circuit.vsource_node_p]
+            Vn = V_full[circuit.vsource_node_n]
+            V_actual = Vp - Vn
+            I = G_big * (V_actual - circuit.vsource_v_target)
+
+            residual = residual.at[circuit.vsource_node_p].add(I)
+            residual = residual.at[circuit.vsource_node_n].add(-I)
+
+            for i, indices in enumerate(vsource_jac_indices):
+                for (ni, nj), (idx, sign) in indices.items():
+                    jac_data = jac_data.at[idx].add(sign * G_big)
+
+        # === Resistors ===
+        n_resistors = len(circuit.resistor_node_p)
+        if n_resistors > 0:
+            Vp = V_full[circuit.resistor_node_p]
+            Vn = V_full[circuit.resistor_node_n]
+            I = circuit.resistor_conductance * (Vp - Vn)
+
+            residual = residual.at[circuit.resistor_node_p].add(I)
+            residual = residual.at[circuit.resistor_node_n].add(-I)
+
+            for i, indices in enumerate(resistor_jac_indices):
+                G = float(circuit.resistor_conductance[i])
+                for (ni, nj), (idx, sign) in indices.items():
+                    jac_data = jac_data.at[idx].add(sign * G)
+
+        # === Capacitors (backward Euler) ===
+        n_capacitors = len(circuit.capacitor_node_p)
+        if n_capacitors > 0:
+            Vp = V_full[circuit.capacitor_node_p]
+            Vn = V_full[circuit.capacitor_node_n]
+            Vp_prev = V_prev_full[circuit.capacitor_node_p]
+            Vn_prev = V_prev_full[circuit.capacitor_node_n]
+
+            V_cap = Vp - Vn
+            V_cap_prev = Vp_prev - Vn_prev
+
+            G_eq = circuit.capacitor_value / dt
+            I_cap = G_eq * (V_cap - V_cap_prev)
+
+            residual = residual.at[circuit.capacitor_node_p].add(I_cap)
+            residual = residual.at[circuit.capacitor_node_n].add(-I_cap)
+
+            for i, indices in enumerate(capacitor_jac_indices):
+                G = float(circuit.capacitor_value[i]) / dt
+                for (ni, nj), (idx, sign) in indices.items():
+                    jac_data = jac_data.at[idx].add(sign * G)
+
+        # === MOSFETs with analytical Jacobian (Shichman-Hodges) ===
+        n_mosfets = len(circuit.mosfet_node_d)
+        if n_mosfets > 0:
+            Vd = V_full[circuit.mosfet_node_d]
+            Vg = V_full[circuit.mosfet_node_g]
+            Vs = V_full[circuit.mosfet_node_s]
+            Vb = V_full[circuit.mosfet_node_b]
+            W = circuit.mosfet_W
+            L = circuit.mosfet_L
+            is_pmos = circuit.mosfet_is_pmos
+
+            # Compute terminal voltages
+            Vgs_nmos = Vg - Vs
+            Vds_nmos = Vd - Vs
+            Vgs_pmos = Vs - Vg
+            Vds_pmos = Vs - Vd
+
+            Vgs = jnp.where(is_pmos, Vgs_pmos, Vgs_nmos)
+            Vds = jnp.where(is_pmos, Vds_pmos, Vds_nmos)
+
+            beta = kp * W / L
+            Vov = Vgs - vth0
+
+            # Compute Id, gm, gds analytically for each region
+            # Cutoff: Vov <= 0
+            Id_cutoff = gds_min * Vds
+            gm_cutoff = jnp.zeros_like(Vov)
+            gds_cutoff = jnp.full_like(Vov, gds_min)
+
+            # Linear: Vov > 0 and Vds < Vov
+            Id_lin = beta * (Vov * Vds - 0.5 * Vds * Vds) * (1 + lambda_ * Vds)
+            gm_lin = beta * Vds * (1 + lambda_ * Vds)
+            gds_lin = beta * (Vov - Vds) * (1 + lambda_ * Vds) + \
+                      beta * (Vov * Vds - 0.5 * Vds * Vds) * lambda_
+
+            # Saturation: Vov > 0 and Vds >= Vov
+            Id_sat = 0.5 * beta * Vov * Vov * (1 + lambda_ * Vds)
+            gm_sat = beta * Vov * (1 + lambda_ * Vds)
+            gds_sat = 0.5 * beta * Vov * Vov * lambda_
+
+            # Select region
+            in_cutoff = Vov <= 0
+            in_linear = (~in_cutoff) & (Vds < Vov)
+
+            Id = jnp.where(in_cutoff, Id_cutoff,
+                          jnp.where(in_linear, Id_lin, Id_sat))
+            gm = jnp.where(in_cutoff, gm_cutoff,
+                          jnp.where(in_linear, gm_lin, gm_sat))
+            gds = jnp.where(in_cutoff, gds_cutoff,
+                           jnp.where(in_linear, gds_lin, gds_sat))
+
+            # Add minimum conductance
+            Id = Id + gds_min * Vds
+            gds = jnp.maximum(gds + gds_min, gds_min)
+            gm = jnp.maximum(gm, 1e-12)
+
+            # Current sign convention: residual = current OUT of node
+            Id_drain = jnp.where(is_pmos, -Id, Id)
+            Id_source = jnp.where(is_pmos, Id, -Id)
+
+            residual = residual.at[circuit.mosfet_node_d].add(Id_drain)
+            residual = residual.at[circuit.mosfet_node_s].add(Id_source)
+
+            # Analytical Jacobian stamps
+            for i, indices in enumerate(mosfet_jac_indices):
+                gm_i = float(gm[i])
+                gds_i = float(gds[i])
+
+                stamps = {
+                    ('D', 'D'): gds_i,
+                    ('D', 'G'): gm_i,
+                    ('D', 'S'): -gds_i - gm_i,
+                    ('S', 'D'): -gds_i,
+                    ('S', 'G'): -gm_i,
+                    ('S', 'S'): gds_i + gm_i,
+                }
+
+                for (row, col), val in stamps.items():
+                    if (row, col) in indices:
+                        idx = indices[(row, col)]
+                        jac_data = jac_data.at[idx].add(val)
+
+        # === GMIN diagonal ===
+        residual = residual.at[1:].add(gmin * V_reduced)
+        for i, idx in enumerate(gmin_indices):
+            if idx >= 0:
+                jac_data = jac_data.at[idx].add(gmin)
+
+        # Build sparse Jacobian
+        jac_indices = jnp.stack([circuit.sparsity_rows, circuit.sparsity_cols], axis=-1)
+        J = jsparse.BCOO((jac_data, jac_indices), shape=(n_reduced, n_reduced))
+
+        return residual[1:], J
+
+    return residual_and_jacobian_fn
+
+
 def transient_analysis_gpu(
     system: MNASystem,
     t_stop: float,
@@ -659,8 +910,8 @@ def transient_analysis_gpu(
 ) -> Tuple[Array, Array, Dict]:
     """GPU-native transient analysis with MOSFET support.
 
-    This solver uses sparsejac for automatic sparse Jacobian computation
-    and runs the entire simulation on GPU via jax.lax.scan.
+    This solver uses analytical Jacobian computation (no autodiff) with
+    Shichman-Hodges MOSFET model for reliable convergence.
 
     Args:
         system: MNA system with devices
@@ -684,8 +935,6 @@ def transient_analysis_gpu(
             solutions: Voltage solutions [n_times, num_nodes]
             info: Dict with statistics
     """
-    if not HAS_SPARSEJAC:
-        raise ImportError("sparsejac required for GPU transient analysis")
 
     # Build circuit data (using fast version with pre-computed device groups)
     if verbose:
@@ -699,35 +948,16 @@ def transient_analysis_gpu(
     if verbose:
         print(f"    Circuit data built in {_time.perf_counter() - _t0:.2f}s")
 
-    # Build residual function
+    # Build analytical residual + Jacobian function (no autodiff)
     if verbose:
-        print("  Building residual function...")
+        print("  Building analytical residual + Jacobian function...")
         _t0 = _time.perf_counter()
 
-    residual_fn = build_transient_residual_fn(circuit)
+    residual_and_jacobian_fn = build_transient_residual_and_jacobian_fn(circuit)
 
     if verbose:
-        print(f"    Residual function built in {_time.perf_counter() - _t0:.2f}s")
-
-    # Build sparsity pattern
-    if verbose:
-        print("  Building sparsity pattern...")
-        _t0 = _time.perf_counter()
-
-    n_nnz = len(circuit.sparsity_rows)
-    sparsity_data = jnp.ones(n_nnz, dtype=jnp.float64)
-    sparsity_indices = jnp.stack([circuit.sparsity_rows, circuit.sparsity_cols], axis=-1)
-    sparsity = jsparse.BCOO((sparsity_data, sparsity_indices), shape=(n_reduced, n_reduced))
-
-    if verbose:
-        print(f"    Sparsity pattern: {n_nnz} entries, built in {_time.perf_counter() - _t0:.2f}s")
-
-    # Create Jacobian function (differentiate w.r.t. V_curr only)
-    def residual_for_jac(V_curr, V_prev, dt):
-        return residual_fn(V_curr, V_prev, dt)
-
-    jacobian_fn = sparsejac.jacrev(lambda V: residual_for_jac(V, V_prev_placeholder, dt_placeholder),
-                                    sparsity=sparsity)
+        n_nnz = len(circuit.sparsity_rows)
+        print(f"    Built in {_time.perf_counter() - _t0:.2f}s ({n_nnz} Jacobian entries)")
 
     # Time points
     num_timesteps = int((t_stop - t_start) / t_step)
@@ -775,24 +1005,16 @@ def transient_analysis_gpu(
 
     # Newton-Raphson solver for one timestep
     def solve_timestep(V_prev_reduced: Array, dt: float) -> Tuple[Array, int, float]:
-        """Solve one timestep using Newton-Raphson."""
+        """Solve one timestep using Newton-Raphson with analytical Jacobian."""
         V = V_prev_reduced.copy()
 
         for iteration in range(max_iterations):
-            # Compute residual
-            f = residual_fn(V, V_prev_reduced, dt)
+            # Compute residual and Jacobian together (analytical, no autodiff)
+            f, J = residual_and_jacobian_fn(V, V_prev_reduced, dt)
             residual_norm = jnp.max(jnp.abs(f))
 
             if residual_norm < abstol:
                 return V, iteration + 1, float(residual_norm)
-
-            # Compute Jacobian (need to rebuild for this V and V_prev)
-            # Use closure over V_prev_reduced and dt
-            def res_for_jac(V_curr):
-                return residual_fn(V_curr, V_prev_reduced, dt)
-
-            jac_fn = sparsejac.jacrev(res_for_jac, sparsity=sparsity)
-            J = jac_fn(V)
 
             # Solve (use dense on CPU, sparse on GPU)
             backend = jax.default_backend()

@@ -4,34 +4,32 @@ Central tracking for development tasks and known issues.
 
 ## High Priority
 
-### GPU Solver Convergence
-The GPU solver has convergence issues with circuits containing floating nodes (e.g., AND gates with series NMOS stacks).
+### GPU Solver - Analytical Jacobians (COMPLETE)
+The GPU solver has been fully migrated to analytical Jacobians, fixing convergence issues with floating nodes.
 
-**Root cause**: Autodiff-computed Jacobians give extremely small `gds` (~1e-16 S) in cutoff, while VACASK enforces a minimum `gds` (~1e-9 S). This creates near-singular Jacobians.
-
-**Progress**:
-- [x] Created `jax_spice/devices/openvaf_device.py` - VADevice wrapper for openvaf_jax models
-- [x] Added `get_vacask_resistor()`, `get_vacask_diode()`, etc. cached model accessors
-- [x] Implemented `stamp_device_into_system()` for stamping analytical Jacobians
-- [x] Added `dc_operating_point_analytical()` with working Shichman-Hodges MOSFET model
-- [x] **AND gate convergence FIXED!** Analytical solver converges in 78 iters, autodiff fails
+**Solution**: Replaced autodiff-based Jacobians with explicit Shichman-Hodges MOSFET model that computes analytical gm/gds stamps. This ensures proper minimum conductance (gds_min=1e-9 S) in cutoff regions.
 
 **Results**:
-| Solver | Converged | Iterations | Floating node `int` |
-|--------|-----------|------------|---------------------|
-| Analytical | Yes | 78 | 0.48V (stable) |
-| Autodiff | No | 100 | 0.10V (wrong) |
+| Circuit | Analytical | Autodiff |
+|---------|------------|----------|
+| Inverter | 5 iters | 6 iters |
+| AND gate | 78 iters | FAILED |
+| NOR gate | ~10 iters | ~15 iters |
+
+**Completed**:
+- [x] `dc_gpu.py` - Full migration, removed 1400+ lines of autodiff code
+- [x] `transient_gpu.py` - Full migration to analytical Jacobians
+- [x] All 61 tests passing
 
 **Remaining Tasks**:
 - [ ] **Run full C6288 benchmark** with analytical solver on GPU
   - 5123 nodes, 10112 MOSFETs
-  - Currently ~30min on CPU, should be much faster on GPU
+  - Should be faster on GPU now with analytical Jacobians
 
 **Files**:
-- `jax_spice/devices/openvaf_device.py` - NEW: VADevice wrapper
-- `jax_spice/analysis/dc_gpu.py` - needs analytical Jacobian variant
-- `jax_spice/analysis/transient_gpu.py` - needs same treatment
-- `docs/gpu_solver_jacobian.md` - analysis of the issue
+- `jax_spice/analysis/dc_gpu.py` - Analytical Jacobian DC solver (584 lines)
+- `jax_spice/analysis/transient_gpu.py` - Analytical Jacobian transient solver
+- `docs/gpu_solver_jacobian.md` - Analysis of the original issue
 
 ## Medium Priority
 
@@ -72,6 +70,12 @@ The JAX translator produces NaN outputs for complex models due to init variable 
   - Fixes: C++20, PTBlockSequence, VLA→vector, KLU destructor, <numbers> header, CMake var escaping
 
 ## Completed
+
+- [x] ~~Full migration to analytical Jacobians~~ (dc_gpu.py and transient_gpu.py)
+  - Removed sparsejac dependency from GPU solvers
+  - dc_gpu.py reduced from 2006 → 584 lines
+  - AND gate convergence fixed (was failing with autodiff)
+  - All 61 tests passing
 
 - [x] ~~Create test suite using VACASK sim files~~ (`tests/test_vacask_jax.py`)
   - Parses actual VACASK `.sim` files

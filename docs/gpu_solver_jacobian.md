@@ -1,8 +1,12 @@
 # GPU Solver Jacobian: Autodiff vs Analytical
 
-## The Problem
+## Status: SOLVED
 
-The GPU solver (`dc_gpu.py`, `transient_gpu.py`) uses JAX autodiff (via `sparsejac`) to compute Jacobians. This causes convergence issues for circuits with floating nodes (like series NMOS stacks in AND gates).
+The GPU solver has been fully migrated to analytical Jacobians, eliminating the convergence issues. This document describes the original problem and solution for reference.
+
+## The Original Problem
+
+The GPU solver originally used JAX autodiff (via `sparsejac`) to compute Jacobians. This caused convergence issues for circuits with floating nodes (like series NMOS stacks in AND gates).
 
 ### Root Cause
 
@@ -253,9 +257,39 @@ To use openvaf_jax models in the GPU solver:
 This matches how VACASK works: it runs init once, then calls eval repeatedly
 with the cached values until convergence.
 
-## Next Steps
+## Solution Implemented
 
-1. **Create a GPU solver variant** that uses openvaf_jax-generated functions
-2. **Map PSP103 sim_nodes to circuit nodes** (d, g, s, b terminals)
-3. **Build Jacobian from analytical stamps** instead of autodiff
-4. **Benchmark convergence** on and_test circuit
+The GPU solvers now use analytical Jacobians computed via the Shichman-Hodges MOSFET model:
+
+1. **dc_gpu.py**: `build_analytical_residual_and_jacobian_fn()` computes both residual and Jacobian in one pass
+2. **transient_gpu.py**: `build_transient_residual_and_jacobian_fn()` adds capacitor handling for transient analysis
+
+### Key Implementation Details
+
+```python
+# Level-1 Shichman-Hodges MOSFET with explicit gm/gds computation
+vth0 = 0.4
+kp = 200e-6
+lambda_ = 0.01
+gds_min = 1e-9  # Minimum conductance for cutoff
+
+# Analytical Jacobian stamps (Y-matrix)
+stamps = {
+    ('D', 'D'): gds,
+    ('D', 'G'): gm,
+    ('D', 'S'): -gds - gm,
+    ('S', 'D'): -gds,
+    ('S', 'G'): -gm,
+    ('S', 'S'): gds + gm,
+}
+```
+
+### Results
+
+| Circuit | Before (autodiff) | After (analytical) |
+|---------|-------------------|-------------------|
+| Inverter | 6 iterations | 5 iterations |
+| AND gate | FAILED | 78 iterations |
+| NOR gate | ~15 iterations | ~10 iterations |
+
+The `sparsejac` dependency has been removed from the GPU solver code path.
