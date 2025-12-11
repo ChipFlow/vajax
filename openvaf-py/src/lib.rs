@@ -3,7 +3,7 @@ use pyo3::prelude::*;
 use pyo3::exceptions::PyValueError;
 
 use basedb::diagnostics::ConsoleSink;
-use hir::CompilationDB;
+use hir::{CompilationDB, CompilationOpts};
 use hir_lower::{CurrentKind, ParamKind};
 use lasso::Rodeo;
 use mir::{FuncRef, Function, Param, Value};
@@ -749,15 +749,17 @@ impl VaModule {
 ///                           non-standard Verilog-A (like GF130 PDK).
 #[pyfunction]
 #[pyo3(signature = (path, allow_analog_in_cond=false))]
-fn compile_va(path: &str, #[allow(unused)] allow_analog_in_cond: bool) -> PyResult<Vec<VaModule>> {
-    // Note: allow_analog_in_cond is kept for backward compatibility but no longer used
-    // as the OpenVAF API has changed
+fn compile_va(path: &str, allow_analog_in_cond: bool) -> PyResult<Vec<VaModule>> {
     let input = std::path::Path::new(path)
         .canonicalize()
         .map_err(|e| PyValueError::new_err(format!("Failed to resolve path: {}", e)))?;
     let input = AbsPathBuf::assert(input);
 
-    let db = CompilationDB::new_fs(input, &[], &[], &[])
+    let opts = CompilationOpts {
+        allow_analog_in_cond,
+    };
+
+    let db = CompilationDB::new_fs(input, &[], &[], &[], &opts)
         .map_err(|e| PyValueError::new_err(format!("Failed to create compilation DB: {}", e)))?;
 
     let modules = collect_modules(&db, false, &mut ConsoleSink::new(&db))
