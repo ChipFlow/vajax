@@ -39,6 +39,20 @@ RUN mkdir -p /usr/local/cuda-12.2/include /usr/local/cuda-12.2/lib64 \
     && cp cudnn-linux-x86_64-9.8.0.87_cuda12-archive/lib/* /usr/local/cuda-12.2/lib64/ \
     && rm -rf cudnn-linux-x86_64-9.8.0.87_cuda12-archive cudnn-linux-x86_64-9.8.0.87_cuda12-archive.tar.xz
 
+# Install Nsight Systems for nsys-jax profiling (from NVIDIA CUDA repo)
+RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
+    apt update && apt install -y \
+    nsight-systems-2024.6.1 \
+    protobuf-compiler
+
+# Clone XLA source for .proto files needed by nsys-jax metadata interpretation
+RUN git clone --depth 1 https://github.com/openxla/xla.git /opt/xla
+
+# Install nsys-jax from NVIDIA JAX-Toolbox
+RUN pip install git+https://github.com/NVIDIA/JAX-Toolbox.git#subdirectory=.github/container/nsys_jax
+
+# Apply nsys-jax compatibility patch for Nsight Systems 2024.5+
+RUN nsys-jax-patch-nsys || true
 
 RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | bash -s -- -y
 ENV PATH="$PATH:/root/.cargo/bin"
@@ -74,6 +88,9 @@ ENV PATH=/usr/local/cuda-12.2/bin:$PATH
 # JAX/XLA settings (disable verbose compile logging)
 ENV TF_CPP_MIN_LOG_LEVEL=2
 ENV XLA_FLAGS="--xla_gpu_autotune_level=0"
+
+# nsys-jax needs XLA source path for .proto files
+ENV SRC_PATH_XLA=/opt/xla
 
 # Entrypoint script that checks out code and runs tests
 COPY scripts/run-gpu-tests.sh /run-gpu-tests.sh
