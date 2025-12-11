@@ -41,19 +41,19 @@ RUN mkdir -p /usr/local/cuda-12.2/include /usr/local/cuda-12.2/lib64 \
 
 # Install Nsight Systems for nsys-jax profiling (from NVIDIA CUDA repo)
 # Package name is cuda-nsight-systems-12-X, not nsight-systems-YYYY.X
-RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
-    apt update && apt install -y \
+# Clean up apt cache after to reduce image size
+RUN apt update && apt install -y --no-install-recommends \
     cuda-nsight-systems-12-6 \
-    protobuf-compiler
+    protobuf-compiler \
+    && apt clean && rm -rf /var/lib/apt/lists/*
 
 # Clone XLA source for .proto files needed by nsys-jax metadata interpretation
-RUN git clone --depth 1 https://github.com/openxla/xla.git /opt/xla
-
-# Install nsys-jax from NVIDIA JAX-Toolbox
-RUN pip install git+https://github.com/NVIDIA/JAX-Toolbox.git#subdirectory=.github/container/nsys_jax
-
-# Apply nsys-jax compatibility patch for Nsight Systems 2024.5+
-RUN nsys-jax-patch-nsys || true
+# Only need the xla/service/*.proto files, so use sparse checkout to minimize size
+# Install nsys-jax and apply compatibility patch in same layer
+RUN git clone --depth 1 --filter=blob:none --sparse https://github.com/openxla/xla.git /opt/xla \
+    && cd /opt/xla && git sparse-checkout set xla \
+    && pip install --no-cache-dir git+https://github.com/NVIDIA/JAX-Toolbox.git#subdirectory=.github/container/nsys_jax \
+    && (nsys-jax-patch-nsys || true)
 
 RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | bash -s -- -y
 ENV PATH="$PATH:/root/.cargo/bin"
