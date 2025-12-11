@@ -40,9 +40,10 @@ RUN mkdir -p /usr/local/cuda-12.2/include /usr/local/cuda-12.2/lib64 \
     && rm -rf cudnn-linux-x86_64-9.8.0.87_cuda12-archive cudnn-linux-x86_64-9.8.0.87_cuda12-archive.tar.xz
 
 # Install Nsight Systems for nsys-jax profiling (from NVIDIA CUDA repo)
+# Package name is cuda-nsight-systems-12-X, not nsight-systems-YYYY.X
 RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     apt update && apt install -y \
-    nsight-systems-2024.6.1 \
+    cuda-nsight-systems-12-6 \
     protobuf-compiler
 
 # Clone XLA source for .proto files needed by nsys-jax metadata interpretation
