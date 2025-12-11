@@ -37,21 +37,34 @@ These models produce NaN with default parameters but work with proper model card
 | rc | resistor, capacitor, vsource | ✅ Passing |
 | graetz | resistor, capacitor, vsource, diode | ✅ Passing |
 | mul | resistor, capacitor, vsource, diode | ✅ Passing |
-| ring | vsource, isource, PSP103 MOSFET | ⏳ Needs OpenVAF integration |
-| c6288 | vsource, isource, PSP103 MOSFET | ⏳ Needs OpenVAF integration |
+| ring | vsource, isource, PSP103 MOSFET | ⚠️ Functional but too slow |
+| c6288 | vsource, isource, PSP103 MOSFET | ⚠️ Blocked by ring |
 
 **Transient solver device support**:
 - [x] Resistor
 - [x] Capacitor
 - [x] Voltage source (DC and time-varying)
-- [x] Current source (DC)
+- [x] Current source (DC and pulse)
 - [x] Diode (Shockley equation with limiting)
-- [ ] OpenVAF-compiled models (PSP103, etc.)
+- [x] OpenVAF-compiled models (PSP103) - **functional but slow**
 
-**Next steps for MOSFET benchmarks**:
-1. Integrate `VADevice` (from `openvaf_device.py`) into transient solver
-2. Handle 4-terminal devices and internal nodes
-3. Map model parameters from VACASK `.inc` files to JAX inputs
+**PSP103/OpenVAF Integration Status**:
+The hybrid solver is functionally complete:
+- [x] PSP103 model compilation via OpenVAF
+- [x] Model card parameters (N/P type, 280+ params) properly parsed
+- [x] Internal nodes allocated (8 per MOSFET, 144 total for ring)
+- [x] Voltage parameter mapping for internal node voltages
+- [x] Residual/Jacobian stamping into expanded system matrix
+- [x] Newton-Raphson converges (3 iterations for t=0)
+
+**Performance issue**: Each PSP103 JAX function call takes ~0.15s (not JIT-compiled).
+With 18 MOSFETs and 100 NR iterations, each timestep takes ~270s. Impractical for
+the ring benchmark which needs 20,000 timesteps.
+
+**Next steps**:
+1. JIT-compile the entire NR loop with device evaluations
+2. Or vectorize multiple device evaluations in a single JAX call
+3. Or use OSDI interface directly with VACASK for benchmarking
 
 ## Low Priority
 
