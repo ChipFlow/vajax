@@ -1342,6 +1342,178 @@ class TestVACASKSweep:
         print(f"At V_in=1.0V: V(2)={v2[-1]:.3f}V, I_R1={i_r1[-1]*1e3:.2f}mA")
 
 
+class TestVACASKSubcircuit:
+    """Test subcircuit support."""
+
+    def test_subcircuit_parsing(self):
+        """Test that we can parse subcircuits from VACASK files."""
+        sim_file = VACASK_TEST / "test_build.sim"
+        if not sim_file.exists():
+            pytest.skip("VACASK test_build.sim not found")
+
+        circuit = parse_netlist(sim_file)
+
+        # Check that subcircuits are parsed
+        assert hasattr(circuit, 'subckts'), "Circuit should have subckts attribute"
+        assert len(circuit.subckts) >= 2, "Should have at least 2 subcircuits"
+
+        # Check par1 subcircuit
+        assert 'par1' in circuit.subckts
+        par1 = circuit.subckts['par1']
+        assert len(par1.instances) == 1, "par1 should have 1 instance"
+        assert par1.instances[0].model == 'resistor'
+
+        print(f"Found {len(circuit.subckts)} subcircuits:")
+        for name, sub in circuit.subckts.items():
+            print(f"  {name}: {len(sub.instances)} instances, params={sub.params}")
+
+    def test_subcircuit_instantiation(self):
+        """Test instantiating a subcircuit in a circuit.
+
+        Creates a voltage divider subcircuit and instantiates it.
+        """
+        from collections import namedtuple
+
+        # Define a simple voltage divider subcircuit
+        Instance = namedtuple('Instance', ['name', 'model', 'terminals', 'params'])
+        Subcircuit = namedtuple('Subcircuit', ['name', 'terminals', 'instances', 'params'])
+        Circuit = namedtuple('Circuit', ['ground', 'top_instances', 'subckts'])
+
+        # Voltage divider subcircuit: in -> out with R1=1k, R2=1k (output = in/2)
+        divider_subckt = Subcircuit(
+            name='divider',
+            terminals=['in', 'out', 'gnd'],
+            instances=[
+                Instance('r1', 'resistor', ['in', 'out'], {'r': 1000}),
+                Instance('r2', 'resistor', ['out', 'gnd'], {'r': 1000}),
+            ],
+            params={}
+        )
+
+        # Main circuit: V1 (2V) -> divider -> GND
+        # Expected output: 1V
+        circuit_with_subckt = Circuit(
+            ground='0',
+            top_instances=[
+                Instance('v1', 'vsource', ['1', '0'], {'dc': 2}),
+                Instance('div1', 'divider', ['1', '2', '0'], {}),
+            ],
+            subckts={'divider': divider_subckt}
+        )
+
+        # Flatten subcircuit: expand div1 into its component instances
+        flattened_instances = []
+        node_map = {}  # Maps subcircuit internal nodes to global nodes
+
+        for inst in circuit_with_subckt.top_instances:
+            if inst.model in circuit_with_subckt.subckts:
+                # This is a subcircuit instance - expand it
+                subckt = circuit_with_subckt.subckts[inst.model]
+
+                # Map subcircuit terminals to connection nodes
+                term_map = dict(zip(subckt.terminals, inst.terminals))
+
+                for sub_inst in subckt.instances:
+                    # Create new terminals by mapping
+                    new_terminals = [term_map.get(t, f'{inst.name}.{t}')
+                                     for t in sub_inst.terminals]
+
+                    flattened_instances.append(Instance(
+                        name=f'{inst.name}.{sub_inst.name}',
+                        model=sub_inst.model,
+                        terminals=new_terminals,
+                        params=sub_inst.params,
+                    ))
+            else:
+                flattened_instances.append(inst)
+
+        print(f"Flattened circuit: {len(flattened_instances)} instances")
+        for inst in flattened_instances:
+            print(f"  {inst.name}: {inst.model} {inst.terminals}")
+
+        # Now solve the flattened circuit
+        node_names = {'0': 0}
+        node_idx = 1
+        for inst in flattened_instances:
+            for t in inst.terminals:
+                if t not in node_names and t != '0':
+                    node_names[t] = node_idx
+                    node_idx += 1
+
+        num_nodes = node_idx
+        ground = 0
+
+        devices = []
+        for inst in flattened_instances:
+            devices.append({
+                'name': inst.name,
+                'model': inst.model,
+                'nodes': [node_names.get(t, 0) for t in inst.terminals],
+                'params': {k: (parse_si_value(str(v)) if isinstance(v, str) else v)
+                           for k, v in inst.params.items()},
+            })
+
+        # Solve DC
+        V = np.zeros(num_nodes)
+        for _ in range(100):
+            J = np.zeros((num_nodes - 1, num_nodes - 1))
+            f = np.zeros(num_nodes - 1)
+
+            for dev in devices:
+                model = dev['model']
+                nodes = dev['nodes']
+                params = dev['params']
+
+                if model == 'vsource':
+                    V_target = params.get('dc', 0)
+                    np_idx, nn_idx = nodes[0], nodes[1]
+                    G = 1e12
+                    I = G * (V[np_idx] - V[nn_idx] - V_target)
+
+                    if np_idx != ground:
+                        f[np_idx - 1] += I
+                        J[np_idx - 1, np_idx - 1] += G
+                        if nn_idx != ground:
+                            J[np_idx - 1, nn_idx - 1] -= G
+                    if nn_idx != ground:
+                        f[nn_idx - 1] -= I
+                        J[nn_idx - 1, nn_idx - 1] += G
+
+                elif model == 'resistor':
+                    R = params.get('r', 1000)
+                    G = 1.0 / max(R, 1e-12)
+                    np_idx, nn_idx = nodes[0], nodes[1]
+                    Vd = V[np_idx] - V[nn_idx]
+                    I = G * Vd
+
+                    if np_idx != ground:
+                        f[np_idx - 1] += I
+                        J[np_idx - 1, np_idx - 1] += G
+                        if nn_idx != ground:
+                            J[np_idx - 1, nn_idx - 1] -= G
+                    if nn_idx != ground:
+                        f[nn_idx - 1] -= I
+                        J[nn_idx - 1, nn_idx - 1] += G
+                        if np_idx != ground:
+                            J[nn_idx - 1, np_idx - 1] -= G
+
+            if np.max(np.abs(f)) < 1e-9:
+                break
+
+            delta = np.linalg.solve(J + 1e-12 * np.eye(J.shape[0]), -f)
+            V[1:] += delta
+
+        # Check result
+        v_in = V[node_names['1']]
+        v_out = V[node_names['2']]
+
+        print(f"V(in) = {v_in:.3f}V")
+        print(f"V(out) = {v_out:.3f}V (expected 1.0V)")
+
+        assert abs(v_in - 2.0) < 0.01, f"V(in) expected 2V, got {v_in}V"
+        assert abs(v_out - 1.0) < 0.01, f"V(out) expected 1V, got {v_out}V"
+
+
 class TestVACASKSummary:
     """Summary of VACASK test coverage."""
 
