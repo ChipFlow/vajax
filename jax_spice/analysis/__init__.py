@@ -17,6 +17,18 @@ from jax_spice.analysis.gpu_backend import (
     is_gpu_available,
     BackendConfig,
 )
+from jax_spice.analysis.solver import (
+    NRConfig,
+    NRResult,
+    newton_solve,
+    newton_solve_with_system,
+    solve_dc_with_builder,
+)
+from jax_spice.analysis.system import (
+    SystemBuilder,
+    SystemResult,
+    SimpleDevice,
+)
 
 __all__ = [
     "AnalysisContext",
@@ -30,4 +42,14 @@ __all__ = [
     "select_backend",
     "is_gpu_available",
     "BackendConfig",
+    # Unified solver
+    "NRConfig",
+    "NRResult",
+    "newton_solve",
+    "newton_solve_with_system",
+    "solve_dc_with_builder",
+    # System builder
+    "SystemBuilder",
+    "SystemResult",
+    "SimpleDevice",
 ]

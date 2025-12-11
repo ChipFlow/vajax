@@ -260,3 +260,47 @@ def _newton_loop_system(
         return (V_new, iteration + 1, converged, residual_norm)
 
     return lax.while_loop(cond_fn, body_fn, init_state)
+
+
+def solve_dc_with_builder(
+    builder: Any,
+    V_init: jax.Array | None = None,
+    config: NRConfig | None = None,
+) -> NRResult:
+    """Solve DC operating point using a SystemBuilder.
+
+    This is a convenience function that wraps SystemBuilder.build_system()
+    for use with the unified NR solver. It uses analytical Jacobians from
+    OpenVAF devices when available.
+
+    Args:
+        builder: SystemBuilder with devices already added and prepare() called
+        V_init: Initial voltage guess (if None, uses zeros)
+        config: Solver configuration
+
+    Returns:
+        NRResult with solution voltage
+    """
+    from jax_spice.analysis.system import SystemBuilder
+
+    if not isinstance(builder, SystemBuilder):
+        raise TypeError(f"Expected SystemBuilder, got {type(builder)}")
+
+    if not builder._prepared:
+        builder.prepare()
+
+    n_nodes = builder.total_nodes
+
+    if V_init is None:
+        V_init = jnp.zeros(n_nodes)
+    elif len(V_init) < n_nodes:
+        # Extend with zeros for internal nodes
+        V_init = jnp.concatenate([V_init, jnp.zeros(n_nodes - len(V_init))])
+
+    def build_system_fn(V):
+        import numpy as np
+        V_np = np.asarray(V)
+        result = builder.build_system(V_np, t=0.0, dt=1e-9)
+        return result.J, result.f
+
+    return newton_solve_with_system(build_system_fn, V_init, config)
