@@ -13,12 +13,21 @@ The GPU solver has convergence issues with circuits containing floating nodes (e
 - [x] Created `jax_spice/devices/openvaf_device.py` - VADevice wrapper for openvaf_jax models
 - [x] Added `get_vacask_resistor()`, `get_vacask_diode()`, etc. cached model accessors
 - [x] Implemented `stamp_device_into_system()` for stamping analytical Jacobians
+- [x] Added `dc_operating_point_analytical()` and `build_analytical_residual_and_jacobian_fn()` (WIP)
+
+**Current Issue**:
+- MOSFET model mismatch between analytical and autodiff:
+  - Autodiff uses smooth `tanh`-based formulation
+  - Analytical uses piecewise Shichman-Hodges
+  - Results in different residuals AND Jacobian signs
+- Need to either:
+  1. Update analytical model to match autodiff smooth formulation
+  2. Or use openvaf_jax VADevice directly (returns analytical Jacobians from Verilog-A)
 
 **Remaining Tasks**:
-- [ ] **Create GPU solver variant using analytical Jacobians**
-  - Add `build_circuit_residual_and_jacobian_fn()` in `dc_gpu.py`
-  - Use VADevice.evaluate() to get (residual, jacobian) per device
-  - Build sparse Jacobian from analytical stamps instead of sparsejac autodiff
+- [ ] **Fix MOSFET model mismatch**
+  - Option A: Derive analytical Jacobian for smooth tanh-based model
+  - Option B: Integrate VADevice.evaluate() for MOSFET (uses openvaf_jax)
 
 - [ ] **Test AND gate convergence with analytical Jacobian**
   - Test circuit: `and_test` from `c6288.sim` (6 MOSFETs, floating `int` node)
