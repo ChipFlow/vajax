@@ -92,37 +92,51 @@ Implemented JIT-compiled vmap-based batched evaluation for OpenVAF devices:
 
 ### Technical Debt: Code Duplication
 
-**Status (2025-12):** Partially addressed with unified solver module.
+**Status (2025-12):** Unified solver and system builder infrastructure complete.
 
 **Completed:**
 - [x] Created `jax_spice/analysis/solver.py` with unified NR iteration loop
-- [x] Refactored `dc.py` to use unified solver with autodiff Jacobian
-- [x] Added legacy fallback for MNASystem without device_groups (test compatibility)
+- [x] Created `jax_spice/analysis/system.py` with SystemBuilder for unified J,f construction
+- [x] Added `CompiledModelBatch` to `jax_spice/devices/openvaf_device.py` for batched OpenVAF evaluation
+- [x] Added `dc_operating_point_analytical()` using analytical Jacobians
+- [x] Added `transient_analysis_analytical()` using analytical Jacobians
+- [x] Both functions use SystemBuilder with OpenVAF analytical Jacobians (no autodiff)
 
-**Remaining duplication:**
-| Category | Status | Notes |
-|----------|--------|-------|
-| NR iteration (DC) | ✅ Unified | Uses `solver.newton_solve()` |
-| NR iteration (transient) | Kept separate | Needs V_prev for backward Euler |
-| NR iteration (runner) | Kept separate | Uses hybrid OpenVAF + simple stamping |
-| Device stamping | Moderate | Different for each use case |
-
-**Design decision:** Transient and runner NR loops kept separate because:
-- Transient: Needs `V_prev` for capacitor companion model (backward Euler)
-- Runner: Uses hybrid approach with OpenVAF vmapped functions + simple device stamping
-- Both are already JIT-compiled and optimized for their specific use cases
-
-**Architecture after refactoring:**
+**Current architecture:**
 ```
-solver.py          # Core NR loop (DC analysis)
-├── NRConfig       # Solver configuration
-├── NRResult       # Result with convergence info
-└── newton_solve() # Main entry point
+jax_spice/analysis/
+├── solver.py          # Core NR loop with lax.while_loop
+│   ├── NRConfig       # Solver configuration
+│   ├── NRResult       # Result with convergence info
+│   ├── newton_solve() # Residual+Jacobian functions
+│   └── solve_dc_with_builder()  # SystemBuilder wrapper
+│
+├── system.py          # Unified system building
+│   ├── SystemBuilder  # Manages simple + OpenVAF devices
+│   ├── SimpleDevice   # Simple device info
+│   └── build_system() # Returns (J, f) with analytical Jacobians
+│
+├── dc.py              # DC analysis
+│   ├── dc_operating_point()           # Original (autodiff)
+│   └── dc_operating_point_analytical() # NEW: Uses SystemBuilder
+│
+├── transient.py       # Transient analysis
+│   ├── transient_analysis_jit()         # Original (hardcoded devices)
+│   └── transient_analysis_analytical()  # NEW: Uses SystemBuilder
+│
+jax_spice/devices/
+├── openvaf_device.py  # OpenVAF device support
+│   ├── VADevice           # Single device evaluation
+│   ├── CompiledModelBatch # Batched vmapped evaluation
+│   └── compile_model()    # Model compilation with caching
 
-dc.py              # Uses solver.newton_solve() + autodiff Jacobian
-transient.py       # Separate NR with V_prev for backward Euler
-runner.py          # Separate hybrid NR for OpenVAF + simple devices
+jax_spice/benchmarks/
+└── runner.py          # VACASK benchmark runner (separate for now)
 ```
+
+**Remaining work:**
+- [ ] Migrate runner.py to use SystemBuilder (non-blocking, works as-is)
+- [ ] Add sparse solver support to SystemBuilder
 
 ### Build System
 - [ ] **Upstream VACASK macOS fixes** to original repo
@@ -181,6 +195,7 @@ runner.py          # Separate hybrid NR for OpenVAF + simple devices
 | Purpose | Location |
 |---------|----------|
 | **Newton-Raphson solver** | `jax_spice/analysis/solver.py` |
+| **System builder** | `jax_spice/analysis/system.py` |
 | DC operating point | `jax_spice/analysis/dc.py` |
 | Transient solver | `jax_spice/analysis/transient.py` |
 | MNA system | `jax_spice/analysis/mna.py` |
@@ -188,7 +203,7 @@ runner.py          # Separate hybrid NR for OpenVAF + simple devices
 | Benchmark runner | `jax_spice/benchmarks/runner.py` |
 | Benchmark profiling | `scripts/profile_gpu.py` |
 | Cloud Run profiling | `scripts/profile_gpu_cloudrun.py` |
-| OpenVAF device wrapper | `jax_spice/devices/openvaf_device.py` |
+| **OpenVAF batched eval** | `jax_spice/devices/openvaf_device.py` |
 | OpenVAF→JAX translator | `openvaf-py/openvaf_jax.py` |
 | VACASK parser | `jax_spice/netlist/parser.py` |
 | VACASK suite tests | `tests/test_vacask_suite.py` |
