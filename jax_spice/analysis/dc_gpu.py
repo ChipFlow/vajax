@@ -1782,6 +1782,8 @@ def build_analytical_residual_and_jacobian_fn(
                     jac_data = jac_data.at[idx].add(sign * G)
 
         # === MOSFETs with analytical Jacobian ===
+        # Use level-1 Shichman-Hodges model with explicit Jacobian stamps
+        # Sign convention: residual = current OUT of node (KCL: sum out = 0)
         if len(mosfet_data['node_d']) > 0:
             Vd = V_full[mosfet_arrays['node_d']]
             Vg = V_full[mosfet_arrays['node_g']]
@@ -1797,7 +1799,7 @@ def build_analytical_residual_and_jacobian_fn(
             lambda_ = 0.01
             gds_min = 1e-9  # Minimum conductance for cutoff
 
-            # Compute terminal voltages
+            # Compute terminal voltages (always positive Vgs, Vds for the model)
             Vgs_nmos = Vg - Vs
             Vds_nmos = Vd - Vs
             Vgs_pmos = Vs - Vg
@@ -1829,7 +1831,6 @@ def build_analytical_residual_and_jacobian_fn(
             # Select region
             in_cutoff = Vov <= 0
             in_linear = (~in_cutoff) & (Vds < Vov)
-            in_saturation = (~in_cutoff) & (Vds >= Vov)
 
             Id = jnp.where(in_cutoff, Id_cutoff,
                           jnp.where(in_linear, Id_lin, Id_sat))
@@ -1838,47 +1839,37 @@ def build_analytical_residual_and_jacobian_fn(
             gds = jnp.where(in_cutoff, gds_cutoff,
                            jnp.where(in_linear, gds_lin, gds_sat))
 
-            # Add minimum conductance
+            # Add minimum conductance (always active for numerical stability)
             Id = Id + gds_min * Vds
             gds = jnp.maximum(gds + gds_min, gds_min)
             gm = jnp.maximum(gm, 1e-12)
 
-            # Current sign convention
-            Id_drain = jnp.where(is_pmos, Id, -Id)
-            Id_source = jnp.where(is_pmos, -Id, Id)
+            # Current sign convention: residual = current OUT of node
+            # NMOS: Ids flows D→S, so current LEAVES drain (-), ENTERS source (+)
+            # PMOS: Ids flows S→D, so current ENTERS drain (+), LEAVES source (-)
+            # BUT we negate because residual convention is current OUT
+            Id_drain = jnp.where(is_pmos, -Id, Id)   # PMOS: -Id (in), NMOS: +Id (out)
+            Id_source = jnp.where(is_pmos, Id, -Id)  # PMOS: +Id (out), NMOS: -Id (in)
 
             residual = residual.at[mosfet_arrays['node_d']].add(Id_drain)
             residual = residual.at[mosfet_arrays['node_s']].add(Id_source)
 
-            # Analytical Jacobian stamps
-            # For NMOS: dId_drain/dVd = -gds, dId_drain/dVg = -gm, dId_drain/dVs = gds+gm
-            # For PMOS: dId_drain/dVd = gds, dId_drain/dVg = gm, dId_drain/dVs = -gds-gm
+            # Analytical Jacobian stamps using conductance matrix
+            # These are the SAME for both NMOS and PMOS (conductances are always positive)
+            # The sign differences are handled by the current convention above
             for i, indices in enumerate(mosfet_jac_indices):
-                is_p = bool(mosfet_data['is_pmos'][i])
                 gm_i = float(gm[i])
                 gds_i = float(gds[i])
 
-                # Conductance matrix entries (analytical!)
-                if is_p:
-                    # PMOS
-                    stamps = {
-                        ('D', 'D'): gds_i,
-                        ('D', 'G'): gm_i,
-                        ('D', 'S'): -gds_i - gm_i,
-                        ('S', 'D'): -gds_i,
-                        ('S', 'G'): -gm_i,
-                        ('S', 'S'): gds_i + gm_i,
-                    }
-                else:
-                    # NMOS
-                    stamps = {
-                        ('D', 'D'): gds_i,
-                        ('D', 'G'): gm_i,
-                        ('D', 'S'): -gds_i - gm_i,
-                        ('S', 'D'): -gds_i,
-                        ('S', 'G'): -gm_i,
-                        ('S', 'S'): gds_i + gm_i,
-                    }
+                # Standard MOSFET conductance stamps (Y-matrix)
+                stamps = {
+                    ('D', 'D'): gds_i,
+                    ('D', 'G'): gm_i,
+                    ('D', 'S'): -gds_i - gm_i,
+                    ('S', 'D'): -gds_i,
+                    ('S', 'G'): -gm_i,
+                    ('S', 'S'): gds_i + gm_i,
+                }
 
                 for (row, col), val in stamps.items():
                     if (row, col) in indices:
