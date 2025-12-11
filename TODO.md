@@ -77,8 +77,7 @@ Implemented JIT-compiled vmap-based batched evaluation for OpenVAF devices:
 
 **Future optimization options**:
 1. ~~Modify openvaf_jax to use `jax.lax.cond` for JIT compatibility~~ ✅ Done
-2. Implement OSDI interface to call compiled native code directly (for even faster warmup)
-3. Use GPU acceleration (now possible with JIT compilation)
+2. Use GPU acceleration (now possible with JIT compilation)
 
 ## Low Priority
 
@@ -90,6 +89,30 @@ Implemented JIT-compiled vmap-based batched evaluation for OpenVAF devices:
 ### Code Cleanup
 - [ ] **Remove xfail markers** from PSP/JUNCAP/diode_cmc tests (they pass)
 - [ ] **Consolidate test files** in `openvaf-py/tests/` (some at root level)
+
+### Technical Debt: Code Duplication
+
+**Analysis (2025-12):** Significant code duplication exists between `jax_spice/benchmarks/runner.py` and the analysis modules (`dc.py`, `transient.py`).
+
+| Category | Duplication Level | Files Affected |
+|----------|-------------------|----------------|
+| Newton-Raphson iteration | HIGH | runner.py (2 variants), dc.py (4 functions), transient.py (1) |
+| Device stamping (R/C/V/diode) | HIGH | runner.py (dense + sparse), transient.py (JAX) |
+| Backend selection pattern | HIGH | runner.py, dc.py, transient.py |
+| Sparse solver calls | MODERATE | runner.py (1), dc.py (3 identical calls) |
+
+**Root cause:** VACASKBenchmarkRunner evolved from standalone benchmark tool to duplicate core analysis functionality.
+
+**Key differences preventing simple unification:**
+- Runner: Python loops + NumPy, supports OpenVAF vmapped functions directly
+- Analysis modules: JAX-native with `lax.while_loop` for autodiff/GPU tracing
+- Different sparse formats: scipy LIL (runner) vs JAX BCOO (analysis)
+
+**Potential refactoring (future):**
+- [ ] Extract shared Newton-Raphson solver with pluggable backends
+- [ ] Unify device stamping into device-type-agnostic operations
+- [ ] Create abstract solver interface used by both runner and analysis modules
+
 ### Build System
 - [ ] **Upstream VACASK macOS fixes** to original repo
   - Current workaround: `robtaylor/VACASK` fork with `macos-fixes` branch
