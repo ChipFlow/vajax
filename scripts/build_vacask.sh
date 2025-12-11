@@ -25,7 +25,7 @@ set -e
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 VACASK_SRC="$PROJECT_ROOT/vendor/VACASK"
-BUILD_DIR="$VACASK_SRC/build"
+BUILD_DIR="$PROJECT_ROOT/build/vacask"
 
 # Check if VACASK source exists
 if [ ! -d "$VACASK_SRC" ]; then
