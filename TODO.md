@@ -92,26 +92,37 @@ Implemented JIT-compiled vmap-based batched evaluation for OpenVAF devices:
 
 ### Technical Debt: Code Duplication
 
-**Analysis (2025-12):** Significant code duplication exists between `jax_spice/benchmarks/runner.py` and the analysis modules (`dc.py`, `transient.py`).
+**Status (2025-12):** Partially addressed with unified solver module.
 
-| Category | Duplication Level | Files Affected |
-|----------|-------------------|----------------|
-| Newton-Raphson iteration | HIGH | runner.py (2 variants), dc.py (4 functions), transient.py (1) |
-| Device stamping (R/C/V/diode) | HIGH | runner.py (dense + sparse), transient.py (JAX) |
-| Backend selection pattern | HIGH | runner.py, dc.py, transient.py |
-| Sparse solver calls | MODERATE | runner.py (1), dc.py (3 identical calls) |
+**Completed:**
+- [x] Created `jax_spice/analysis/solver.py` with unified NR iteration loop
+- [x] Refactored `dc.py` to use unified solver with autodiff Jacobian
+- [x] Added legacy fallback for MNASystem without device_groups (test compatibility)
 
-**Root cause:** VACASKBenchmarkRunner evolved from standalone benchmark tool to duplicate core analysis functionality.
+**Remaining duplication:**
+| Category | Status | Notes |
+|----------|--------|-------|
+| NR iteration (DC) | ✅ Unified | Uses `solver.newton_solve()` |
+| NR iteration (transient) | Kept separate | Needs V_prev for backward Euler |
+| NR iteration (runner) | Kept separate | Uses hybrid OpenVAF + simple stamping |
+| Device stamping | Moderate | Different for each use case |
 
-**Key differences preventing simple unification:**
-- Runner: Python loops + NumPy, supports OpenVAF vmapped functions directly
-- Analysis modules: JAX-native with `lax.while_loop` for autodiff/GPU tracing
-- Different sparse formats: scipy LIL (runner) vs JAX BCOO (analysis)
+**Design decision:** Transient and runner NR loops kept separate because:
+- Transient: Needs `V_prev` for capacitor companion model (backward Euler)
+- Runner: Uses hybrid approach with OpenVAF vmapped functions + simple device stamping
+- Both are already JIT-compiled and optimized for their specific use cases
 
-**Potential refactoring (future):**
-- [ ] Extract shared Newton-Raphson solver with pluggable backends
-- [ ] Unify device stamping into device-type-agnostic operations
-- [ ] Create abstract solver interface used by both runner and analysis modules
+**Architecture after refactoring:**
+```
+solver.py          # Core NR loop (DC analysis)
+├── NRConfig       # Solver configuration
+├── NRResult       # Result with convergence info
+└── newton_solve() # Main entry point
+
+dc.py              # Uses solver.newton_solve() + autodiff Jacobian
+transient.py       # Separate NR with V_prev for backward Euler
+runner.py          # Separate hybrid NR for OpenVAF + simple devices
+```
 
 ### Build System
 - [ ] **Upstream VACASK macOS fixes** to original repo
@@ -169,8 +180,11 @@ Implemented JIT-compiled vmap-based batched evaluation for OpenVAF devices:
 ### Key Files
 | Purpose | Location |
 |---------|----------|
-| CPU transient solver | `jax_spice/analysis/transient.py` |
+| **Newton-Raphson solver** | `jax_spice/analysis/solver.py` |
+| DC operating point | `jax_spice/analysis/dc.py` |
+| Transient solver | `jax_spice/analysis/transient.py` |
 | MNA system | `jax_spice/analysis/mna.py` |
+| GPU backend selection | `jax_spice/analysis/gpu_backend.py` |
 | Benchmark runner | `jax_spice/benchmarks/runner.py` |
 | Benchmark profiling | `scripts/profile_gpu.py` |
 | Cloud Run profiling | `scripts/profile_gpu_cloudrun.py` |
