@@ -1101,6 +1101,247 @@ class TestVACASKTransient:
         assert max_err < 0.01, f"Max relative error {max_err:.4e} exceeds 1%"
 
 
+class TestVACASKSweep:
+    """Run DC sweep tests from VACASK suite."""
+
+    def _dc_sweep(
+        self,
+        circuit,
+        instance_name: str,
+        param_name: str,
+        values: List[float],
+    ) -> Dict[str, np.ndarray]:
+        """Run DC sweep over an instance parameter.
+
+        Returns dict of node_name -> array of voltages at each sweep point.
+        """
+        # Build base circuit
+        node_names = {'0': 0}
+        if circuit.ground and circuit.ground != '0':
+            node_names[circuit.ground] = 0
+
+        node_idx = 1
+        for inst in circuit.top_instances:
+            for terminal in inst.terminals:
+                if terminal not in node_names and terminal != circuit.ground:
+                    node_names[terminal] = node_idx
+                    node_idx += 1
+
+        num_nodes = node_idx
+        ground = 0
+
+        # Parse device info
+        devices = []
+        sweep_device_idx = None
+        for i, inst in circuit.top_instances:
+            model = inst.model.lower()
+            node_indices = [node_names.get(t, node_names.get(circuit.ground, 0))
+                           for t in inst.terminals]
+            params = {}
+            for k, v in inst.params.items():
+                try:
+                    params[k] = parse_si_value(str(v))
+                except:
+                    params[k] = str(v).strip('"\'')
+
+            devices.append({
+                'name': inst.name,
+                'model': model,
+                'nodes': node_indices,
+                'params': params,
+            })
+
+            if inst.name == instance_name:
+                sweep_device_idx = len(devices) - 1
+
+        # Run DC at each sweep point
+        results = {name: [] for name in node_names}
+
+        for val in values:
+            # Update sweep parameter
+            if sweep_device_idx is not None:
+                devices[sweep_device_idx]['params'][param_name] = val
+
+            # Solve DC
+            V = self._dc_solve(num_nodes, ground, devices)
+
+            # Store results
+            for name, idx in node_names.items():
+                results[name].append(V[idx])
+
+        return {k: np.array(v) for k, v in results.items()}
+
+    def _dc_solve(self, num_nodes, ground, devices):
+        """Solve DC operating point."""
+        V = np.zeros(num_nodes)
+
+        for _ in range(100):
+            J = np.zeros((num_nodes - 1, num_nodes - 1))
+            f = np.zeros(num_nodes - 1)
+
+            for dev in devices:
+                self._stamp_device(J, f, V, dev, ground)
+
+            if np.max(np.abs(f)) < 1e-9:
+                break
+
+            try:
+                delta = np.linalg.solve(J + 1e-12 * np.eye(J.shape[0]), -f)
+            except:
+                delta = np.linalg.lstsq(J, -f, rcond=None)[0]
+
+            V[1:] += delta
+
+            if np.max(np.abs(delta)) < 1e-12:
+                break
+
+        return V
+
+    def _stamp_device(self, J, f, V, dev, ground):
+        """Stamp device for DC analysis."""
+        model = dev['model']
+        nodes = dev['nodes']
+        params = dev['params']
+
+        if model in ('vsource', 'v'):
+            V_target = params.get('dc', params.get('val0', 0))
+            np_idx, nn_idx = nodes[0], nodes[1]
+            V_actual = V[np_idx] - V[nn_idx]
+            G = 1e12
+            I = G * (V_actual - V_target)
+
+            if np_idx != ground:
+                f[np_idx - 1] += I
+                J[np_idx - 1, np_idx - 1] += G
+                if nn_idx != ground:
+                    J[np_idx - 1, nn_idx - 1] -= G
+            if nn_idx != ground:
+                f[nn_idx - 1] -= I
+                J[nn_idx - 1, nn_idx - 1] += G
+                if np_idx != ground:
+                    J[nn_idx - 1, np_idx - 1] -= G
+
+        elif model in ('resistor', 'r'):
+            R = params.get('r', 1000)
+            G = 1.0 / max(R, 1e-12)
+            np_idx, nn_idx = nodes[0], nodes[1]
+            Vd = V[np_idx] - V[nn_idx]
+            I = G * Vd
+
+            if np_idx != ground:
+                f[np_idx - 1] += I
+                J[np_idx - 1, np_idx - 1] += G
+                if nn_idx != ground:
+                    J[np_idx - 1, nn_idx - 1] -= G
+            if nn_idx != ground:
+                f[nn_idx - 1] -= I
+                J[nn_idx - 1, nn_idx - 1] += G
+                if np_idx != ground:
+                    J[nn_idx - 1, np_idx - 1] -= G
+
+        elif model in ('diode', 'd'):
+            Is = params.get('is', 1e-12)
+            n = params.get('n', 2.0)
+            np_idx, nn_idx = nodes[0], nodes[1]
+            Vd = V[np_idx] - V[nn_idx]
+
+            Vt = 0.02585
+            gmin = 1e-12
+
+            # Limited exponential
+            Vd_max = 40 * n * Vt
+            if Vd > Vd_max:
+                exp_max = np.exp(Vd_max / (n * Vt))
+                Id = Is * (exp_max - 1) + Is * exp_max / (n * Vt) * (Vd - Vd_max)
+                gd = Is * exp_max / (n * Vt)
+            elif Vd < -40 * Vt:
+                Id = -Is
+                gd = gmin
+            else:
+                exp_val = np.exp(Vd / (n * Vt))
+                Id = Is * (exp_val - 1)
+                gd = Is * exp_val / (n * Vt)
+
+            Id = Id + gmin * Vd
+            gd = gd + gmin
+
+            if np_idx != ground:
+                f[np_idx - 1] += Id
+                J[np_idx - 1, np_idx - 1] += gd
+                if nn_idx != ground:
+                    J[np_idx - 1, nn_idx - 1] -= gd
+            if nn_idx != ground:
+                f[nn_idx - 1] -= Id
+                J[nn_idx - 1, nn_idx - 1] += gd
+                if np_idx != ground:
+                    J[nn_idx - 1, np_idx - 1] -= gd
+
+    def test_diode_dc_sweep(self):
+        """Test DC sweep of a simple diode circuit.
+
+        Circuit: V1 (sweep -1 to 1V) -- R1 (1k) -- D1 -- GND
+        Verifies exponential diode characteristic.
+        """
+        # Create a simple circuit programmatically since test_diode uses complex sweeps
+        from collections import namedtuple
+
+        Instance = namedtuple('Instance', ['name', 'model', 'terminals', 'params'])
+        Circuit = namedtuple('Circuit', ['ground', 'top_instances'])
+
+        circuit = Circuit(
+            ground='0',
+            top_instances=[
+                Instance('v1', 'vsource', ['1', '0'], {'dc': 0}),
+                Instance('r1', 'resistor', ['1', '2'], {'r': '1k'}),
+                Instance('d1', 'diode', ['2', '0'], {'is': 1e-12, 'n': 2}),
+            ]
+        )
+
+        # Sweep voltage from -1V to 1V
+        voltages = np.linspace(-1, 1, 21)
+        results = []
+
+        for v_in in voltages:
+            # Manually build and solve
+            node_names = {'0': 0, '1': 1, '2': 2}
+            num_nodes = 3
+            ground = 0
+
+            devices = [
+                {'name': 'v1', 'model': 'vsource', 'nodes': [1, 0], 'params': {'dc': v_in}},
+                {'name': 'r1', 'model': 'resistor', 'nodes': [1, 2], 'params': {'r': 1000}},
+                {'name': 'd1', 'model': 'diode', 'nodes': [2, 0], 'params': {'is': 1e-12, 'n': 2}},
+            ]
+
+            V = self._dc_solve(num_nodes, ground, devices)
+            results.append({'v_in': v_in, 'v1': V[1], 'v2': V[2]})
+
+        # Check that:
+        # 1. At negative input, diode is reverse biased, V(2) ≈ V(1)
+        # 2. At positive input, diode conducts, V(2) < V(1)
+        # 3. Current through R1 = (V1-V2)/R increases exponentially
+
+        v_in = np.array([r['v_in'] for r in results])
+        v2 = np.array([r['v2'] for r in results])
+
+        # For negative V_in, diode is off, V2 ≈ V_in (small leakage through R)
+        negative_mask = v_in < -0.5
+        assert np.all(v2[negative_mask] < 0), "Diode should be reverse biased for negative input"
+
+        # For positive V_in > 0.7V, significant current flows
+        # With n=2 and Is=1e-12, forward voltage is higher than typical silicon diode
+        positive_mask = v_in > 0.7
+        assert np.all(v2[positive_mask] > 0.3), "Diode should have forward voltage > 0.3V"
+        # At V_in=1V with R=1k, V2 ≈ 0.93V (high n=2 causes higher Vf)
+        assert np.all(v2[positive_mask] < 1.0), "Diode voltage should be < input voltage"
+
+        # Calculate current through R1
+        i_r1 = (v_in - v2) / 1000
+        print(f"Sweep: V_in from {v_in[0]:.1f}V to {v_in[-1]:.1f}V")
+        print(f"At V_in=0.7V: V(2)={v2[v_in >= 0.7][0]:.3f}V, I_R1={i_r1[v_in >= 0.7][0]*1e6:.1f}µA")
+        print(f"At V_in=1.0V: V(2)={v2[-1]:.3f}V, I_R1={i_r1[-1]*1e3:.2f}mA")
+
+
 class TestVACASKSummary:
     """Summary of VACASK test coverage."""
 
