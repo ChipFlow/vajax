@@ -1,16 +1,5 @@
-"""Benchmark circuits for JAX-SPICE
+"""VACASK benchmark runner utilities."""
 
-Provides benchmark circuits for testing and performance evaluation.
-"""
+from .runner import VACASKBenchmarkRunner
 
-from jax_spice.benchmarks.c6288 import (
-    C6288Benchmark,
-    run_c6288_sparse_dc,
-    run_c6288_dense_dc,
-)
-
-__all__ = [
-    "C6288Benchmark",
-    "run_c6288_sparse_dc",
-    "run_c6288_dense_dc",
-]
+__all__ = ['VACASKBenchmarkRunner']
