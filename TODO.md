@@ -38,7 +38,7 @@ These models produce NaN with default parameters but work with proper model card
 | graetz | resistor, capacitor, vsource, diode | ✅ Passing |
 | mul | resistor, capacitor, vsource, diode | ✅ Passing |
 | ring | vsource, isource, PSP103 MOSFET | ✅ Fast (~20ms/step after JIT warmup) |
-| c6288 | vsource, isource, PSP103 MOSFET | 🔄 Ready to test |
+| c6288 | vsource, isource, PSP103 MOSFET | ⚠️ Needs sparse matrix support (10,112 MOSFETs, ~86k nodes) |
 
 **Transient solver device support**:
 - [x] Resistor

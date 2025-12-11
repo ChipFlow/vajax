@@ -154,13 +154,45 @@ class VACASKBenchmarkRunner:
             return {}
         return {k: self.parse_spice_number(v) for k, v in model.params.items()}
 
+    def _parse_elaborate_directive(self) -> Optional[str]:
+        """Parse 'elaborate circuit("subckt_name")' directive from control block.
+
+        Returns subcircuit name to elaborate, or None if not found.
+        """
+        text = self.sim_path.read_text()
+        # Match: elaborate circuit("name") or elaborate circuit("name", "other")
+        match = re.search(r'elaborate\s+circuit\s*\(\s*"([^"]+)"', text)
+        if match:
+            return match.group(1)
+        return None
+
     def _flatten_top_instances(self) -> List[Tuple[str, List[str], str, Dict[str, str]]]:
         """Flatten subcircuit instances to leaf devices.
 
         Returns list of (name, terminals, model, params) tuples for leaf devices.
+        Handles 'elaborate circuit("name")' directive if present.
         """
+        from jax_spice.netlist.parser import Instance
+
         flat_instances = []
         ground = self.circuit.ground or '0'
+
+        # Check for elaborate directive
+        elaborate_subckt = self._parse_elaborate_directive()
+        if elaborate_subckt:
+            # Create synthetic top-level instance of the elaborated subcircuit
+            subckt = self.circuit.subckts.get(elaborate_subckt)
+            if subckt:
+                if self.verbose:
+                    print(f"Elaborating subcircuit: {elaborate_subckt}")
+                # Create synthetic instance with no external ports
+                synthetic_inst = Instance(
+                    name='top',
+                    terminals=subckt.terminals,  # Map to global nodes with same names
+                    model=elaborate_subckt,
+                    params={}
+                )
+                self.circuit.top_instances.append(synthetic_inst)
 
         # Parameters that should be kept as strings (not evaluated as expressions)
         string_params = {'type'}
@@ -672,23 +704,24 @@ class VACASKBenchmarkRunner:
         """Extract analysis parameters from control block."""
         text = self.sim_path.read_text()
 
-        # Find tran analysis: analysis <name> tran step=X stop=Y [maxstep=Z] [icmode="..."]
-        match = re.search(
-            r'analysis\s+\w+\s+tran\s+'
-            r'(?:step=(\S+)\s+)?'
-            r'(?:stop=(\S+)\s*)?'
-            r'(?:maxstep=(\S+)\s*)?'
-            r'(?:icmode="(\w+)")?',
-            text
-        )
+        # Find tran analysis line
+        match = re.search(r'analysis\s+\w+\s+tran\s+([^\n]+)', text)
         if match:
-            step = self.parse_spice_number(match.group(1) or '1u')
-            stop = self.parse_spice_number(match.group(2) or '1m')
+            params_str = match.group(1)
+            # Parse individual parameters - they can be in any order
+            step_match = re.search(r'step=(\S+)', params_str)
+            stop_match = re.search(r'stop=(\S+)', params_str)
+            maxstep_match = re.search(r'maxstep=(\S+)', params_str)
+            icmode_match = re.search(r'icmode="(\w+)"', params_str)
+
+            step = self.parse_spice_number(step_match.group(1)) if step_match else 1e-6
+            stop = self.parse_spice_number(stop_match.group(1)) if stop_match else 1e-3
+
             self.analysis_params = {
                 'type': 'tran',
                 'step': step,
                 'stop': stop,
-                'icmode': match.group(4) or 'op',
+                'icmode': icmode_match.group(1) if icmode_match else 'op',
             }
         else:
             # Default values
