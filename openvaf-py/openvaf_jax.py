@@ -1383,6 +1383,23 @@ class OpenVAFToJAX:
                 return f"jnp.int32({ops[0]})"
             return '0'
 
+        elif opcode == 'fbcast':
+            # Float to bool cast - check if non-zero
+            ops = [get_operand(op) for op in operands]
+            if ops:
+                return f"({ops[0]} != 0.0)"
+            return 'False'
+
+        elif opcode == 'irem':
+            # Integer remainder (modulo)
+            ops = [get_operand(op) for op in operands]
+            return f"({ops[0]} % {ops[1]})"
+
+        elif opcode == 'idiv':
+            # Integer division
+            ops = [get_operand(op) for op in operands]
+            return f"({ops[0]} // {ops[1]})"
+
         elif opcode == 'ige':
             # Integer greater-than-or-equal
             ops = [get_operand(op) for op in operands]
