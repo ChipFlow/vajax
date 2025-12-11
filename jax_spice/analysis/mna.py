@@ -792,6 +792,40 @@ class MNASystem:
 
         return residual_fn
 
+    def build_gpu_system_fns(
+        self,
+        vdd: float = 1.0,
+        gmin: float = 1e-12,
+    ) -> Tuple[Callable[[Array], Array], Callable[[Array], Array]]:
+        """Build both residual and Jacobian functions for GPU execution.
+
+        This returns a pair of pure JAX functions that can run entirely on GPU.
+        The Jacobian is computed via automatic differentiation of the residual.
+
+        Args:
+            vdd: Supply voltage for voltage sources
+            gmin: GMIN conductance for numerical stability
+
+        Returns:
+            Tuple of (residual_fn, jacobian_fn) where:
+                residual_fn(V) -> residual vector (n-1,)
+                jacobian_fn(V) -> Jacobian matrix (n-1, n-1)
+
+        Note:
+            Both functions expect V with shape (num_nodes,) including ground.
+            The Jacobian is computed using jax.jacfwd which is efficient
+            for functions where output dimension < input dimension.
+        """
+        import jax
+
+        residual_fn = self.build_gpu_residual_fn(vdd=vdd, gmin=gmin)
+
+        # Use jacfwd for efficient Jacobian computation
+        # jacfwd is better when n_outputs < n_inputs (typically true for circuits)
+        jacobian_fn = jax.jacfwd(residual_fn)
+
+        return residual_fn, jacobian_fn
+
     def build_sparsity_pattern(self) -> Tuple[Array, Array]:
         """Build sparsity pattern (row, col indices) for Jacobian.
 

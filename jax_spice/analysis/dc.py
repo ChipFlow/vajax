@@ -833,3 +833,191 @@ def _dc_solve_with_gmin(
     }
 
     return V_jax, info
+
+
+# =============================================================================
+# GPU-Native DC Solver
+# =============================================================================
+
+
+def dc_operating_point_gpu(
+    system: MNASystem,
+    initial_guess: Optional[Array] = None,
+    max_iterations: int = 50,
+    abstol: float = 1e-12,
+    reltol: float = 1e-3,
+    damping: float = 1.0,
+    vdd: float = 1.2,
+    init_supplies: bool = True,
+    backend: Optional[str] = None,
+) -> Tuple[Array, Dict]:
+    """Find DC operating point using GPU-native JIT-compiled Newton-Raphson.
+
+    This version uses JAX's lax.while_loop for a fully JIT-compiled Newton
+    iteration that keeps all data GPU-resident, avoiding CPU-GPU transfers.
+
+    For small circuits (<500 nodes), CPU may be faster due to transfer overhead.
+    Use backend='auto' or None to let the system choose automatically.
+
+    Args:
+        system: MNA system with devices
+        initial_guess: Initial voltage estimate (shape: [num_nodes])
+                      If None, starts from zero with supply nodes initialized
+        max_iterations: Maximum NR iterations
+        abstol: Absolute tolerance for convergence
+        reltol: Relative tolerance for convergence
+        damping: Damping factor (0 < damping <= 1)
+        vdd: Supply voltage for initialization
+        init_supplies: If True, initialize nodes with 'vdd' in name to vdd
+        backend: 'gpu', 'cpu', or None (auto-select based on circuit size)
+
+    Returns:
+        Tuple of (solution, info) where:
+            solution: Node voltages (shape: [num_nodes])
+            info: Dict with convergence information
+    """
+    from jax import lax
+    from jax_spice.analysis.gpu_backend import (
+        select_backend,
+        get_device,
+        get_default_dtype,
+    )
+
+    n = system.num_nodes
+
+    # Select backend
+    if backend is None or backend == "auto":
+        backend = select_backend(n)
+
+    device = get_device(backend)
+    dtype = get_default_dtype(backend)
+
+    # Build GPU residual function (pure JAX, JIT-compatible)
+    # This is the key function that computes f(V) = 0
+    residual_fn = system.build_gpu_residual_fn(vdd=vdd, gmin=1e-12)
+
+    # Build Jacobian function using autodiff
+    jacobian_fn = jax.jacfwd(residual_fn)
+
+    # Initialize solution on the target device
+    with jax.default_device(device):
+        if initial_guess is not None:
+            V_init = jnp.array(initial_guess, dtype=dtype)
+        else:
+            V_init = jnp.zeros(n, dtype=dtype)
+
+            # Initialize supply nodes if requested
+            if init_supplies:
+                for name, idx in system.node_names.items():
+                    name_lower = name.lower()
+                    if "vdd" in name_lower:
+                        V_init = V_init.at[idx].set(vdd)
+
+        # Run JIT-compiled Newton solver
+        V_final, iterations, converged, residual_norm = _dc_newton_gpu_jit(
+            residual_fn,
+            jacobian_fn,
+            V_init,
+            max_iterations,
+            abstol,
+            reltol,
+            damping,
+        )
+
+    info = {
+        "converged": bool(converged),
+        "iterations": int(iterations),
+        "residual_norm": float(residual_norm),
+        "backend": backend,
+        "device": str(device),
+    }
+
+    return V_final, info
+
+
+def _dc_newton_gpu_jit(
+    residual_fn: Callable,
+    jacobian_fn: Callable,
+    V_init: Array,
+    max_iterations: int,
+    abstol: float,
+    reltol: float,
+    damping: float,
+) -> Tuple[Array, int, bool, float]:
+    """JIT-compiled Newton-Raphson iteration using lax.while_loop.
+
+    This function runs entirely on GPU with no host-device transfers
+    during iteration.
+
+    Args:
+        residual_fn: Function V -> residual vector
+        jacobian_fn: Function V -> Jacobian matrix
+        V_init: Initial voltage guess
+        max_iterations: Max iterations
+        abstol: Absolute tolerance
+        reltol: Relative tolerance
+        damping: Damping factor
+
+    Returns:
+        Tuple of (V_final, iterations, converged, final_residual_norm)
+    """
+    from jax import lax
+
+    # State: (V, iteration, converged, residual_norm)
+    init_state = (V_init, 0, False, jnp.array(jnp.inf))
+
+    def cond_fn(state):
+        V, iteration, converged, residual_norm = state
+        return jnp.logical_and(~converged, iteration < max_iterations)
+
+    def body_fn(state):
+        """Single Newton-Raphson step."""
+        V, iteration, _, _ = state
+
+        # Compute residual (captures residual_fn via closure)
+        f = residual_fn(V)
+        residual_norm = jnp.max(jnp.abs(f))
+
+        # Check convergence
+        converged = residual_norm < abstol
+
+        # Compute Jacobian and solve (captures jacobian_fn via closure)
+        # J has shape (num_nodes-1, num_nodes) because:
+        # - residual has num_nodes-1 elements (excluding ground)
+        # - V has num_nodes elements (including ground at index 0)
+        J_full = jacobian_fn(V)
+
+        # Extract the Jacobian w.r.t. non-ground nodes (columns 1:)
+        # This gives a square matrix of shape (num_nodes-1, num_nodes-1)
+        J = J_full[:, 1:]
+
+        # Add small regularization for numerical stability
+        reg = 1e-14 * jnp.eye(J.shape[0], dtype=J.dtype)
+        J_reg = J + reg
+
+        # Solve: J * delta_V = -f (delta_V has shape (num_nodes-1,))
+        delta_V = jax.scipy.linalg.solve(J_reg, -f)
+
+        # Apply damping and voltage limiting
+        max_step = 2.0
+        max_delta = jnp.max(jnp.abs(delta_V))
+        step_scale = jnp.minimum(damping, max_step / (max_delta + 1e-15))
+
+        # Update V (ground at index 0 stays fixed)
+        V_new = V.at[1:].add(step_scale * delta_V)
+
+        # Check delta-based convergence
+        delta_norm = jnp.max(jnp.abs(step_scale * delta_V))
+        v_norm = jnp.max(jnp.abs(V_new[1:]))
+        delta_converged = delta_norm < (abstol + reltol * jnp.maximum(v_norm, 1.0))
+
+        converged = jnp.logical_or(converged, delta_converged)
+
+        return (V_new, iteration + 1, converged, residual_norm)
+
+    # Run the Newton iteration loop
+    V_final, iterations, converged, residual_norm = lax.while_loop(
+        cond_fn, body_fn, init_state
+    )
+
+    return V_final, iterations, converged, residual_norm

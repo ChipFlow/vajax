@@ -108,3 +108,93 @@ def sparse_solve(
 ) -> Array:
     """Legacy alias for sparse_solve_csr"""
     return sparse_solve_csr(data, indices, indptr, b, shape)
+
+
+# GPU-optimized sparse operations using BCOO format
+
+
+def build_bcoo_from_coo(
+    rows: Array,
+    cols: Array,
+    values: Array,
+    shape: Tuple[int, int],
+) -> "jax.experimental.sparse.BCOO":
+    """Build BCOO sparse matrix from COO triplets.
+
+    BCOO (Batched COO) is JAX's native sparse format, efficient for GPU.
+
+    Args:
+        rows: Row indices as JAX array
+        cols: Column indices as JAX array
+        values: Non-zero values as JAX array
+        shape: Matrix shape (n, n)
+
+    Returns:
+        BCOO sparse matrix
+    """
+    from jax.experimental.sparse import BCOO
+
+    # Stack indices into (nnz, 2) array
+    indices = jnp.stack([rows, cols], axis=1)
+    return BCOO((values, indices), shape=shape)
+
+
+def sparse_solve_bcoo(
+    bcoo_matrix: "jax.experimental.sparse.BCOO",
+    b: Array,
+) -> Array:
+    """Solve sparse linear system Ax = b with BCOO format matrix.
+
+    This is the GPU-native path - keeps data on GPU throughout.
+
+    Args:
+        bcoo_matrix: Sparse matrix A in BCOO format
+        b: Right-hand side vector
+
+    Returns:
+        Solution vector x
+    """
+    # Convert BCOO to CSR for the solver
+    # JAX's spsolve expects CSR format
+    csr = bcoo_matrix.tocsr()
+    return jax_spsolve(csr.data, csr.indices, csr.indptr, b, tol=0)
+
+
+def dense_to_sparse_gpu(
+    dense_matrix: Array,
+    threshold: float = 1e-15,
+) -> "jax.experimental.sparse.BCOO":
+    """Convert dense matrix to BCOO sparse format on GPU.
+
+    Useful for converting dense Jacobians to sparse format for solving.
+
+    Args:
+        dense_matrix: Dense matrix as JAX array
+        threshold: Values below this are treated as zero
+
+    Returns:
+        BCOO sparse matrix
+    """
+    from jax.experimental.sparse import BCOO
+
+    return BCOO.fromdense(dense_matrix, nse=None)
+
+
+def sparse_solve_from_dense_gpu(
+    dense_matrix: Array,
+    b: Array,
+) -> Array:
+    """Solve Ax = b where A is provided as dense but solved as sparse.
+
+    Converts dense matrix to sparse and solves on GPU. This is useful
+    when the Jacobian is built densely but we want sparse solve efficiency.
+
+    Args:
+        dense_matrix: Dense matrix A
+        b: Right-hand side vector
+
+    Returns:
+        Solution vector x
+    """
+    bcoo = dense_to_sparse_gpu(dense_matrix)
+    return sparse_solve_bcoo(bcoo, b)

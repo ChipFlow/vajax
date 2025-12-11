@@ -487,6 +487,7 @@ def transient_analysis_jit(
     max_iterations: int = 20,
     abstol: float = 1e-12,
     reltol: float = 1e-3,
+    backend: Optional[str] = None,
 ) -> Tuple[Array, Array, Dict]:
     """Run JIT-compiled transient analysis
 
@@ -502,6 +503,7 @@ def transient_analysis_jit(
         max_iterations: Max NR iterations per timepoint
         abstol: Absolute convergence tolerance
         reltol: Relative convergence tolerance
+        backend: 'gpu', 'cpu', or None (auto-select based on circuit size)
 
     Returns:
         Tuple of (times, solutions, info) where:
@@ -509,40 +511,50 @@ def transient_analysis_jit(
             solutions: Array of solutions, shape [num_times, num_nodes]
             info: Dict with simulation statistics
     """
-    # Use float32 on Metal (no float64 support), float64 elsewhere
-    dtype = jnp.float32 if jax.default_backend() == 'METAL' else jnp.float64
+    from jax_spice.analysis.gpu_backend import select_backend, get_device, get_default_dtype
 
     n = system.num_nodes
 
-    # Build initial conditions
-    if initial_conditions is not None:
-        V0 = jnp.zeros(n, dtype=dtype)
-        for name, voltage in initial_conditions.items():
-            idx = system.node_names.get(name)
-            if idx is not None and idx > 0:
-                V0 = V0.at[idx].set(voltage)
-    else:
-        V0, dc_info = dc_operating_point(system)
-        V0 = V0.astype(dtype)
-        if not dc_info['converged']:
-            raise RuntimeError(f"DC operating point did not converge: {dc_info}")
+    # Select backend
+    if backend is None or backend == "auto":
+        backend = select_backend(n)
 
-    # Generate time points
-    num_timesteps = int((t_stop - t_start) / t_step)
-    times = jnp.linspace(t_start, t_stop, num_timesteps + 1)
+    device = get_device(backend)
+    dtype = get_default_dtype(backend)
 
-    # Compile circuit to JIT-compatible format
-    circuit = _compile_circuit(system, dtype)
+    # Run on selected device
+    with jax.default_device(device):
+        # Build initial conditions
+        if initial_conditions is not None:
+            V0 = jnp.zeros(n, dtype=dtype)
+            for name, voltage in initial_conditions.items():
+                idx = system.node_names.get(name)
+                if idx is not None and idx > 0:
+                    V0 = V0.at[idx].set(voltage)
+        else:
+            V0, dc_info = dc_operating_point(system)
+            V0 = V0.astype(dtype)
+            if not dc_info['converged']:
+                raise RuntimeError(f"DC operating point did not converge: {dc_info}")
 
-    # Run JIT-compiled simulation
-    solutions = _run_simulation_jit(
-        circuit, V0, t_step, num_timesteps, max_iterations,
-        abstol, reltol
-    )
+        # Generate time points
+        num_timesteps = int((t_stop - t_start) / t_step)
+        times = jnp.linspace(t_start, t_stop, num_timesteps + 1)
+
+        # Compile circuit to JIT-compatible format
+        circuit = _compile_circuit(system, dtype)
+
+        # Run JIT-compiled simulation
+        solutions = _run_simulation_jit(
+            circuit, V0, t_step, num_timesteps, max_iterations,
+            abstol, reltol
+        )
 
     info = {
         'num_timepoints': num_timesteps + 1,
         'jit_compiled': True,
+        'backend': backend,
+        'device': str(device),
     }
 
     return times, solutions, info
