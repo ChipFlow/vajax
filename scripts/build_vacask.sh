@@ -14,10 +14,11 @@
 #
 # KNOWN ISSUES (macOS):
 #   - VACASK requires C++20 and macOS 14+ deployment target for std::format support
-#   - VACASK C++ code has forward declaration issues (PTBlockSequence incomplete type)
-#     that prevent the simulator from building on macOS with Apple Clang
-#   - The OSDI model compilation using OpenVAF works successfully
-#   - Full VACASK build requires upstream fixes for macOS compatibility
+#   - Use the robtaylor/VACASK fork with the macos-fixes branch which includes:
+#     * CMakeLists.txt Darwin platform detection
+#     * packaging.cmake Darwin ZIP support
+#     * C++ code fixes (PTBlockSequence, VLAs, destructors, <numbers> header)
+#   - Linker issues may remain with simulator binary for external libraries
 
 set -e
 
@@ -153,58 +154,6 @@ OPENVAF_DIR="$(dirname "$OPENVAF_COMPILER")"
 # Create build directory
 mkdir -p "$BUILD_DIR"
 
-# On macOS, we need to patch CMakeLists.txt because it doesn't detect Darwin
-# and tries to use Linux-specific Boost settings (requiring Boost 1.88 with system component)
-if [ "$PLATFORM" = "macOS" ]; then
-    echo ""
-    echo "Applying macOS patch to CMakeLists.txt..."
-
-    # Patch the CMakeLists.txt to handle macOS/Darwin properly
-    # The original only checks for Windows vs "else" (Linux)
-    CMAKELISTS="$VACASK_SRC/CMakeLists.txt"
-
-    # Check if already patched
-    if ! grep -q "Darwin" "$CMAKELISTS"; then
-        # Create backup
-        cp "$CMAKELISTS" "$CMAKELISTS.bak"
-
-        # Patch: Add Darwin/macOS handling before the Linux else block
-        # Replace the Linux Boost handling with macOS-compatible version
-        sed -i.tmp 's/else()/elseif (\${CMAKE_SYSTEM_NAME} STREQUAL "Darwin")\
-    # macOS with Homebrew\
-    set(SIM_PLATFORM "Darwin")\
-    set(SIM_ARCH "arm64")\
-    set(PROGRAM_LIB_DIR "lib\/\${PROGRAM_NAME}")\
-    find_package(Boost REQUIRED COMPONENTS filesystem)\
-    include_directories("\${Boost_INCLUDE_DIRS}")\
-    message(STATUS "Boost include: \${Boost_INCLUDE_DIRS}")\
-else()/' "$CMAKELISTS"
-
-        # Also need to remove the strict Boost 1.88 requirement for the remaining else (Linux)
-        # and the system component which may not exist
-        sed -i.tmp 's/find_package(Boost 1.88 REQUIRED COMPONENTS filesystem process system)/find_package(Boost REQUIRED COMPONENTS filesystem)/' "$CMAKELISTS"
-
-        # Clean up temp files
-        rm -f "$CMAKELISTS.tmp"
-
-        echo "Patched $CMAKELISTS for macOS support"
-    fi
-
-    # Also patch packaging.cmake to handle Darwin (which doesn't need .deb packaging)
-    PACKAGING_CMAKE="$VACASK_SRC/packaging.cmake"
-    if ! grep -q "Darwin" "$PACKAGING_CMAKE"; then
-        cp "$PACKAGING_CMAKE" "$PACKAGING_CMAKE.bak"
-
-        # Add Darwin/macOS handling - use ZIP packaging like Windows
-        sed -i.tmp 's/if(\${SIM_PLATFORM} STREQUAL "Windows")/if(\${SIM_PLATFORM} STREQUAL "Windows" OR \${SIM_PLATFORM} STREQUAL "Darwin")/' "$PACKAGING_CMAKE"
-
-        rm -f "$PACKAGING_CMAKE.tmp"
-        echo "Patched $PACKAGING_CMAKE for macOS support"
-    else
-        echo "CMakeLists.txt already patched for Darwin"
-    fi
-fi
-
 # Configure
 echo ""
 echo "Configuring VACASK build..."
@@ -231,6 +180,7 @@ fi
 
 if [ -n "$TOMLPP_DIR" ]; then
     CMAKE_ARGS+=("-DTOMLPP_DIR=$TOMLPP_DIR")
+    CMAKE_ARGS+=("-DCMAKE_CXX_FLAGS=-I$TOMLPP_DIR/include")
 fi
 
 # For macOS, we need to work around VACASK's Boost version requirement
