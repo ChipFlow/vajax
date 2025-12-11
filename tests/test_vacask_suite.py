@@ -92,11 +92,23 @@ class VACASKBenchmarkRunner:
         if self.verbose:
             print(f"Parsed: {self.circuit.title}")
             print(f"Models: {list(self.circuit.models.keys())}")
+            if self.circuit.subckts:
+                print(f"Subcircuits: {list(self.circuit.subckts.keys())}")
 
-        # Build node mapping
+        # Flatten subcircuit instances to leaf devices
+        self.flat_instances = self._flatten_top_instances()
+
+        if self.verbose:
+            print(f"Flattened: {len(self.flat_instances)} leaf devices")
+            for name, terms, model, params in self.flat_instances[:10]:
+                print(f"  {name}: {model} {terms}")
+            if len(self.flat_instances) > 10:
+                print(f"  ... and {len(self.flat_instances) - 10} more")
+
+        # Build node mapping from flattened instances
         node_set = {'0'}
-        for inst in self.circuit.top_instances:
-            for t in inst.terminals:
+        for name, terminals, model, params in self.flat_instances:
+            for t in terminals:
                 node_set.add(t)
 
         self.node_names = {'0': 0}
@@ -128,35 +140,132 @@ class VACASKBenchmarkRunner:
             return {}
         return {k: self.parse_spice_number(v) for k, v in model.params.items()}
 
+    def _flatten_top_instances(self) -> List[Tuple[str, List[str], str, Dict[str, str]]]:
+        """Flatten subcircuit instances to leaf devices.
+
+        Returns list of (name, terminals, model, params) tuples for leaf devices.
+        """
+        from jax_spice.netlist.circuit import Instance
+
+        flat_instances = []
+        ground = self.circuit.ground or '0'
+
+        def eval_param_expr(expr: str, param_env: Dict[str, float]) -> float:
+            """Evaluate a parameter expression like 'w*pfact' or '2*(w+ld)'."""
+            if not isinstance(expr, str):
+                return float(expr)
+
+            # Try direct parse first
+            val = self.parse_spice_number(expr)
+            if val != 0.0 or expr.strip() in ('0', '0.0'):
+                return val
+
+            # Simple expression evaluation with parameter substitution
+            try:
+                # Replace parameter names with values
+                eval_expr = expr
+                for name, value in sorted(param_env.items(), key=lambda x: -len(x[0])):
+                    eval_expr = eval_expr.replace(name, str(value))
+                return float(eval(eval_expr))
+            except:
+                return 0.0
+
+        def flatten_instance(inst: Instance, prefix: str, port_map: Dict[str, str],
+                           param_env: Dict[str, float]):
+            """Recursively flatten an instance."""
+            model_name = inst.model
+
+            # Check if this is a subcircuit
+            subckt = self.circuit.subckts.get(model_name)
+            if subckt is None:
+                # Leaf device - map terminals and add to list
+                mapped_terminals = []
+                for t in inst.terminals:
+                    if t in port_map:
+                        mapped_terminals.append(port_map[t])
+                    elif t in self.circuit.globals or t == ground:
+                        mapped_terminals.append(t)
+                    elif prefix:
+                        mapped_terminals.append(f"{prefix}.{t}")
+                    else:
+                        mapped_terminals.append(t)
+
+                # Evaluate instance parameters with current environment
+                inst_params = {}
+                for k, v in inst.params.items():
+                    inst_params[k] = str(eval_param_expr(v, param_env))
+
+                flat_name = f"{prefix}.{inst.name}" if prefix else inst.name
+                flat_instances.append((flat_name, mapped_terminals, model_name, inst_params))
+            else:
+                # Subcircuit - recurse
+                # Build new port map
+                new_port_map = {}
+                for i, term in enumerate(subckt.terminals):
+                    if i < len(inst.terminals):
+                        inst_term = inst.terminals[i]
+                        if inst_term in port_map:
+                            new_port_map[term] = port_map[inst_term]
+                        elif inst_term in self.circuit.globals or inst_term == ground:
+                            new_port_map[term] = inst_term
+                        elif prefix:
+                            new_port_map[term] = f"{prefix}.{inst_term}"
+                        else:
+                            new_port_map[term] = inst_term
+
+                # Build new parameter environment
+                new_param_env = dict(param_env)
+                # Add subcircuit default params
+                for k, v in subckt.params.items():
+                    new_param_env[k] = eval_param_expr(v, new_param_env)
+                # Override with instance params
+                for k, v in inst.params.items():
+                    new_param_env[k] = eval_param_expr(v, param_env)
+
+                # New prefix
+                new_prefix = f"{prefix}.{inst.name}" if prefix else inst.name
+
+                # Flatten subcircuit instances
+                for sub_inst in subckt.instances:
+                    flatten_instance(sub_inst, new_prefix, new_port_map, new_param_env)
+
+        # Flatten all top-level instances
+        for inst in self.circuit.top_instances:
+            # Start with circuit-level parameters
+            param_env = {k: self.parse_spice_number(v) for k, v in self.circuit.params.items()}
+            flatten_instance(inst, '', {}, param_env)
+
+        return flat_instances
+
     def _build_devices(self):
-        """Build device list from parsed instances."""
+        """Build device list from flattened instances."""
         self.devices = []
 
         # Parameters that should be kept as strings (not parsed as numbers)
         STRING_PARAMS = {'type'}
 
-        for inst in self.circuit.top_instances:
-            model_name = inst.model.lower()
+        for inst_name, inst_terminals, inst_model, inst_params in self.flat_instances:
+            model_name = inst_model.lower()
             device_type = self._get_device_type(model_name)
-            nodes = [self.node_names[t] for t in inst.terminals]
+            nodes = [self.node_names[t] for t in inst_terminals]
 
             # Get model parameters and instance parameters
             model_params = self._get_model_params(model_name)
 
             # Parse instance params, but keep string params as strings
-            inst_params = {}
-            for k, v in inst.params.items():
+            parsed_params = {}
+            for k, v in inst_params.items():
                 if k in STRING_PARAMS:
                     # Keep as string, strip quotes
-                    inst_params[k] = str(v).strip('"').strip("'")
+                    parsed_params[k] = str(v).strip('"').strip("'")
                 else:
-                    inst_params[k] = self.parse_spice_number(v)
+                    parsed_params[k] = self.parse_spice_number(v)
 
             # Merge model params with instance params (instance overrides model)
-            params = {**model_params, **inst_params}
+            params = {**model_params, **parsed_params}
 
             self.devices.append({
-                'name': inst.name,
+                'name': inst_name,
                 'model': device_type,
                 'nodes': nodes,
                 'params': params,
@@ -164,8 +273,10 @@ class VACASKBenchmarkRunner:
 
         if self.verbose:
             print(f"Devices: {len(self.devices)}")
-            for dev in self.devices:
+            for dev in self.devices[:10]:
                 print(f"  {dev['name']}: {dev['model']} nodes={dev['nodes']}")
+            if len(self.devices) > 10:
+                print(f"  ... and {len(self.devices) - 10} more")
 
     def _extract_analysis_params(self):
         """Extract analysis parameters from control block."""
