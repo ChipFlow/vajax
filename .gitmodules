@@ -4,4 +4,5 @@
 	branch = builtin-primitive-support
 [submodule "vendor/VACASK"]
 	path = vendor/VACASK
-	url = https://codeberg.org/arpadbuermen/VACASK.git
+	url = https://codeberg.org/robtaylor/VACASK.git
+	branch = macos-fixes
