@@ -78,6 +78,7 @@ def _compile_circuit(system: MNASystem, dtype) -> CircuitData:
             node_indices.append([device.node_indices[0], 0])
 
         # Determine device type and extract parameter
+        # Types: 0=resistor, 1=capacitor, 2=vsource, 3=isource, 4=diode
         model = device.model_name.lower()
         if 'resistor' in model or model == 'r':
             device_types.append(0)
@@ -91,6 +92,16 @@ def _compile_circuit(system: MNASystem, dtype) -> CircuitData:
             device_types.append(2)
             V = device.params.get('v', device.params.get('dc', 0.0))
             device_params.append([float(V), 0.0, 0.0])
+        elif 'isource' in model or model == 'i':
+            device_types.append(3)
+            I = device.params.get('i', device.params.get('dc', 0.0))
+            device_params.append([float(I), 0.0, 0.0])
+        elif 'diode' in model or model == 'd':
+            device_types.append(4)
+            Is = device.params.get('is', 1e-14)
+            n = device.params.get('n', 1.0)
+            # params: [Is, n, Vt] where Vt = kT/q ≈ 0.0258V at 300K
+            device_params.append([float(Is), float(n), 0.0258])
         else:
             # Default to resistor-like behavior
             device_types.append(0)
@@ -129,7 +140,7 @@ def _stamp_device(
         V_prev: Previous timestep voltage vector
         node_p: Positive node index
         node_n: Negative node index
-        device_type: 0=resistor, 1=capacitor, 2=vsource
+        device_type: 0=resistor, 1=capacitor, 2=vsource, 3=isource, 4=diode
         params: Device parameters [p0, p1, p2]
         dt: Timestep
         ground_node: Ground node index
@@ -161,19 +172,58 @@ def _stamp_device(
     G_vsource = 1e12
     I_vsource = G_vsource * (V - V_target)
 
+    # Current source: I = I_dc (constant current, no conductance)
+    I_dc = params[0]
+    G_isource = 0.0
+    I_isource = I_dc
+
+    # Diode: Shockley equation with limiting
+    # params: [Is, n, Vt]
+    Is = params[0]
+    n_diode = params[1]
+    Vt = params[2]
+    nVt = n_diode * Vt
+
+    # Limit exponential argument to avoid overflow
+    Vd_norm = V / jnp.maximum(nVt, 1e-12)
+    Vd_limited = jnp.clip(Vd_norm, -40.0, 40.0)
+
+    # Compute diode current and conductance
+    exp_term = jnp.exp(Vd_limited)
+    I_diode_base = Is * (exp_term - 1.0)
+    G_diode_base = Is * exp_term / jnp.maximum(nVt, 1e-12)
+
+    # Handle extreme forward bias with linear extrapolation
+    exp_40 = jnp.exp(40.0)
+    I_diode_high = Is * (exp_40 + exp_40 * (Vd_norm - 40.0) - 1.0)
+    G_diode_high = Is * exp_40 / jnp.maximum(nVt, 1e-12)
+
+    # Select appropriate diode model region
+    I_diode = jnp.where(Vd_norm > 40.0, I_diode_high, I_diode_base)
+    G_diode = jnp.where(Vd_norm > 40.0, G_diode_high, G_diode_base)
+
+    # Minimum conductance for numerical stability
+    G_diode = jnp.maximum(G_diode, 1e-12)
+
     # Select based on device type
     is_resistor = device_type == 0
     is_capacitor = device_type == 1
     is_vsource = device_type == 2
+    is_isource = device_type == 3
+    is_diode = device_type == 4
 
     # Combined conductance and current
     G = jnp.where(is_resistor, G_resistor,
                   jnp.where(is_capacitor, G_cap,
-                            jnp.where(is_vsource, G_vsource, 0.0)))
+                            jnp.where(is_vsource, G_vsource,
+                                      jnp.where(is_isource, G_isource,
+                                                jnp.where(is_diode, G_diode, 0.0)))))
 
     I = jnp.where(is_resistor, I_resistor,
                   jnp.where(is_capacitor, I_cap,
-                            jnp.where(is_vsource, I_vsource, 0.0)))
+                            jnp.where(is_vsource, I_vsource,
+                                      jnp.where(is_isource, I_isource,
+                                                jnp.where(is_diode, I_diode, 0.0)))))
 
     # Stamp into Jacobian and residual
     # Node p (row node_p - 1 if not ground)
