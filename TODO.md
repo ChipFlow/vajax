@@ -18,6 +18,35 @@ Central tracking for development tasks and known issues.
 
 **Goal**: Convert to use `jax.lax.scan` for time/source stepping and JAX linear solvers throughout.
 
+### GPU Performance Issue (HIGH PRIORITY)
+
+**Root cause identified (2025-12):** GPU is slower than CPU because `transient_analysis_jit` processes devices sequentially, not in parallel.
+
+**Current implementation** (`_build_system_jit` in `transient.py`):
+```python
+# Sequential device processing - NOT GPU-friendly
+jacobian, residual = lax.fori_loop(
+    0, circuit.num_devices,
+    stamp_one_device,
+    (jacobian, residual)
+)
+```
+
+This results in:
+- Thousands of tiny GPU kernel launches (one per device)
+- No parallelism to offset kernel launch overhead
+- GPU adds overhead without speedup
+
+**Solution**: Use vectorized device evaluation (already implemented for DC analysis):
+- `build_device_groups()` groups devices by type
+- `VectorizedDeviceGroup` evaluates all same-type devices in parallel via vmap
+- Batched matrix scatter operations for Jacobian stamping
+
+**Tasks**:
+- [ ] Refactor `transient_analysis_jit` to use `VectorizedDeviceGroup` instead of `lax.fori_loop`
+- [ ] Benchmark GPU vs CPU after vectorization
+- [ ] Consider using `transient_analysis_analytical()` as starting point (uses SystemBuilder)
+
 ### openvaf_jax Complex Model Support
 The JAX translator now matches the MIR interpreter for all models. NaN outputs are caused by model-specific parameter requirements, not translator bugs.
 
