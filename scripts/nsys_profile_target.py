@@ -39,7 +39,7 @@ def main():
         "circuit",
         nargs="?",
         default="ring",
-        choices=["rc", "graetz", "mul", "ring"],
+        choices=["rc", "graetz", "mul", "ring", "c6288"],
         help="Circuit to profile (default: ring)",
     )
     parser.add_argument(

@@ -11,6 +11,7 @@ on:
           - graetz
           - mul
           - ring
+          - c6288
         default: ring
       timesteps:
         description: 'Number of timesteps'
