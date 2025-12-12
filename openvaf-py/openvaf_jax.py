@@ -163,51 +163,6 @@ class OpenVAFToJAX:
 
         return local_ns['device_eval_array'], metadata
 
-    def translate_array_with_code(self) -> Tuple[Callable, Dict, str]:
-        """Generate JAX function and return the code string for caching.
-
-        Same as translate_array() but also returns the generated code string
-        so it can be cached to disk and reloaded later without regenerating.
-
-        Returns:
-            (jax_fn, metadata, code_string)
-        """
-        import sys
-        import time
-        t0 = time.perf_counter()
-        print("    translate_array_with_code: generating code...", flush=True)
-        sys.stdout.flush()
-        code_lines = self._generate_code_array()
-        t1 = time.perf_counter()
-        print(f"    translate_array_with_code: code generated ({len(code_lines)} lines) in {t1-t0:.1f}s", flush=True)
-        sys.stdout.flush()
-
-        code = '\n'.join(code_lines)
-        print(f"    translate_array_with_code: code size = {len(code)} chars", flush=True)
-        sys.stdout.flush()
-
-        # Compile and return
-        import jax.numpy as jnp
-        from jax import lax
-        local_ns = {'jnp': jnp, 'lax': lax}
-        print("    translate_array_with_code: exec()...", flush=True)
-        sys.stdout.flush()
-        exec(code, local_ns)
-        t2 = time.perf_counter()
-        print(f"    translate_array_with_code: exec() done in {t2-t1:.1f}s", flush=True)
-        sys.stdout.flush()
-
-        # Build metadata
-        node_names = list(self.dae_data['residuals'].keys())
-        jacobian_keys = [(entry['row'], entry['col']) for entry in self.dae_data['jacobian']]
-
-        metadata = {
-            'node_names': node_names,
-            'jacobian_keys': jacobian_keys,
-        }
-
-        return local_ns['device_eval_array'], metadata, code
-
     def _generate_core_code(self, func_name: str = "device_eval") -> Tuple[List[str], Set[str]]:
         """Generate core computation code shared by both output formats.
 

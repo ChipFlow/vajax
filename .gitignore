@@ -43,7 +43,6 @@ Thumbs.db
 .pdm-python
 profile_report.json
 profile_report.md
-.openvaf_cache/
 
 # PDKs (may contain proprietary files)
 pdks/
