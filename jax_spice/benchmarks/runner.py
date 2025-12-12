@@ -1126,6 +1126,29 @@ class VACASKBenchmarkRunner:
         # Pre-compute source device stamp indices
         source_device_data = self._prepare_source_devices_coo(source_devices, ground, n_unknowns)
 
+        # Helper to build source value arrays from dict (called once per timestep)
+        def build_source_arrays(source_values: Dict) -> Tuple[jax.Array, jax.Array]:
+            """Convert source_values dict to JAX arrays for vectorized GPU access."""
+            if 'vsource' in source_device_data:
+                d = source_device_data['vsource']
+                vsource_vals = jnp.array([
+                    source_values.get(name, float(dc))
+                    for name, dc in zip(d['names'], d['dc'])
+                ])
+            else:
+                vsource_vals = jnp.array([])
+
+            if 'isource' in source_device_data:
+                d = source_device_data['isource']
+                isource_vals = jnp.array([
+                    source_values.get(name, float(dc))
+                    for name, dc in zip(d['names'], d['dc'])
+                ])
+            else:
+                isource_vals = jnp.array([])
+
+            return vsource_vals, isource_vals
+
         # Time stepping
         times = []
         voltages = {i: [] for i in range(n_external)}
@@ -1136,6 +1159,8 @@ class VACASKBenchmarkRunner:
 
         while t <= t_stop:
             source_values = source_fn(t)
+            # Build source value arrays once per timestep (Python loop here, not in NR loop)
+            vsource_vals, isource_vals = build_source_arrays(source_values)
 
             converged = False
             V_iter = V
@@ -1148,9 +1173,9 @@ class VACASKBenchmarkRunner:
                 j_cols_list = []
                 j_vals_list = []
 
-                # Collect from source devices (vsource, isource)
+                # Collect from source devices (vsource, isource) - fully vectorized
                 self._collect_source_devices_coo(
-                    source_device_data, V_iter, source_values,
+                    source_device_data, V_iter, vsource_vals, isource_vals,
                     f_indices_list, f_values_list, j_rows_list, j_cols_list, j_vals_list
                 )
 
@@ -1376,7 +1401,8 @@ class VACASKBenchmarkRunner:
         self,
         device_data: Dict[str, Any],
         V: jax.Array,
-        source_values: Dict,
+        vsource_vals: jax.Array,
+        isource_vals: jax.Array,
         f_indices: List,
         f_values: List,
         j_rows: List,
@@ -1389,7 +1415,13 @@ class VACASKBenchmarkRunner:
         This function only handles vsource and isource.
 
         Uses pre-computed stamp templates from _prepare_source_devices_coo.
-        No Python loops - all operations are batched JAX operations.
+        Fully vectorized - no Python loops, all JAX operations.
+
+        Args:
+            device_data: Pre-computed stamp templates from _prepare_source_devices_coo
+            V: Current voltage vector
+            vsource_vals: JAX array of voltage source target values (built once per timestep)
+            isource_vals: JAX array of current source values (built once per timestep)
         """
 
         def _stamp_two_terminal(d: Dict, I: jax.Array, G: jax.Array):
@@ -1416,29 +1448,21 @@ class VACASKBenchmarkRunner:
             j_vals.append(jnp.where(j_valid, j_val, 0.0))
 
         # Voltage sources: I = G * (Vp - Vn - Vtarget), G = 1e12
-        if 'vsource' in device_data:
+        if 'vsource' in device_data and vsource_vals.size > 0:
             d = device_data['vsource']
             G = 1e12
             Vp, Vn = V[d['node_p']], V[d['node_n']]
-            # Build target voltage array from source_values dict
-            V_target = jnp.array([
-                source_values.get(name, float(dc))
-                for name, dc in zip(d['names'], d['dc'])
-            ])
-            I = G * (Vp - Vn - V_target)
+            # vsource_vals is pre-built JAX array - no Python loop here
+            I = G * (Vp - Vn - vsource_vals)
             G_arr = jnp.full(d['n'], G)
             _stamp_two_terminal(d, I, G_arr)
 
         # Current sources (residual only, no Jacobian)
-        if 'isource' in device_data:
+        if 'isource' in device_data and isource_vals.size > 0:
             d = device_data['isource']
-            # Build current array from source_values dict
-            I_arr = jnp.array([
-                source_values.get(name, float(dc))
-                for name, dc in zip(d['names'], d['dc'])
-            ])
+            # isource_vals is pre-built JAX array - no Python loop here
             # Residual: -I at p, +I at n (note sign convention)
-            f_vals = I_arr[:, None] * jnp.array([-1.0, 1.0])[None, :]  # (n, 2)
+            f_vals = isource_vals[:, None] * jnp.array([-1.0, 1.0])[None, :]  # (n, 2)
             f_idx = d['f_indices'].ravel()
             f_val = f_vals.ravel()
             f_valid = f_idx >= 0
