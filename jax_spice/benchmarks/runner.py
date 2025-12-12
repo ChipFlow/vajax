@@ -15,6 +15,7 @@ from typing import Callable, Dict, List, Tuple, Any, Optional
 
 import jax
 import jax.numpy as jnp
+import numpy as np
 
 from jax_spice.netlist.parser import VACASKParser
 from jax_spice.netlist.circuit import Instance
@@ -504,6 +505,83 @@ class VACASKBenchmarkRunner:
 
         return jnp.array(all_inputs), voltage_indices, device_contexts
 
+    def _build_stamp_index_mapping(
+        self,
+        model_type: str,
+        device_contexts: List[Dict],
+        ground: int,
+    ) -> Dict[str, jax.Array]:
+        """Pre-compute index mappings for COO-based stamping.
+
+        Called once per model type during setup. Returns arrays that map
+        (device_idx, entry_idx) to global matrix indices.
+
+        Args:
+            model_type: OpenVAF model type (e.g., 'psp103')
+            device_contexts: List of device context dicts with node_map
+            ground: Ground node index
+
+        Returns:
+            Dict with:
+                res_indices: (n_devices, n_residuals) row indices for f vector, -1 for ground
+                jac_row_indices: (n_devices, n_jac_entries) row indices for J
+                jac_col_indices: (n_devices, n_jac_entries) col indices for J
+        """
+        compiled = self._compiled_models.get(model_type)
+        if not compiled:
+            return {}
+
+        metadata = compiled['array_metadata']
+        node_names = metadata['node_names']  # Residual node names
+        jacobian_keys = metadata['jacobian_keys']  # (row_name, col_name) pairs
+
+        n_devices = len(device_contexts)
+        n_residuals = len(node_names)
+        n_jac_entries = len(jacobian_keys)
+
+        # Build residual index array
+        res_indices = np.full((n_devices, n_residuals), -1, dtype=np.int32)
+
+        for dev_idx, ctx in enumerate(device_contexts):
+            node_map = ctx['node_map']
+            for res_idx, node_name in enumerate(node_names):
+                # Map node name to global index
+                if node_name.startswith('sim_'):
+                    model_node = node_name[4:]
+                else:
+                    model_node = node_name
+                node_idx = node_map.get(model_node, node_map.get(node_name, None))
+
+                if node_idx is not None and node_idx != ground and node_idx > 0:
+                    res_indices[dev_idx, res_idx] = node_idx - 1  # 0-indexed residual
+
+        # Build Jacobian index arrays
+        jac_row_indices = np.full((n_devices, n_jac_entries), -1, dtype=np.int32)
+        jac_col_indices = np.full((n_devices, n_jac_entries), -1, dtype=np.int32)
+
+        for dev_idx, ctx in enumerate(device_contexts):
+            node_map = ctx['node_map']
+            for jac_idx, (row_name, col_name) in enumerate(jacobian_keys):
+                # Map row node
+                row_model = row_name[4:] if row_name.startswith('sim_') else row_name
+                row_idx = node_map.get(row_model, node_map.get(row_name, None))
+
+                # Map col node
+                col_model = col_name[4:] if col_name.startswith('sim_') else col_name
+                col_idx = node_map.get(col_model, node_map.get(col_name, None))
+
+                if (row_idx is not None and col_idx is not None and
+                    row_idx != ground and col_idx != ground and
+                    row_idx > 0 and col_idx > 0):
+                    jac_row_indices[dev_idx, jac_idx] = row_idx - 1
+                    jac_col_indices[dev_idx, jac_idx] = col_idx - 1
+
+        return {
+            'res_indices': jnp.array(res_indices),
+            'jac_row_indices': jnp.array(jac_row_indices),
+            'jac_col_indices': jnp.array(jac_col_indices),
+        }
+
     def _parse_voltage_param(self, name: str, node_map: Dict[str, int],
                               model_nodes: List[str], ground: int) -> Tuple[int, int]:
         """Parse a voltage parameter name and return (node1_idx, node2_idx).
@@ -934,22 +1012,21 @@ class VACASKBenchmarkRunner:
 
     def _run_transient_hybrid(self, t_stop: float, dt: float,
                                backend: str = "cpu") -> Tuple[jax.Array, Dict[int, jax.Array]]:
-        """Run transient analysis with OpenVAF devices using pure JAX Newton-Raphson.
+        """Run transient analysis with OpenVAF devices using COO-based sparse solver.
 
         This solver handles a mix of simple devices (resistor, capacitor, etc.)
         and OpenVAF-compiled devices (like PSP103 MOSFETs).
 
-        Uses batched vmap evaluation for OpenVAF devices for better performance.
-        Internal nodes of OpenVAF devices are added to the system matrix and
-        solved simultaneously with external circuit nodes.
+        Uses COO triplet collection + segment_sum for efficient GPU-friendly
+        matrix assembly, then sparse CSR solve.
 
         Args:
             t_stop: Simulation stop time
             dt: Time step
-            backend: 'gpu' or 'cpu' for device evaluation. GPU keeps OpenVAF
-                     evaluation arrays on GPU device for reduced transfer overhead.
+            backend: 'gpu' or 'cpu' for device evaluation.
         """
         from jax_spice.analysis.gpu_backend import get_device, get_default_dtype
+        from jax_spice.analysis.sparse import build_csr_arrays, sparse_solve_csr
 
         ground = 0
 
@@ -960,19 +1037,21 @@ class VACASKBenchmarkRunner:
         # Set up internal nodes for OpenVAF devices
         n_total, device_internal_nodes = self._setup_internal_nodes()
         n_external = self.num_nodes
+        n_unknowns = n_total - 1
 
         if self.verbose:
             print(f"Total nodes: {n_total} ({n_external} external, {n_total - n_external} internal)")
             print(f"Backend: {backend}, device: {device.platform}")
+            print(f"Using COO-based sparse solver")
 
-        # Initialize voltages as JAX arrays
+        # Initialize voltages
         V = jnp.zeros(n_total, dtype=jnp.float64)
         V_prev = jnp.zeros(n_total, dtype=jnp.float64)
 
         # Build time-varying source function
         source_fn = self._build_source_fn()
 
-        # Group OpenVAF devices by model type for batched evaluation
+        # Group devices by type
         openvaf_by_type: Dict[str, List[Dict]] = {}
         simple_devices = []
         for dev in self.devices:
@@ -984,9 +1063,10 @@ class VACASKBenchmarkRunner:
             else:
                 simple_devices.append(dev)
 
-        # Get cached JIT-compiled vmapped functions and prepare static inputs
+        # Prepare OpenVAF: vmapped functions, static inputs, and stamp index mappings
         vmapped_fns: Dict[str, Callable] = {}
-        static_inputs_cache: Dict[str, Tuple[Any, List[int], List[Dict]]] = {}
+        static_inputs_cache: Dict[str, Tuple[Any, List[int], List[Dict], Dict]] = {}
+
         for model_type in openvaf_by_type:
             compiled = self._compiled_models.get(model_type)
             if compiled and 'vmapped_fn' in compiled:
@@ -994,16 +1074,24 @@ class VACASKBenchmarkRunner:
                 static_inputs, voltage_indices, device_contexts = self._prepare_static_inputs(
                     model_type, openvaf_by_type[model_type], device_internal_nodes, ground
                 )
+                # Pre-compute stamp index mapping (once per model type)
+                stamp_indices = self._build_stamp_index_mapping(
+                    model_type, device_contexts, ground
+                )
                 if backend == "gpu":
                     with jax.default_device(device):
                         static_inputs = jnp.array(static_inputs, dtype=dtype)
                 else:
                     static_inputs = jnp.array(static_inputs, dtype=jnp.float64)
-                static_inputs_cache[model_type] = (static_inputs, voltage_indices, device_contexts)
+                static_inputs_cache[model_type] = (
+                    static_inputs, voltage_indices, device_contexts, stamp_indices
+                )
                 if self.verbose:
                     n_devs = len(openvaf_by_type[model_type])
-                    n_voltages = len(voltage_indices)
-                    print(f"Using JIT-compiled vmapped function for {model_type} ({n_devs} devices, {n_voltages} voltage params)")
+                    print(f"Prepared {model_type}: {n_devs} devices, stamp indices cached")
+
+        # Pre-compute simple device stamp indices
+        simple_device_data = self._prepare_simple_devices_coo(simple_devices, ground, n_unknowns)
 
         # Time stepping
         times = []
@@ -1011,7 +1099,6 @@ class VACASKBenchmarkRunner:
 
         t = 0.0
         total_nr_iters = 0
-        n_unknowns = n_total - 1
 
         while t <= t_stop:
             source_values = source_fn(t)
@@ -1020,34 +1107,48 @@ class VACASKBenchmarkRunner:
             V_iter = V
 
             for nr_iter in range(100):
-                # Build system using JAX arrays
-                J = jnp.zeros((n_unknowns, n_unknowns), dtype=jnp.float64)
-                f = jnp.zeros(n_unknowns, dtype=jnp.float64)
+                # Collect COO triplets using numpy (fast in-place)
+                # Pre-allocate lists for COO data
+                f_indices_list = []
+                f_values_list = []
+                j_rows_list = []
+                j_cols_list = []
+                j_vals_list = []
 
-                # Stamp simple devices
-                for dev in simple_devices:
-                    f, J = self._stamp_simple_device_jax_dense(dev, V_iter, V_prev, dt, f, J, ground, source_values)
+                # Collect from simple devices (numpy-based, fast)
+                self._collect_simple_devices_coo(
+                    simple_device_data, V_iter, V_prev, dt, source_values, ground,
+                    f_indices_list, f_values_list, j_rows_list, j_cols_list, j_vals_list
+                )
 
-                # Stamp OpenVAF devices using batched evaluation
-                for model_type, devices in openvaf_by_type.items():
+                # Collect from OpenVAF devices
+                for model_type in openvaf_by_type:
                     if model_type in vmapped_fns and model_type in static_inputs_cache:
-                        static_inputs, voltage_indices, device_contexts = static_inputs_cache[model_type]
+                        static_inputs, voltage_indices, device_contexts, stamp_indices = \
+                            static_inputs_cache[model_type]
 
-                        if backend == "gpu":
-                            batch_inputs = self._update_voltage_inputs_jax_gpu(
-                                static_inputs, voltage_indices, device_contexts, V_iter,
-                                device, dtype
-                            )
-                        else:
-                            batch_inputs = self._update_voltage_inputs_jax(
-                                static_inputs, voltage_indices, device_contexts, V_iter
-                            )
-
-                        batch_residuals, batch_jacobian = vmapped_fns[model_type](batch_inputs)
-                        f, J = self._stamp_batched_results(
-                            model_type, batch_residuals, batch_jacobian,
-                            device_contexts, f, J, ground
+                        # Update voltage inputs (vectorized)
+                        batch_inputs = self._update_voltage_inputs_vectorized(
+                            static_inputs, voltage_indices, device_contexts, V_iter
                         )
+
+                        # Evaluate all devices in parallel
+                        batch_residuals, batch_jacobian = vmapped_fns[model_type](batch_inputs)
+
+                        # Collect COO triplets using pre-computed indices
+                        self._collect_openvaf_coo(
+                            batch_residuals, batch_jacobian, stamp_indices,
+                            f_indices_list, f_values_list,
+                            j_rows_list, j_cols_list, j_vals_list
+                        )
+
+                # Build residual vector using segment_sum
+                if f_indices_list:
+                    all_f_idx = jnp.concatenate(f_indices_list)
+                    all_f_val = jnp.concatenate(f_values_list)
+                    f = jax.ops.segment_sum(all_f_val, all_f_idx, num_segments=n_unknowns)
+                else:
+                    f = jnp.zeros(n_unknowns, dtype=jnp.float64)
 
                 # Check convergence
                 max_f = float(jnp.max(jnp.abs(f)))
@@ -1055,9 +1156,28 @@ class VACASKBenchmarkRunner:
                     converged = True
                     break
 
-                # Add regularization and solve
-                J_reg = J + 1e-12 * jnp.eye(n_unknowns, dtype=jnp.float64)
-                delta = jax.scipy.linalg.solve(J_reg, -f)
+                # Build Jacobian CSR and solve
+                if j_rows_list:
+                    all_j_rows = jnp.concatenate(j_rows_list)
+                    all_j_cols = jnp.concatenate(j_cols_list)
+                    all_j_vals = jnp.concatenate(j_vals_list)
+
+                    # Add diagonal regularization entries
+                    diag_idx = jnp.arange(n_unknowns, dtype=jnp.int32)
+                    all_j_rows = jnp.concatenate([all_j_rows, diag_idx])
+                    all_j_cols = jnp.concatenate([all_j_cols, diag_idx])
+                    all_j_vals = jnp.concatenate([all_j_vals, jnp.full(n_unknowns, 1e-12)])
+
+                    # Build CSR (segment_sum handles duplicates)
+                    data, indices, indptr = build_csr_arrays(
+                        all_j_rows, all_j_cols, all_j_vals, (n_unknowns, n_unknowns)
+                    )
+
+                    # Sparse solve
+                    delta = sparse_solve_csr(data, indices, indptr, -f, (n_unknowns, n_unknowns))
+                else:
+                    # Fallback: no devices, just regularization
+                    delta = -f
 
                 # Limit voltage step
                 max_delta = float(jnp.max(jnp.abs(delta)))
@@ -1088,6 +1208,316 @@ class VACASKBenchmarkRunner:
             print(f"Completed: {len(times)} timesteps, {total_nr_iters} total NR iterations")
 
         return jnp.array(times), {k: jnp.array(v) for k, v in voltages.items()}
+
+    def _prepare_simple_devices_coo(
+        self,
+        simple_devices: List[Dict],
+        ground: int,
+        n_unknowns: int,
+    ) -> Dict[str, Any]:
+        """Pre-compute data structures for simple device COO collection.
+
+        Returns dict with device groups organized by type for vectorized evaluation.
+        """
+        # Group by model type
+        by_type: Dict[str, List[Dict]] = {}
+        for dev in simple_devices:
+            model = dev['model']
+            if model not in by_type:
+                by_type[model] = []
+            by_type[model].append(dev)
+
+        result = {}
+        for model, devs in by_type.items():
+            n = len(devs)
+            # Extract node indices
+            node_p = np.array([d['nodes'][0] for d in devs], dtype=np.int32)
+            node_n = np.array([d['nodes'][1] for d in devs], dtype=np.int32)
+            names = [d['name'] for d in devs]
+
+            if model == 'resistor':
+                R = np.array([d['params'].get('r', 1e3) for d in devs], dtype=np.float64)
+                result['resistor'] = {'node_p': node_p, 'node_n': node_n, 'R': R, 'n': n}
+            elif model == 'capacitor':
+                C = np.array([d['params'].get('c', 1e-12) for d in devs], dtype=np.float64)
+                result['capacitor'] = {'node_p': node_p, 'node_n': node_n, 'C': C, 'n': n}
+            elif model == 'vsource':
+                dc = np.array([d['params'].get('dc', 0.0) for d in devs], dtype=np.float64)
+                result['vsource'] = {'node_p': node_p, 'node_n': node_n, 'dc': dc, 'names': names, 'n': n}
+            elif model == 'isource':
+                dc = np.array([d['params'].get('dc', 0.0) for d in devs], dtype=np.float64)
+                result['isource'] = {'node_p': node_p, 'node_n': node_n, 'dc': dc, 'names': names, 'n': n}
+            elif model == 'diode':
+                Is = np.array([d['params'].get('is', 1e-14) for d in devs], dtype=np.float64)
+                n_factor = np.array([d['params'].get('n', 1.0) for d in devs], dtype=np.float64)
+                result['diode'] = {'node_p': node_p, 'node_n': node_n, 'Is': Is, 'n_factor': n_factor, 'n': n}
+
+        return result
+
+    def _collect_simple_devices_coo(
+        self,
+        device_data: Dict[str, Any],
+        V: jax.Array,
+        V_prev: jax.Array,
+        dt: float,
+        source_values: Dict,
+        ground: int,
+        f_indices: List,
+        f_values: List,
+        j_rows: List,
+        j_cols: List,
+        j_vals: List,
+    ):
+        """Collect COO triplets from simple devices using vectorized operations."""
+
+        # Resistors: I = G * (Vp - Vn), G = 1/R
+        if 'resistor' in device_data:
+            d = device_data['resistor']
+            node_p, node_n, R = d['node_p'], d['node_n'], d['R']
+            G = 1.0 / R
+            Vp = jnp.asarray(V)[node_p]
+            Vn = jnp.asarray(V)[node_n]
+            I = G * (Vp - Vn)
+
+            # Residual contributions
+            for i in range(d['n']):
+                np_idx, nn_idx = int(node_p[i]), int(node_n[i])
+                curr = float(I[i])
+                g = float(G[i])
+
+                if np_idx != ground:
+                    f_indices.append(jnp.array([np_idx - 1], dtype=jnp.int32))
+                    f_values.append(jnp.array([curr]))
+                    j_rows.append(jnp.array([np_idx - 1], dtype=jnp.int32))
+                    j_cols.append(jnp.array([np_idx - 1], dtype=jnp.int32))
+                    j_vals.append(jnp.array([g]))
+                    if nn_idx != ground:
+                        j_rows.append(jnp.array([np_idx - 1], dtype=jnp.int32))
+                        j_cols.append(jnp.array([nn_idx - 1], dtype=jnp.int32))
+                        j_vals.append(jnp.array([-g]))
+
+                if nn_idx != ground:
+                    f_indices.append(jnp.array([nn_idx - 1], dtype=jnp.int32))
+                    f_values.append(jnp.array([-curr]))
+                    j_rows.append(jnp.array([nn_idx - 1], dtype=jnp.int32))
+                    j_cols.append(jnp.array([nn_idx - 1], dtype=jnp.int32))
+                    j_vals.append(jnp.array([g]))
+                    if np_idx != ground:
+                        j_rows.append(jnp.array([nn_idx - 1], dtype=jnp.int32))
+                        j_cols.append(jnp.array([np_idx - 1], dtype=jnp.int32))
+                        j_vals.append(jnp.array([-g]))
+
+        # Capacitors: I = G_eq * (V - V_prev), G_eq = C/dt
+        if 'capacitor' in device_data:
+            d = device_data['capacitor']
+            node_p, node_n, C = d['node_p'], d['node_n'], d['C']
+            G_eq = C / dt
+            Vp = jnp.asarray(V)[node_p]
+            Vn = jnp.asarray(V)[node_n]
+            Vp_prev = jnp.asarray(V_prev)[node_p]
+            Vn_prev = jnp.asarray(V_prev)[node_n]
+            I_eq = G_eq * (Vp_prev - Vn_prev)
+            I = G_eq * (Vp - Vn) - I_eq
+
+            for i in range(d['n']):
+                np_idx, nn_idx = int(node_p[i]), int(node_n[i])
+                curr = float(I[i])
+                g = float(G_eq[i])
+
+                if np_idx != ground:
+                    f_indices.append(jnp.array([np_idx - 1], dtype=jnp.int32))
+                    f_values.append(jnp.array([curr]))
+                    j_rows.append(jnp.array([np_idx - 1], dtype=jnp.int32))
+                    j_cols.append(jnp.array([np_idx - 1], dtype=jnp.int32))
+                    j_vals.append(jnp.array([g]))
+                    if nn_idx != ground:
+                        j_rows.append(jnp.array([np_idx - 1], dtype=jnp.int32))
+                        j_cols.append(jnp.array([nn_idx - 1], dtype=jnp.int32))
+                        j_vals.append(jnp.array([-g]))
+
+                if nn_idx != ground:
+                    f_indices.append(jnp.array([nn_idx - 1], dtype=jnp.int32))
+                    f_values.append(jnp.array([-curr]))
+                    j_rows.append(jnp.array([nn_idx - 1], dtype=jnp.int32))
+                    j_cols.append(jnp.array([nn_idx - 1], dtype=jnp.int32))
+                    j_vals.append(jnp.array([g]))
+                    if np_idx != ground:
+                        j_rows.append(jnp.array([nn_idx - 1], dtype=jnp.int32))
+                        j_cols.append(jnp.array([np_idx - 1], dtype=jnp.int32))
+                        j_vals.append(jnp.array([-g]))
+
+        # Voltage sources: I = G * (Vp - Vn - Vtarget), G = 1e12
+        if 'vsource' in device_data:
+            d = device_data['vsource']
+            node_p, node_n, dc, names = d['node_p'], d['node_n'], d['dc'], d['names']
+            G = 1e12
+            Vp = jnp.asarray(V)[node_p]
+            Vn = jnp.asarray(V)[node_n]
+
+            for i in range(d['n']):
+                V_target = source_values.get(names[i], dc[i])
+                curr = G * (float(Vp[i]) - float(Vn[i]) - V_target)
+                np_idx, nn_idx = int(node_p[i]), int(node_n[i])
+
+                if np_idx != ground:
+                    f_indices.append(jnp.array([np_idx - 1], dtype=jnp.int32))
+                    f_values.append(jnp.array([curr]))
+                    j_rows.append(jnp.array([np_idx - 1], dtype=jnp.int32))
+                    j_cols.append(jnp.array([np_idx - 1], dtype=jnp.int32))
+                    j_vals.append(jnp.array([G]))
+                    if nn_idx != ground:
+                        j_rows.append(jnp.array([np_idx - 1], dtype=jnp.int32))
+                        j_cols.append(jnp.array([nn_idx - 1], dtype=jnp.int32))
+                        j_vals.append(jnp.array([-G]))
+
+                if nn_idx != ground:
+                    f_indices.append(jnp.array([nn_idx - 1], dtype=jnp.int32))
+                    f_values.append(jnp.array([-curr]))
+                    j_rows.append(jnp.array([nn_idx - 1], dtype=jnp.int32))
+                    j_cols.append(jnp.array([nn_idx - 1], dtype=jnp.int32))
+                    j_vals.append(jnp.array([G]))
+                    if np_idx != ground:
+                        j_rows.append(jnp.array([nn_idx - 1], dtype=jnp.int32))
+                        j_cols.append(jnp.array([np_idx - 1], dtype=jnp.int32))
+                        j_vals.append(jnp.array([-G]))
+
+        # Current sources (no Jacobian contribution)
+        if 'isource' in device_data:
+            d = device_data['isource']
+            node_p, node_n, dc, names = d['node_p'], d['node_n'], d['dc'], d['names']
+
+            for i in range(d['n']):
+                I_val = source_values.get(names[i], dc[i])
+                np_idx, nn_idx = int(node_p[i]), int(node_n[i])
+
+                if np_idx != ground:
+                    f_indices.append(jnp.array([np_idx - 1], dtype=jnp.int32))
+                    f_values.append(jnp.array([-I_val]))
+                if nn_idx != ground:
+                    f_indices.append(jnp.array([nn_idx - 1], dtype=jnp.int32))
+                    f_values.append(jnp.array([I_val]))
+
+        # Diodes
+        if 'diode' in device_data:
+            d = device_data['diode']
+            node_p, node_n = d['node_p'], d['node_n']
+            Is, n_factor = d['Is'], d['n_factor']
+            Vt = 0.0258
+            Vp = jnp.asarray(V)[node_p]
+            Vn = jnp.asarray(V)[node_n]
+            Vd = Vp - Vn
+
+            for i in range(d['n']):
+                nVt = n_factor[i] * Vt
+                vd = float(Vd[i])
+                vd_norm = vd / nVt
+                is_val = Is[i]
+
+                # Diode current with limiting
+                if vd_norm > 40:
+                    exp_40 = np.exp(40.0)
+                    curr = is_val * (exp_40 + exp_40 * (vd_norm - 40) - 1)
+                    g = is_val * exp_40 / nVt
+                elif vd_norm < -40:
+                    curr = -is_val
+                    g = 0.0
+                else:
+                    exp_vd = np.exp(vd_norm)
+                    curr = is_val * (exp_vd - 1)
+                    g = is_val * exp_vd / nVt
+
+                np_idx, nn_idx = int(node_p[i]), int(node_n[i])
+
+                if np_idx != ground:
+                    f_indices.append(jnp.array([np_idx - 1], dtype=jnp.int32))
+                    f_values.append(jnp.array([curr]))
+                    j_rows.append(jnp.array([np_idx - 1], dtype=jnp.int32))
+                    j_cols.append(jnp.array([np_idx - 1], dtype=jnp.int32))
+                    j_vals.append(jnp.array([g]))
+                    if nn_idx != ground:
+                        j_rows.append(jnp.array([np_idx - 1], dtype=jnp.int32))
+                        j_cols.append(jnp.array([nn_idx - 1], dtype=jnp.int32))
+                        j_vals.append(jnp.array([-g]))
+
+                if nn_idx != ground:
+                    f_indices.append(jnp.array([nn_idx - 1], dtype=jnp.int32))
+                    f_values.append(jnp.array([-curr]))
+                    j_rows.append(jnp.array([nn_idx - 1], dtype=jnp.int32))
+                    j_cols.append(jnp.array([nn_idx - 1], dtype=jnp.int32))
+                    j_vals.append(jnp.array([g]))
+                    if np_idx != ground:
+                        j_rows.append(jnp.array([nn_idx - 1], dtype=jnp.int32))
+                        j_cols.append(jnp.array([np_idx - 1], dtype=jnp.int32))
+                        j_vals.append(jnp.array([-g]))
+
+    def _update_voltage_inputs_vectorized(
+        self,
+        static_inputs: jax.Array,
+        voltage_indices: List[int],
+        device_contexts: List[Dict],
+        V: jax.Array,
+    ) -> jax.Array:
+        """Update voltage parameters using vectorized indexing."""
+        n_devices = len(device_contexts)
+        n_voltages = len(voltage_indices)
+
+        # Build voltage updates array
+        voltage_updates = np.zeros((n_devices, n_voltages), dtype=np.float64)
+
+        for dev_idx, ctx in enumerate(device_contexts):
+            voltage_node_pairs = ctx['voltage_node_pairs']
+            for i, (n1, n2) in enumerate(voltage_node_pairs):
+                v1 = float(V[n1]) if n1 < len(V) else 0.0
+                v2 = float(V[n2]) if n2 < len(V) else 0.0
+                voltage_updates[dev_idx, i] = v1 - v2
+
+        # Convert to JAX and update columns
+        voltage_updates_jax = jnp.array(voltage_updates)
+        inputs = static_inputs
+        for i, vid in enumerate(voltage_indices):
+            inputs = inputs.at[:, vid].set(voltage_updates_jax[:, i])
+
+        return inputs
+
+    def _collect_openvaf_coo(
+        self,
+        batch_residuals: jax.Array,
+        batch_jacobian: jax.Array,
+        stamp_indices: Dict[str, jax.Array],
+        f_indices: List,
+        f_values: List,
+        j_rows: List,
+        j_cols: List,
+        j_vals: List,
+    ):
+        """Collect COO triplets from OpenVAF batched results using pre-computed indices."""
+        res_idx = stamp_indices['res_indices']  # (n_devices, n_residuals)
+        jac_row_idx = stamp_indices['jac_row_indices']  # (n_devices, n_jac_entries)
+        jac_col_idx = stamp_indices['jac_col_indices']
+
+        # Flatten and filter residuals
+        flat_res_idx = res_idx.ravel()
+        flat_res_val = batch_residuals.ravel()
+        valid_res = flat_res_idx >= 0
+
+        # Handle NaN values
+        flat_res_val = jnp.where(jnp.isnan(flat_res_val), 0.0, flat_res_val)
+
+        f_indices.append(flat_res_idx[valid_res])
+        f_values.append(flat_res_val[valid_res])
+
+        # Flatten and filter Jacobian
+        flat_jac_rows = jac_row_idx.ravel()
+        flat_jac_cols = jac_col_idx.ravel()
+        flat_jac_vals = batch_jacobian.ravel()
+        valid_jac = (flat_jac_rows >= 0) & (flat_jac_cols >= 0)
+
+        # Handle NaN values
+        flat_jac_vals = jnp.where(jnp.isnan(flat_jac_vals), 0.0, flat_jac_vals)
+
+        j_rows.append(flat_jac_rows[valid_jac])
+        j_cols.append(flat_jac_cols[valid_jac])
+        j_vals.append(flat_jac_vals[valid_jac])
 
     def _stamp_simple_device_jax_dense(self, dev: Dict, V: jax.Array, V_prev: jax.Array,
                                         dt: float, f: jax.Array, J: jax.Array,
