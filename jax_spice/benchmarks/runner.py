@@ -49,6 +49,9 @@ except ImportError:
 # Keyed by (model_type, va_file_mtime) to detect changes
 _COMPILED_MODEL_CACHE: Dict[str, Any] = {}
 
+# Newton-Raphson solver constants
+MAX_NR_ITERATIONS = 100  # Maximum Newton-Raphson iterations per timestep
+
 
 class VACASKBenchmarkRunner:
     """Generic runner for VACASK benchmark circuits.
@@ -1362,6 +1365,7 @@ class VACASKBenchmarkRunner:
         non_converged_steps = []  # Track (time, max_residual) for non-converged steps
 
         while t <= t_stop:
+            logger.debug(f"Step time:{t}")
             source_values = source_fn(t)
             # Build source value arrays once per timestep (Python loop here, not in NR loop)
             vsource_vals, isource_vals = build_source_arrays(source_values)
@@ -1369,7 +1373,7 @@ class VACASKBenchmarkRunner:
             converged = False
             V_iter = V
 
-            for nr_iter in range(100):
+            for nr_iter in range(MAX_NR_ITERATIONS):
                 # === Pure JAX: COO collection for both dense and sparse paths ===
                 f_indices_list = []
                 f_values_list = []
@@ -1478,7 +1482,10 @@ class VACASKBenchmarkRunner:
 
             if not converged:
                 non_converged_steps.append((t, max_f))
-                logger.warning(f"t={t:.2e}s did not converge (max_f={max_f:.2e})")
+                if nr_iter + 1 >= MAX_NR_ITERATIONS:
+                    logger.warning(f"t={t:.2e}s hit max iterations ({MAX_NR_ITERATIONS}), max_f={max_f:.2e}")
+                else:
+                    logger.warning(f"t={t:.2e}s did not converge (max_f={max_f:.2e})")
 
             # Record state
             times.append(t)
