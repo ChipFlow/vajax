@@ -131,7 +131,8 @@ class GPUProfiler:
             # Skip if system is too large for GPU memory
             # 86k nodes sparse system requires ~20GB for LU factorization with fill-in
             MAX_GPU_NODES = 50000  # Safe limit for L4 GPU with 24GB VRAM
-            if total_nodes_estimate > MAX_GPU_NODES and backend == "gpu":
+            is_gpu = backend in ("gpu", "cuda", "rocm")
+            if total_nodes_estimate > MAX_GPU_NODES and is_gpu:
                 log(f"      WARNING: System too large for GPU ({total_nodes_estimate} > {MAX_GPU_NODES} nodes)")
                 return BenchmarkResult(
                     name=name,
@@ -177,7 +178,7 @@ class GPUProfiler:
             log(f"      warmup done ({warmup_time:.1f}s)")
 
             # Create fresh runner for timing (reuse compiled models)
-            runner2 = VACASKBenchmarkRunner(sim_path, verbose=False)
+            runner2 = VACASKBenchmarkRunner(sim_path, verbose=True)
             runner2.parse()
             if runner._has_openvaf_devices:
                 runner2._compiled_models = runner._compiled_models
