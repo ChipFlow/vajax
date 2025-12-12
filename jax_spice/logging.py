@@ -20,6 +20,8 @@ import logging
 import sys
 import tracemalloc
 
+import jax
+
 # Create the jax_spice logger
 logger = logging.getLogger("jax_spice")
 
@@ -45,14 +47,12 @@ def _get_memory_stats() -> str:
 
     # GPU memory via JAX
     try:
-        import jax
         for dev in jax.devices():
-            if dev.platform == 'gpu':
-                stats = dev.memory_stats()
-                if stats:
-                    current_mb = stats.get('bytes_in_use', 0) / 1024 / 1024
-                    parts.append(f"GPU:{current_mb:.0f}MB")
-                break  # Just first GPU
+            parts.append(f"{dev}:")
+            stats = dev.memory_stats()
+            if stats:
+                current_mb = stats.get('bytes_in_use', 0) / 1024 / 1024
+                parts.append(f"{current_mb:.0f}MB")
     except Exception:
         pass
 
