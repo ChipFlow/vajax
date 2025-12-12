@@ -97,10 +97,13 @@ class GPUProfiler:
 
         try:
             # Parse circuit
-            log(f"      parsing...", end=" ")
+            log(f"      parsing...")
+            import sys
+            sys.stdout.flush()
+            sys.stderr.flush()
             runner = VACASKBenchmarkRunner(sim_path, verbose=False)
             runner.parse()
-            log("done")
+            log("      parsing done")
 
             nodes = runner.num_nodes
             devices = len(runner.devices)
@@ -126,12 +129,14 @@ class GPUProfiler:
             dt = runner.analysis_params.get('step', 1e-12)
 
             # Warmup run (includes JIT compilation)
-            log(f"      warmup ({warmup_steps} steps, includes JIT)...", end=" ")
+            log(f"      warmup ({warmup_steps} steps, includes JIT)...")
+            sys.stdout.flush()
+            sys.stderr.flush()
             warmup_start = time.perf_counter()
             runner.run_transient(t_stop=dt * warmup_steps, dt=dt,
                                 max_steps=warmup_steps, use_sparse=use_sparse)
             warmup_time = time.perf_counter() - warmup_start
-            log(f"done ({warmup_time:.1f}s)")
+            log(f"      warmup done ({warmup_time:.1f}s)")
 
             # Create fresh runner for timing (reuse compiled models)
             runner2 = VACASKBenchmarkRunner(sim_path, verbose=False)
