@@ -1080,13 +1080,23 @@ class VACASKBenchmarkRunner:
                 stamp_indices = self._build_stamp_index_mapping(
                     model_type, device_contexts, ground
                 )
+                # Pre-compute voltage node arrays for vectorized update
+                n_devices = len(device_contexts)
+                n_voltages = len(voltage_indices)
+                voltage_node1 = jnp.zeros((n_devices, n_voltages), dtype=jnp.int32)
+                voltage_node2 = jnp.zeros((n_devices, n_voltages), dtype=jnp.int32)
+                for dev_idx, ctx in enumerate(device_contexts):
+                    for i, (n1, n2) in enumerate(ctx['voltage_node_pairs']):
+                        voltage_node1 = voltage_node1.at[dev_idx, i].set(n1)
+                        voltage_node2 = voltage_node2.at[dev_idx, i].set(n2)
+
                 if backend == "gpu":
                     with jax.default_device(device):
                         static_inputs = jnp.array(static_inputs, dtype=dtype)
                 else:
                     static_inputs = jnp.array(static_inputs, dtype=jnp.float64)
                 static_inputs_cache[model_type] = (
-                    static_inputs, voltage_indices, device_contexts, stamp_indices
+                    static_inputs, voltage_indices, stamp_indices, voltage_node1, voltage_node2
                 )
                 if self.verbose:
                     n_devs = len(openvaf_by_type[model_type])
@@ -1125,12 +1135,13 @@ class VACASKBenchmarkRunner:
                 # Collect from OpenVAF devices
                 for model_type in openvaf_by_type:
                     if model_type in vmapped_fns and model_type in static_inputs_cache:
-                        static_inputs, voltage_indices, device_contexts, stamp_indices = \
+                        static_inputs, voltage_indices, stamp_indices, voltage_node1, voltage_node2 = \
                             static_inputs_cache[model_type]
 
-                        batch_inputs = self._update_voltage_inputs_vectorized(
-                            static_inputs, voltage_indices, device_contexts, V_iter
-                        )
+                        # Vectorized voltage update (no Python loops)
+                        voltage_updates = V_iter[voltage_node1] - V_iter[voltage_node2]
+                        batch_inputs = static_inputs.at[:, jnp.array(voltage_indices)].set(voltage_updates)
+
                         batch_residuals, batch_jacobian = vmapped_fns[model_type](batch_inputs)
 
                         self._collect_openvaf_coo(
@@ -1455,35 +1466,6 @@ class VACASKBenchmarkRunner:
                 )
             )
             _stamp_two_terminal(d, I, G)
-
-    def _update_voltage_inputs_vectorized(
-        self,
-        static_inputs: jax.Array,
-        voltage_indices: List[int],
-        device_contexts: List[Dict],
-        V: jax.Array,
-    ) -> jax.Array:
-        """Update voltage parameters using vectorized indexing."""
-        n_devices = len(device_contexts)
-        n_voltages = len(voltage_indices)
-
-        # Build voltage updates array
-        voltage_updates = np.zeros((n_devices, n_voltages), dtype=np.float64)
-
-        for dev_idx, ctx in enumerate(device_contexts):
-            voltage_node_pairs = ctx['voltage_node_pairs']
-            for i, (n1, n2) in enumerate(voltage_node_pairs):
-                v1 = float(V[n1]) if n1 < len(V) else 0.0
-                v2 = float(V[n2]) if n2 < len(V) else 0.0
-                voltage_updates[dev_idx, i] = v1 - v2
-
-        # Convert to JAX and update columns
-        voltage_updates_jax = jnp.array(voltage_updates)
-        inputs = static_inputs
-        for i, vid in enumerate(voltage_indices):
-            inputs = inputs.at[:, vid].set(voltage_updates_jax[:, i])
-
-        return inputs
 
     def _collect_openvaf_coo(
         self,
