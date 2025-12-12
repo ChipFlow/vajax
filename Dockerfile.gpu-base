@@ -39,6 +39,21 @@ RUN mkdir -p /usr/local/cuda-12.2/include /usr/local/cuda-12.2/lib64 \
     && cp cudnn-linux-x86_64-9.8.0.87_cuda12-archive/lib/* /usr/local/cuda-12.2/lib64/ \
     && rm -rf cudnn-linux-x86_64-9.8.0.87_cuda12-archive cudnn-linux-x86_64-9.8.0.87_cuda12-archive.tar.xz
 
+# Install Nsight Systems for nsys-jax profiling (from NVIDIA CUDA repo)
+# Package name is cuda-nsight-systems-12-X, not nsight-systems-YYYY.X
+# Clean up apt cache after to reduce image size
+RUN apt update && apt install -y --no-install-recommends \
+    cuda-nsight-systems-12-6 \
+    protobuf-compiler \
+    && apt clean && rm -rf /var/lib/apt/lists/*
+
+# Clone XLA source for .proto files needed by nsys-jax metadata interpretation
+# Only need the xla/service/*.proto files, so use sparse checkout to minimize size
+# Install nsys-jax and apply compatibility patch in same layer
+RUN git clone --depth 1 --filter=blob:none --sparse https://github.com/openxla/xla.git /opt/xla \
+    && cd /opt/xla && git sparse-checkout set xla \
+    && pip install --no-cache-dir git+https://github.com/NVIDIA/JAX-Toolbox.git#subdirectory=.github/container/nsys_jax \
+    && (nsys-jax-patch-nsys || true)
 
 RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | bash -s -- -y
 ENV PATH="$PATH:/root/.cargo/bin"
@@ -74,6 +89,9 @@ ENV PATH=/usr/local/cuda-12.2/bin:$PATH
 # JAX/XLA settings (disable verbose compile logging)
 ENV TF_CPP_MIN_LOG_LEVEL=2
 ENV XLA_FLAGS="--xla_gpu_autotune_level=0"
+
+# nsys-jax needs XLA source path for .proto files
+ENV SRC_PATH_XLA=/opt/xla
 
 # Entrypoint script that checks out code and runs tests
 COPY scripts/run-gpu-tests.sh /run-gpu-tests.sh
