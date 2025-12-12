@@ -97,8 +97,10 @@ class GPUProfiler:
 
         try:
             # Parse circuit
+            log(f"      parsing...", end=" ")
             runner = VACASKBenchmarkRunner(sim_path, verbose=False)
             runner.parse()
+            log("done")
 
             nodes = runner.num_nodes
             devices = len(runner.devices)
