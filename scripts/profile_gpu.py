@@ -128,26 +128,6 @@ class GPUProfiler:
             total_nodes_estimate = nodes + estimated_internal
             log(f"      nodes: {nodes} external, ~{estimated_internal} internal ({total_nodes_estimate} total)")
 
-            # Skip if system is too large for GPU memory
-            # 86k nodes sparse system requires ~20GB for LU factorization with fill-in
-            MAX_GPU_NODES = 50000  # Safe limit for L4 GPU with 24GB VRAM
-            is_gpu = backend in ("gpu", "cuda", "rocm")
-            if total_nodes_estimate > MAX_GPU_NODES and is_gpu:
-                log(f"      WARNING: System too large for GPU ({total_nodes_estimate} > {MAX_GPU_NODES} nodes)")
-                return BenchmarkResult(
-                    name=name,
-                    nodes=nodes,
-                    devices=devices,
-                    openvaf_devices=openvaf_devices,
-                    timesteps=0,
-                    total_time_s=0,
-                    time_per_step_ms=0,
-                    solver='sparse' if use_sparse else 'dense',
-                    backend=backend,
-                    converged=True,
-                    error=f"System too large ({total_nodes_estimate} nodes > {MAX_GPU_NODES} max)"
-                )
-
             # Skip sparse for non-OpenVAF circuits (they use JIT solver)
             if use_sparse and not runner._has_openvaf_devices:
                 return BenchmarkResult(
