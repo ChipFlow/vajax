@@ -157,19 +157,11 @@ class GPUProfiler:
             warmup_time = time.perf_counter() - warmup_start
             log(f"      warmup done ({warmup_time:.1f}s)")
 
-            # Create fresh runner for timing (reuse compiled models)
-            runner2 = VACASKBenchmarkRunner(sim_path, verbose=True)
-            runner2.parse()
-            if runner._has_openvaf_devices:
-                runner2._compiled_models = runner._compiled_models
-
-            log(f"_compiled_models = {runner2._compiled_models}")
-
             # Timed run (optionally with tracing)
             ctx = trace_ctx if trace_ctx else nullcontext()
             with ctx:
                 start = time.perf_counter()
-                times, voltages, stats = runner2.run_transient(
+                times, voltages, stats = runner.run_transient(
                     t_stop=dt * num_steps, dt=dt,
                     max_steps=num_steps, use_sparse=use_sparse
                 )
@@ -179,7 +171,8 @@ class GPUProfiler:
             time_per_step = (elapsed / actual_steps * 1000) if actual_steps > 0 else 0
 
             solver='sparse' if use_sparse else 'dense',
-            log("Running benchmark... ({solver})")
+
+            log(f"benchmark  ({solver}) ran in {elapsed} seconds and {acutal_steps} steps")
 
             return BenchmarkResult(
                 name=name,

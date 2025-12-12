@@ -677,6 +677,123 @@ class VACASKBenchmarkRunner:
             'jac_col_indices': jnp.array(jac_col_indices),
         }
 
+    def _precompute_sparse_structure(
+        self,
+        n_unknowns: int,
+        openvaf_by_type: Dict[str, List[Dict]],
+        static_inputs_cache: Dict[str, Tuple],
+        source_device_data: Dict[str, Any],
+    ) -> Dict[str, Any]:
+        """Pre-compute the merged sparse matrix structure for all devices.
+
+        This is called once during setup. The sparsity pattern is fixed for the
+        circuit, so we can pre-compute:
+        - Merged COO indices for all devices
+        - CSR structure (indptr, indices)
+        - Mappings from device outputs to value positions
+
+        Each NR iteration only needs to update values, not rebuild indices.
+
+        Returns:
+            Dict with pre-computed structure for efficient NR iterations.
+        """
+        from jax.experimental.sparse import BCOO, BCSR
+
+        # Collect all COO indices (once, during setup)
+        all_j_rows = []
+        all_j_cols = []
+
+        # Track positions for each device type's contributions
+        openvaf_jac_slices = {}  # model_type -> (start, end) in merged arrays
+
+        pos = 0
+        for model_type in openvaf_by_type:
+            if model_type not in static_inputs_cache:
+                continue
+
+            _, _, stamp_indices, _, _ = static_inputs_cache[model_type]
+            jac_row_idx = stamp_indices['jac_row_indices']  # (n_devices, n_jac_entries)
+            jac_col_idx = stamp_indices['jac_col_indices']
+
+            # Flatten and filter valid entries
+            flat_rows = jac_row_idx.ravel()
+            flat_cols = jac_col_idx.ravel()
+            valid = (flat_rows >= 0) & (flat_cols >= 0)
+
+            # Get valid indices as numpy for efficient indexing
+            valid_rows = np.asarray(flat_rows[valid])
+            valid_cols = np.asarray(flat_cols[valid])
+
+            n_valid = len(valid_rows)
+            openvaf_jac_slices[model_type] = (pos, pos + n_valid, valid)
+            pos += n_valid
+
+            all_j_rows.append(valid_rows)
+            all_j_cols.append(valid_cols)
+
+        # Add source device contributions
+        source_jac_slices = {}
+        for src_type in ('vsource',):  # isource has no Jacobian
+            if src_type not in source_device_data:
+                continue
+            d = source_device_data[src_type]
+            j_rows = d['j_rows'].ravel()
+            j_cols = d['j_cols'].ravel()
+            valid = j_rows >= 0
+
+            valid_rows = np.asarray(j_rows[valid])
+            valid_cols = np.asarray(j_cols[valid])
+
+            n_valid = len(valid_rows)
+            source_jac_slices[src_type] = (pos, pos + n_valid, valid)
+            pos += n_valid
+
+            all_j_rows.append(valid_rows)
+            all_j_cols.append(valid_cols)
+
+        # Add diagonal regularization
+        diag_start = pos
+        diag_rows = np.arange(n_unknowns, dtype=np.int32)
+        all_j_rows.append(diag_rows)
+        all_j_cols.append(diag_rows)
+
+        # Merge all indices
+        if all_j_rows:
+            merged_rows = np.concatenate(all_j_rows)
+            merged_cols = np.concatenate(all_j_cols)
+        else:
+            merged_rows = np.array([], dtype=np.int32)
+            merged_cols = np.array([], dtype=np.int32)
+
+        n_entries = len(merged_rows)
+
+        # Build BCOO with dummy values to get structure
+        dummy_vals = np.ones(n_entries, dtype=np.float64)
+        indices = np.stack([merged_rows, merged_cols], axis=1)
+
+        J_bcoo = BCOO((jnp.array(dummy_vals), jnp.array(indices)), shape=(n_unknowns, n_unknowns))
+        J_bcoo_summed = J_bcoo.sum_duplicates()
+
+        # Convert to BCSR to get the fixed structure
+        J_bcsr = BCSR.from_bcoo(J_bcoo_summed)
+
+        # Store the structure
+        return {
+            'n_entries': n_entries,
+            'n_unknowns': n_unknowns,
+            'merged_rows': jnp.array(merged_rows),
+            'merged_cols': jnp.array(merged_cols),
+            'openvaf_jac_slices': openvaf_jac_slices,
+            'source_jac_slices': source_jac_slices,
+            'diag_start': diag_start,
+            # BCSR structure (fixed)
+            'bcsr_indices': J_bcsr.indices,
+            'bcsr_indptr': J_bcsr.indptr,
+            'bcsr_n_data': J_bcsr.data.shape[0],
+            # For sum_duplicates mapping
+            'bcoo_summed_indices': J_bcoo_summed.indices,
+        }
+
     def _parse_voltage_param(self, name: str, node_map: Dict[str, int],
                               model_nodes: List[str], ground: int) -> Tuple[int, int]:
         """Parse a voltage parameter name and return (node1_idx, node2_idx).
@@ -1013,7 +1130,9 @@ class VACASKBenchmarkRunner:
             - voltages: dict mapping node index to voltage array
             - stats: dict with convergence info (total_timesteps, non_converged_count, etc.)
         """
+        print("importing gpu backend", flush=True)
         from jax_spice.analysis.gpu_backend import select_backend, is_gpu_available
+        print("imported gpu backend", flush=True)
 
         if t_stop is None:
             t_stop = self.analysis_params.get('stop', 1e-3)
@@ -1028,11 +1147,13 @@ class VACASKBenchmarkRunner:
                 print(f"Limiting to {max_steps} steps, dt={dt:.2e}s")
 
         # Select backend if not specified
+
+        print("selecting gpu backend", flush=True)
         if backend is None or backend == "auto":
             backend = select_backend(self.num_nodes)
 
-        if self.verbose:
-            print(f"Running transient: t_stop={t_stop:.2e}s, dt={dt:.2e}s, backend={backend}")
+        # if self.verbose:
+        print(f"Running transient: t_stop={t_stop:.2e}s, dt={dt:.2e}s, backend={backend}", flush=True)
 
         # Use hybrid solver if we have OpenVAF devices
         if self._has_openvaf_devices:
@@ -1042,20 +1163,22 @@ class VACASKBenchmarkRunner:
                 use_sparse = self.num_nodes > 1000
 
             if use_sparse:
-                if self.verbose:
-                    print(f"Using BCOO/BCSR sparse solver ({self.num_nodes} nodes, OpenVAF devices)")
+                # if self.verbose:
+                print(f"Using BCOO/BCSR sparse solver ({self.num_nodes} nodes, OpenVAF devices)", flush=True)
                 # Use BCOO/BCSR + spsolve (direct sparse solver)
                 # This is more robust for circuit simulation than matrix-free GMRES
                 return self._run_transient_hybrid(t_stop, dt, backend=backend, use_dense=False)
             else:
-                if self.verbose:
-                    print("Using dense hybrid solver (OpenVAF devices detected)")
+                #if self.verbose:
+                print("Using dense hybrid solver (OpenVAF devices detected)", flush=True)
                 return self._run_transient_hybrid(t_stop, dt, backend=backend, use_dense=True)
 
         # Convert to MNA system
+        print("Getting mna system", flush=True)
         system = self.to_mna_system()
 
         # Run production transient analysis with backend selection
+        print("Running transient analysis", flush=True)
         times, voltages_array, stats = transient_analysis_jit(
             system=system,
             t_stop=t_stop,
@@ -1064,6 +1187,7 @@ class VACASKBenchmarkRunner:
             backend=backend,
         )
 
+        print("Creating voltage dict", flush=True)
         # Create voltage dict from JAX arrays
         voltages = {}
         for i in range(self.num_nodes):
@@ -1072,8 +1196,8 @@ class VACASKBenchmarkRunner:
             else:
                 voltages[i] = jnp.zeros(len(times))
 
-        if self.verbose:
-            print(f"Completed: {len(times)} timesteps, {stats.get('iterations', 'N/A')} total NR iterations")
+        # if self.verbose:
+        print(f"Completed: {len(times)} timesteps, {stats.get('iterations', 'N/A')} total NR iterations", flush=True)
 
         return times, voltages, stats
 
@@ -1131,13 +1255,18 @@ class VACASKBenchmarkRunner:
             use_dense: If True, use dense matrices with batched scatter (faster for small circuits).
                       If False, use COO collection + sparse CSR solve (better for large circuits).
         """
+
+        print(f"Importing backend ({backend})")
+
         from jax_spice.analysis.gpu_backend import get_device, get_default_dtype
         from jax_spice.analysis.sparse import build_csr_arrays, sparse_solve_csr
         from jax.experimental.sparse import BCOO, BCSR
 
         ground = 0
-
+    
         # Get target device for JAX operations
+
+        print("getting device and dtype", flush=True)
         device = get_device(backend)
         dtype = get_default_dtype(backend)
 
@@ -1147,16 +1276,17 @@ class VACASKBenchmarkRunner:
         n_unknowns = n_total - 1
 
         solver_type = "dense batched scatter" if use_dense else "COO sparse"
-        if self.verbose:
-            print(f"Total nodes: {n_total} ({n_external} external, {n_total - n_external} internal)")
-            print(f"Backend: {backend}, device: {device.platform}")
-            print(f"Using {solver_type} solver")
+        # if self.verbose:
+        print(f"Total nodes: {n_total} ({n_external} external, {n_total - n_external} internal)")
+        print(f"Backend: {backend}, device: {device.platform}")
+        print(f"Using {solver_type} solver", flush=True)
 
         # Initialize voltages
         V = jnp.zeros(n_total, dtype=jnp.float64)
         V_prev = jnp.zeros(n_total, dtype=jnp.float64)
 
         # Build time-varying source function
+        print("Building source function", flush=True)
         source_fn = self._build_source_fn()
 
         # Group devices by type
@@ -1173,18 +1303,24 @@ class VACASKBenchmarkRunner:
             elif dev['model'] in ('vsource', 'isource'):
                 source_devices.append(dev)
 
+        print(f"{len(source_devices)} source devices", flush=True)
         # Prepare OpenVAF: vmapped functions, static inputs, and stamp index mappings
         vmapped_fns: Dict[str, Callable] = {}
         static_inputs_cache: Dict[str, Tuple[Any, List[int], List[Dict], Dict]] = {}
 
         for model_type in openvaf_by_type:
+            print(f"Getting compiled model for {model_type}", flush=True)
             compiled = self._compiled_models.get(model_type)
+            print(f"Got model: {compiled}", flush=True)
+
             if compiled and 'vmapped_fn' in compiled:
                 vmapped_fns[model_type] = compiled['vmapped_fn']
+                print(f"Preparing static inputs: {model_type}, {openvaf_by_type[model_type]}, {device_internal_nodes}, {ground}", flush=True)
                 static_inputs, voltage_indices, device_contexts = self._prepare_static_inputs(
                     model_type, openvaf_by_type[model_type], device_internal_nodes, ground
                 )
                 # Pre-compute stamp index mapping (once per model type)
+                print("building stamp index mapping for {model_type}, {device_contexts}, {ground}", flush=True)
                 stamp_indices = self._build_stamp_index_mapping(
                     model_type, device_contexts, ground
                 )
@@ -1192,6 +1328,7 @@ class VACASKBenchmarkRunner:
                 n_devices = len(device_contexts)
                 n_voltages = len(voltage_indices)
                 # Build arrays directly from list comprehension (setup phase only)
+                print("building voltage model", flush=True)
                 voltage_node1 = jnp.array([
                     [n1 for n1, n2 in ctx['voltage_node_pairs']]
                     for ctx in device_contexts
@@ -1201,6 +1338,8 @@ class VACASKBenchmarkRunner:
                     for ctx in device_contexts
                 ], dtype=jnp.int32)
 
+
+                print("fetching static inputs", flush=True)
                 if backend == "gpu":
                     with jax.default_device(device):
                         static_inputs = jnp.array(static_inputs, dtype=dtype)
@@ -1209,11 +1348,12 @@ class VACASKBenchmarkRunner:
                 static_inputs_cache[model_type] = (
                     static_inputs, voltage_indices, stamp_indices, voltage_node1, voltage_node2
                 )
-                if self.verbose:
-                    n_devs = len(openvaf_by_type[model_type])
-                    print(f"Prepared {model_type}: {n_devs} devices, stamp indices cached")
+                # if self.verbose:
+                n_devs = len(openvaf_by_type[model_type])
+                print(f"Prepared {model_type}: {n_devs} devices, stamp indices cached", flush=True)
 
         # Pre-compute source device stamp indices
+        print(f"Precomputing source device data for {source_devices}, {ground}, {n_unknowns}", flush=True)
         source_device_data = self._prepare_source_devices_coo(source_devices, ground, n_unknowns)
 
         # Helper to build source value arrays from dict (called once per timestep)
@@ -1240,6 +1380,9 @@ class VACASKBenchmarkRunner:
             return vsource_vals, isource_vals
 
         # Time stepping
+
+        print("Running time steps", flush=True)
+
         times = []
         voltages = {i: [] for i in range(n_external)}
 
