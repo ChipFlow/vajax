@@ -42,10 +42,11 @@ import numpy as np
 # Enable float64
 jax.config.update('jax_enable_x64', True)
 
-from jax_spice.benchmarks.runner import VACASKBenchmarkRunner
-from jax_spice.logging import enable_performance_logging
 
-# Enable verbose logging with flush for profiling visibility
+from jax_spice.benchmarks.runner import VACASKBenchmarkRunner
+from jax_spice.logging import enable_performance_logging, logger
+
+# Enable verbose logging with flush and memory stats for profiling visibility
 enable_performance_logging()
 
 
@@ -103,23 +104,23 @@ class GPUProfiler:
         """
         warmup_steps = 5  # Fixed warmup for JIT compilation
         import sys
-        log(f"      starting...")
+        logger.info("      starting...")
         sys.stdout.flush()
         sys.stderr.flush()
 
         backend = jax.default_backend()
-        log(f"      backend: {backend}")
+        logger.info(f"      backend: {backend}")
         sys.stdout.flush()
         sys.stderr.flush()
 
         try:
             # Parse circuit
-            log(f"      parsing...")
+            logger.info(f"      parsing...")
             sys.stdout.flush()
             sys.stderr.flush()
             runner = VACASKBenchmarkRunner(sim_path)
             runner.parse()
-            log("      parsing done")
+            logger.info("      parsing done")
 
             nodes = runner.num_nodes
             devices = len(runner.devices)
@@ -129,7 +130,10 @@ class GPUProfiler:
             # PSP103 has 8 internal nodes per device (13 total - 4 external - 1 branch)
             estimated_internal = openvaf_devices * 8  # Conservative estimate for PSP103
             total_nodes_estimate = nodes + estimated_internal
-            log(f"      nodes: {nodes} external, ~{estimated_internal} internal ({total_nodes_estimate} total)")
+            logger.info(f"      nodes: {nodes} external, ~{estimated_internal} internal ({total_nodes_estimate} total)")
+
+            # Always use GPU backend (checked at startup)
+            selected_backend = "gpu"
 
             # Skip sparse for non-OpenVAF circuits (they use JIT solver)
             if use_sparse and not runner._has_openvaf_devices:
@@ -151,15 +155,15 @@ class GPUProfiler:
             dt = runner.analysis_params.get('step', 1e-12)
 
             # Warmup run (includes JIT compilation)
-            log(f"      warmup ({warmup_steps} steps, includes JIT)...")
+            logger.info(f"      warmup ({warmup_steps} steps, includes JIT)...")
             sys.stdout.flush()
             sys.stderr.flush()
             warmup_start = time.perf_counter()
             runner.run_transient(t_stop=dt * warmup_steps, dt=dt,
                                 max_steps=warmup_steps, use_sparse=use_sparse,
-                                backend="gpu")
+                                backend=selected_backend)
             warmup_time = time.perf_counter() - warmup_start
-            log(f"      warmup done ({warmup_time:.1f}s)")
+            logger.info(f"      warmup done ({warmup_time:.1f}s)")
 
             # Timed run (optionally with tracing)
             ctx = trace_ctx if trace_ctx else nullcontext()
@@ -168,7 +172,7 @@ class GPUProfiler:
                 times, voltages, stats = runner.run_transient(
                     t_stop=dt * num_steps, dt=dt,
                     max_steps=num_steps, use_sparse=use_sparse,
-                    backend="gpu"
+                    backend=selected_backend
                 )
                 elapsed = time.perf_counter() - start
 
@@ -177,7 +181,7 @@ class GPUProfiler:
 
             solver='sparse' if use_sparse else 'dense',
 
-            log(f"benchmark ({solver}) ran in {elapsed:.2f}s and {actual_steps} steps")
+            logger.info(f"benchmark ({solver}) ran in {elapsed:.2f}s and {actual_steps} steps")
 
             return BenchmarkResult(
                 name=name,
@@ -287,11 +291,6 @@ def get_vacask_benchmarks(names: Optional[List[str]] = None) -> List[Tuple[str, 
     return benchmarks
 
 
-def log(msg="", end="\n"):
-    """Print with flush for CI logs"""
-    print(msg, end=end, flush=True)
-
-
 def main():
     parser = argparse.ArgumentParser(
         description="Profile VACASK benchmarks on CPU/GPU"
@@ -331,28 +330,34 @@ def main():
     )
     args = parser.parse_args()
 
-    log("=" * 70)
-    log("JAX-SPICE GPU Profiling")
-    log("=" * 70)
-    log()
+    logger.info("=" * 70)
+    logger.info("JAX-SPICE GPU Profiling")
+    logger.info("=" * 70)
+    logger.info("")
 
-    log("[Stage 1/4] Checking JAX configuration...")
-    log(f"  JAX backend: {jax.default_backend()}")
-    log(f"  JAX devices: {jax.devices()}")
-    log(f"  Float64 enabled: {jax.config.jax_enable_x64}")
-    log()
+    logger.info("[Stage 1/4] Checking JAX configuration...")
+    logger.info(f"  JAX backend: {jax.default_backend()}")
+    logger.info(f"  JAX devices: {jax.devices()}")
+    logger.info(f"  Float64 enabled: {jax.config.jax_enable_x64}")
+
+    # Require GPU backend
+    has_gpu = any(d.platform == 'gpu' for d in jax.devices())
+    if not has_gpu:
+        logger.error("ERROR: No GPU device found. Use profile_cpu.py for CPU-only profiling.")
+        sys.exit(1)
+    logger.info("")
 
     # Parse benchmark names
     benchmark_names = None
     if args.benchmark:
         benchmark_names = [b.strip() for b in args.benchmark.split(',')]
 
-    log("[Stage 2/4] Discovering benchmarks...")
+    logger.info("[Stage 2/4] Discovering benchmarks...")
     benchmarks = get_vacask_benchmarks(benchmark_names)
-    log(f"  Found {len(benchmarks)} benchmarks: {[b[0] for b in benchmarks]}")
+    logger.info(f"  Found {len(benchmarks)} benchmarks: {[b[0] for b in benchmarks]}")
     if args.trace:
-        log(f"  Perfetto tracing enabled, output: {args.trace_dir}")
-    log()
+        logger.info(f"  Perfetto tracing enabled, output: {args.trace_dir}")
+    logger.info("")
 
     profiler = GPUProfiler()
     profiler.start()
@@ -361,17 +366,17 @@ def main():
     trace_ctx = None
     if args.trace:
         os.makedirs(args.trace_dir, exist_ok=True)
-        log(f"  Created trace directory: {args.trace_dir}")
+        logger.info(f"  Created trace directory: {args.trace_dir}")
 
-    log("[Stage 3/4] Running benchmarks...")
-    log()
+    logger.info("[Stage 3/4] Running benchmarks...")
+    logger.info("")
 
     # Use trace context for entire benchmark suite if tracing
     trace_manager = jax.profiler.trace(args.trace_dir, create_perfetto_link=False) if args.trace else nullcontext()
 
     with trace_manager:
         for name, sim_path in benchmarks:
-            log(f"  {name}:")
+            logger.info(f"  {name}:")
             sys.stdout.flush()
             sys.stderr.flush()
 
@@ -382,9 +387,9 @@ def main():
             run_sparse = not args.dense_only
 
             if name == 'c6288':
-                log(f"    Note: ~86k total nodes (5k external + 81k internal)")
+                logger.info(f"    Note: ~86k total nodes (5k external + 81k internal)")
                 if not args.sparse_only:
-                    log(f"    Skipping dense (would need ~56GB memory)")
+                    logger.info(f"    Skipping dense (would need ~56GB memory)")
 
             # Run dense
             if run_dense:
@@ -394,9 +399,9 @@ def main():
                 )
                 profiler.results.append(result_dense)
                 if result_dense.error:
-                    log(f"    dense:  ERROR - {result_dense.error}")
+                    logger.info(f"    dense:  ERROR - {result_dense.error}")
                 else:
-                    log(f"    dense:  {result_dense.time_per_step_ms:.1f}ms/step ({result_dense.timesteps} steps)")
+                    logger.info(f"    dense:  {result_dense.time_per_step_ms:.1f}ms/step ({result_dense.timesteps} steps)")
 
             # Run sparse
             if run_sparse:
@@ -406,30 +411,31 @@ def main():
                 )
                 profiler.results.append(result_sparse)
                 if result_sparse.error:
-                    log(f"    sparse: {result_sparse.error}")
+                    logger.info(f"    sparse: {result_sparse.error}")
                 else:
-                    log(f"    sparse: {result_sparse.time_per_step_ms:.1f}ms/step ({result_sparse.timesteps} steps)")
+                    logger.info(f"    sparse: {result_sparse.time_per_step_ms:.1f}ms/step ({result_sparse.timesteps} steps)")
 
-            log()
+            logger.info("")
 
     profiler.stop()
 
-    log("[Stage 4/4] Generating report...")
+    logger.info("[Stage 4/4] Generating report...")
     report = profiler.generate_report()
 
-    log()
-    log(report)
+    logger.info("")
+    # Print report directly (no memory prefix for multi-line report)
+    print(report)
 
     # Write to file
     report_path = Path(__file__).parent.parent / "profile_report.md"
     report_path.write_text(report)
-    log(f"Report written to: {report_path}")
+    logger.info(f"Report written to: {report_path}")
 
     # Write to GitHub step summary if available
     if 'GITHUB_STEP_SUMMARY' in os.environ:
         with open(os.environ['GITHUB_STEP_SUMMARY'], 'a') as f:
             f.write(report)
-        log("Report appended to GitHub step summary")
+        logger.info("Report appended to GitHub step summary")
 
     # JSON report
     json_report = {
@@ -458,19 +464,19 @@ def main():
 
     json_path = Path(__file__).parent.parent / "profile_report.json"
     json_path.write_text(json.dumps(json_report, indent=2))
-    log(f"JSON report written to: {json_path}")
+    logger.info(f"JSON report written to: {json_path}")
 
     if args.trace:
-        log()
-        log(f"Perfetto traces saved to: {args.trace_dir}")
-        log("To view traces:")
-        log("  1. Open https://ui.perfetto.dev/")
-        log(f"  2. Load trace files from: {args.trace_dir}")
+        logger.info("")
+        logger.info(f"Perfetto traces saved to: {args.trace_dir}")
+        logger.info("To view traces:")
+        logger.info("  1. Open https://ui.perfetto.dev/")
+        logger.info(f"  2. Load trace files from: {args.trace_dir}")
 
-    log()
-    log("=" * 70)
-    log("Profiling complete!")
-    log("=" * 70)
+    logger.info("")
+    logger.info("=" * 70)
+    logger.info("Profiling complete!")
+    logger.info("=" * 70)
 
 
 if __name__ == '__main__':

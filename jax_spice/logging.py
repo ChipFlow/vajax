@@ -2,7 +2,7 @@
 
 Provides two logging modes:
 - Default: WARNING level only (quiet)
-- Performance tracing: INFO level with flush (for Cloud Run visibility)
+- Performance tracing: INFO level with flush and memory stats (for Cloud Run visibility)
 
 Usage:
     from jax_spice.logging import logger, enable_performance_logging
@@ -13,11 +13,12 @@ Usage:
 
     # Enable for performance tracing (e.g., Cloud Run)
     enable_performance_logging()
-    logger.info("Now this shows and flushes immediately")
+    logger.info("Now this shows with memory stats and flushes immediately")
 """
 
 import logging
 import sys
+import tracemalloc
 
 # Create the jax_spice logger
 logger = logging.getLogger("jax_spice")
@@ -33,6 +34,31 @@ if not logger.handlers:
     logger.addHandler(_default_handler)
 
 
+def _get_memory_stats() -> str:
+    """Get GPU and CPU memory stats string."""
+    parts = []
+
+    # CPU memory via tracemalloc
+    if tracemalloc.is_tracing():
+        current, peak = tracemalloc.get_traced_memory()
+        parts.append(f"CPU:{current/1024/1024:.0f}MB")
+
+    # GPU memory via JAX
+    try:
+        import jax
+        for dev in jax.devices():
+            if dev.platform == 'gpu':
+                stats = dev.memory_stats()
+                if stats:
+                    current_mb = stats.get('bytes_in_use', 0) / 1024 / 1024
+                    parts.append(f"GPU:{current_mb:.0f}MB")
+                break  # Just first GPU
+    except Exception:
+        pass
+
+    return f"[{' '.join(parts)}]" if parts else ""
+
+
 class FlushingHandler(logging.StreamHandler):
     """StreamHandler that flushes after every emit (for Cloud Run log visibility)."""
 
@@ -41,11 +67,26 @@ class FlushingHandler(logging.StreamHandler):
         self.flush()
 
 
-def enable_performance_logging():
+class MemoryLoggingHandler(logging.StreamHandler):
+    """StreamHandler that prepends memory stats and flushes after every emit."""
+
+    def emit(self, record):
+        # Prepend memory stats to the message
+        mem_stats = _get_memory_stats()
+        if mem_stats:
+            record.msg = f"{mem_stats} {record.msg}"
+        super().emit(record)
+        self.flush()
+
+
+def enable_performance_logging(with_memory: bool = True):
     """Enable DEBUG level logging with immediate flush for performance tracing.
 
     Use this when running on Cloud Run or when you need to see logs
     in real-time during long-running operations.
+
+    Args:
+        with_memory: If True, prepend CPU/GPU memory stats to each log line.
     """
     logger.setLevel(logging.DEBUG)
 
@@ -53,8 +94,15 @@ def enable_performance_logging():
     for handler in logger.handlers[:]:
         logger.removeHandler(handler)
 
-    # Add flushing handler
-    handler = FlushingHandler(sys.stdout)
+    # Start tracemalloc for CPU memory tracking
+    if with_memory and not tracemalloc.is_tracing():
+        tracemalloc.start()
+
+    # Add appropriate handler
+    if with_memory:
+        handler = MemoryLoggingHandler(sys.stdout)
+    else:
+        handler = FlushingHandler(sys.stdout)
     handler.setLevel(logging.INFO)
     handler.setFormatter(logging.Formatter("%(message)s"))
     logger.addHandler(handler)
