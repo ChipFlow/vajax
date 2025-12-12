@@ -163,6 +163,8 @@ class GPUProfiler:
             if runner._has_openvaf_devices:
                 runner2._compiled_models = runner._compiled_models
 
+            log(f"_compiled_models = {runner2._compiled_models}")
+
             # Timed run (optionally with tracing)
             ctx = trace_ctx if trace_ctx else nullcontext()
             with ctx:
@@ -176,6 +178,9 @@ class GPUProfiler:
             actual_steps = len(times)
             time_per_step = (elapsed / actual_steps * 1000) if actual_steps > 0 else 0
 
+            solver='sparse' if use_sparse else 'dense',
+            log("Running benchmark... ({solver})")
+
             return BenchmarkResult(
                 name=name,
                 nodes=nodes,
@@ -184,7 +189,7 @@ class GPUProfiler:
                 timesteps=actual_steps,
                 total_time_s=elapsed,
                 time_per_step_ms=time_per_step,
-                solver='sparse' if use_sparse else 'dense',
+                solver=solver,
                 backend=backend,
                 converged=True,
             )
