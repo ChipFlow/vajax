@@ -891,7 +891,7 @@ class VACASKBenchmarkRunner:
 
     def run_transient(self, t_stop: Optional[float] = None, dt: Optional[float] = None,
                       max_steps: int = 10000, use_sparse: Optional[bool] = None,
-                      backend: Optional[str] = None) -> Tuple[jax.Array, Dict[int, jax.Array]]:
+                      backend: Optional[str] = None) -> Tuple[jax.Array, Dict[int, jax.Array], Dict]:
         """Run transient analysis.
 
         Uses the JIT-compiled solver for circuits with only simple devices.
@@ -907,7 +907,10 @@ class VACASKBenchmarkRunner:
                      For circuits >500 nodes with GPU available, uses GPU acceleration.
 
         Returns:
-            (times, voltages) tuple where voltages is dict mapping node index to voltage array
+            (times, voltages, stats) tuple where:
+            - times: array of time points
+            - voltages: dict mapping node index to voltage array
+            - stats: dict with convergence info (total_timesteps, non_converged_count, etc.)
         """
         from jax_spice.analysis.gpu_backend import select_backend, is_gpu_available
 
@@ -971,7 +974,7 @@ class VACASKBenchmarkRunner:
         if self.verbose:
             print(f"Completed: {len(times)} timesteps, {stats.get('iterations', 'N/A')} total NR iterations")
 
-        return times, voltages
+        return times, voltages, stats
 
     def _setup_internal_nodes(self) -> Tuple[int, Dict[str, Dict[str, int]]]:
         """Set up internal nodes for OpenVAF devices.
@@ -1014,7 +1017,7 @@ class VACASKBenchmarkRunner:
 
     def _run_transient_hybrid(self, t_stop: float, dt: float,
                                backend: str = "cpu",
-                               use_dense: bool = True) -> Tuple[jax.Array, Dict[int, jax.Array]]:
+                               use_dense: bool = True) -> Tuple[jax.Array, Dict[int, jax.Array], Dict]:
         """Run transient analysis with OpenVAF devices.
 
         This solver handles a mix of simple devices (resistor, capacitor, etc.)
@@ -1113,6 +1116,7 @@ class VACASKBenchmarkRunner:
 
         t = 0.0
         total_nr_iters = 0
+        non_converged_steps = []  # Track (time, max_residual) for non-converged steps
 
         while t <= t_stop:
             source_values = source_fn(t)
@@ -1226,8 +1230,10 @@ class VACASKBenchmarkRunner:
             V = V_iter
             total_nr_iters += nr_iter + 1
 
-            if not converged and self.verbose:
-                print(f"Warning: t={t:.2e}s did not converge (max_f={max_f:.2e})")
+            if not converged:
+                non_converged_steps.append((t, max_f))
+                if self.verbose:
+                    print(f"Warning: t={t:.2e}s did not converge (max_f={max_f:.2e})")
 
             # Record state
             times.append(t)
@@ -1237,10 +1243,21 @@ class VACASKBenchmarkRunner:
             V_prev = V
             t += dt
 
+        # Build stats dict
+        stats = {
+            'total_timesteps': len(times),
+            'total_nr_iterations': total_nr_iters,
+            'non_converged_count': len(non_converged_steps),
+            'non_converged_steps': non_converged_steps,
+            'convergence_rate': 1.0 - len(non_converged_steps) / max(len(times), 1),
+        }
+
         if self.verbose:
             print(f"Completed: {len(times)} timesteps, {total_nr_iters} total NR iterations")
+            if non_converged_steps:
+                print(f"  Non-converged: {len(non_converged_steps)} steps ({100*(1-stats['convergence_rate']):.1f}%)")
 
-        return jnp.array(times), {k: jnp.array(v) for k, v in voltages.items()}
+        return jnp.array(times), {k: jnp.array(v) for k, v in voltages.items()}, stats
 
     def _prepare_simple_devices_coo(
         self,
@@ -1631,342 +1648,8 @@ class VACASKBenchmarkRunner:
 
         return f, J
 
-    def _run_transient_hybrid_sparse(self, t_stop: float, dt: float,
-                                       backend: str = "cpu") -> Tuple[jax.Array, Dict[int, jax.Array]]:
-        """Run transient analysis with sparse matrix support for large circuits.
-
-        Uses pure JAX with matrix-free GMRES for efficient memory usage
-        with large circuits like c6288.
-
-        Args:
-            t_stop: Simulation stop time
-            dt: Time step
-            backend: 'gpu' or 'cpu' for device evaluation. GPU keeps OpenVAF
-                     evaluation arrays on GPU device for reduced transfer overhead.
-        """
-        from jax.scipy.sparse.linalg import gmres
-        from jax_spice.analysis.gpu_backend import get_device, get_default_dtype
-
-        ground = 0
-
-        # Get target device for JAX operations
-        device = get_device(backend)
-        dtype = get_default_dtype(backend)
-
-        # Set up internal nodes for OpenVAF devices
-        n_total, device_internal_nodes = self._setup_internal_nodes()
-        n_external = self.num_nodes
-        n_unknowns = n_total - 1
-
-        if self.verbose:
-            print(f"Total nodes: {n_total} ({n_external} external, {n_total - n_external} internal)")
-            print(f"Backend: {backend}, device: {device.platform}")
-
-        # Initialize voltages as JAX arrays for GPU compatibility
-        V = jnp.zeros(n_total, dtype=jnp.float64)
-        V_prev = jnp.zeros(n_total, dtype=jnp.float64)
-
-        # Build time-varying source function
-        source_fn = self._build_source_fn()
-
-        # Group devices
-        openvaf_by_type: Dict[str, List[Dict]] = {}
-        simple_devices = []
-        for dev in self.devices:
-            if dev.get('is_openvaf'):
-                model_type = dev['model']
-                if model_type not in openvaf_by_type:
-                    openvaf_by_type[model_type] = []
-                openvaf_by_type[model_type].append(dev)
-            else:
-                simple_devices.append(dev)
-
-        if self.verbose:
-            print(f"Using matrix-free GMRES solver ({n_unknowns} unknowns)")
-
-        # Get cached JIT-compiled vmapped functions and prepare static inputs
-        vmapped_fns: Dict[str, Callable] = {}
-        static_inputs_cache: Dict[str, Tuple[Any, List[int], List[Dict]]] = {}
-        for model_type in openvaf_by_type:
-            compiled = self._compiled_models.get(model_type)
-            if compiled and 'vmapped_fn' in compiled:
-                vmapped_fns[model_type] = compiled['vmapped_fn']
-                static_inputs, voltage_indices, device_contexts = self._prepare_static_inputs(
-                    model_type, openvaf_by_type[model_type], device_internal_nodes, ground
-                )
-                # For GPU backend, keep static inputs as JAX array on device
-                if backend == "gpu":
-                    with jax.default_device(device):
-                        static_inputs = jnp.array(static_inputs, dtype=dtype)
-                static_inputs_cache[model_type] = (static_inputs, voltage_indices, device_contexts)
-                if self.verbose:
-                    n_devs = len(openvaf_by_type[model_type])
-                    print(f"Using JIT-compiled vmapped function for {model_type} ({n_devs} devices)")
-
-        def build_residual(V_curr: jax.Array, V_prev_step: jax.Array,
-                           source_values: Dict) -> jax.Array:
-            """Build residual vector using JAX arrays."""
-            f = jnp.zeros(n_unknowns, dtype=jnp.float64)
-
-            # Stamp simple devices
-            for dev in simple_devices:
-                f = self._stamp_simple_device_jax(dev, V_curr, V_prev_step, dt, f, ground, source_values)
-
-            # Stamp OpenVAF devices
-            for model_type, devices in openvaf_by_type.items():
-                if model_type in vmapped_fns and model_type in static_inputs_cache:
-                    static_inputs, voltage_indices, device_contexts = static_inputs_cache[model_type]
-
-                    # Update voltage inputs
-                    if backend == "gpu":
-                        batch_inputs = self._update_voltage_inputs_jax_gpu(
-                            static_inputs, voltage_indices, device_contexts, V_curr,
-                            device, dtype
-                        )
-                    else:
-                        batch_inputs = self._update_voltage_inputs_jax(
-                            static_inputs, voltage_indices, device_contexts, V_curr
-                        )
-
-                    # Evaluate all devices in parallel
-                    batch_residuals, _ = vmapped_fns[model_type](batch_inputs)
-
-                    # Stamp residuals
-                    f = self._stamp_residuals_jax(
-                        model_type, batch_residuals, device_contexts, f, ground
-                    )
-
-            return f
-
-        # Time stepping
-        times = []
-        voltages = {i: [] for i in range(n_external)}
-
-        t = 0.0
-        total_nr_iters = 0
-
-        while t <= t_stop:
-            source_values = source_fn(t)
-
-            converged = False
-            V_iter = V
-
-            for nr_iter in range(100):
-                # Compute residual
-                f = build_residual(V_iter, V_prev, source_values)
-                max_f = float(jnp.max(jnp.abs(f)))
-
-                if max_f < 1e-9:
-                    converged = True
-                    break
-
-                # Matrix-free GMRES: solve J @ delta = -f
-                # where J @ v is computed via jvp of residual
-                def matvec(v: jax.Array) -> jax.Array:
-                    # Pad v to include ground node (which doesn't change)
-                    v_padded = jnp.concatenate([jnp.array([0.0], dtype=v.dtype), v])
-                    # Compute Jacobian-vector product via forward-mode AD
-                    _, jvp_result = jax.jvp(
-                        lambda x: build_residual(x, V_prev, source_values),
-                        (V_iter,),
-                        (v_padded,)
-                    )
-                    return jvp_result
-
-                # Solve with GMRES
-                delta, info = gmres(matvec, -f, tol=1e-6, maxiter=100)
-
-                # Limit voltage step for stability
-                max_delta = float(jnp.max(jnp.abs(delta)))
-                if max_delta > 1.0:
-                    delta = delta * (1.0 / max_delta)
-
-                # Update voltages (ground at index 0 stays fixed)
-                V_iter = V_iter.at[1:].add(delta)
-
-                if max_delta < 1e-12:
-                    converged = True
-                    break
-
-            V = V_iter
-            total_nr_iters += nr_iter + 1
-
-            if not converged and self.verbose:
-                print(f"Warning: t={t:.2e}s did not converge (max_f={max_f:.2e})")
-
-            # Record state (only external nodes)
-            times.append(t)
-            for i in range(n_external):
-                voltages[i].append(float(V[i]))
-
-            V_prev = V
-            t += dt
-
-        if self.verbose:
-            print(f"Completed: {len(times)} timesteps, {total_nr_iters} total NR iterations")
-
-        return jnp.array(times), {k: jnp.array(v) for k, v in voltages.items()}
-
-    def _stamp_simple_device_jax(self, dev: Dict, V: jax.Array, V_prev: jax.Array,
-                                  dt: float, f: jax.Array, ground: int,
-                                  source_values: Dict) -> jax.Array:
-        """Stamp a simple device into residual vector (JAX version)."""
-        model = dev['model']
-        nodes = dev['nodes']
-        params = dev['params']
-
-        if model == 'vsource':
-            if dev['name'] in source_values:
-                V_target = source_values[dev['name']]
-            else:
-                V_target = params.get('dc', 0)
-
-            np_idx, nn_idx = nodes[0], nodes[1]
-            G = 1e12
-            I = G * (V[np_idx] - V[nn_idx] - V_target)
-
-            if np_idx != ground:
-                f = f.at[np_idx - 1].add(I)
-            if nn_idx != ground:
-                f = f.at[nn_idx - 1].add(-I)
-
-        elif model == 'isource':
-            if dev['name'] in source_values:
-                I_val = source_values[dev['name']]
-            else:
-                I_val = params.get('dc', 0)
-
-            np_idx, nn_idx = nodes[0], nodes[1]
-            if np_idx != ground:
-                f = f.at[np_idx - 1].add(-I_val)
-            if nn_idx != ground:
-                f = f.at[nn_idx - 1].add(I_val)
-
-        elif model == 'resistor':
-            R = params.get('r', 1e3)
-            G = 1.0 / R
-            np_idx, nn_idx = nodes[0], nodes[1]
-            I = G * (V[np_idx] - V[nn_idx])
-
-            if np_idx != ground:
-                f = f.at[np_idx - 1].add(I)
-            if nn_idx != ground:
-                f = f.at[nn_idx - 1].add(-I)
-
-        elif model == 'capacitor':
-            C = params.get('c', 1e-12)
-            np_idx, nn_idx = nodes[0], nodes[1]
-            G_eq = C / dt
-            I_eq = G_eq * (V_prev[np_idx] - V_prev[nn_idx])
-            I = G_eq * (V[np_idx] - V[nn_idx]) - I_eq
-
-            if np_idx != ground:
-                f = f.at[np_idx - 1].add(I)
-            if nn_idx != ground:
-                f = f.at[nn_idx - 1].add(-I)
-
-        elif model == 'diode':
-            np_idx, nn_idx = nodes[0], nodes[1]
-            Is = params.get('is', 1e-14)
-            n = params.get('n', 1.0)
-            Vt = 0.0258
-            nVt = n * Vt
-
-            Vd = V[np_idx] - V[nn_idx]
-
-            # Diode current with limiting (JAX-compatible)
-            Vd_norm = Vd / nVt
-            exp_40 = jnp.exp(40.0)
-
-            # Use jax.lax.cond for JIT compatibility
-            I = jax.lax.cond(
-                Vd_norm > 40,
-                lambda: Is * (exp_40 + exp_40 * (Vd_norm - 40) - 1),
-                lambda: jax.lax.cond(
-                    Vd_norm < -40,
-                    lambda: -Is,
-                    lambda: Is * (jnp.exp(Vd_norm) - 1)
-                )
-            )
-
-            if np_idx != ground:
-                f = f.at[np_idx - 1].add(I)
-            if nn_idx != ground:
-                f = f.at[nn_idx - 1].add(-I)
-
-        return f
-
-    def _update_voltage_inputs_jax(self, static_inputs: jax.Array,
-                                    voltage_indices: List[int],
-                                    device_contexts: List[Dict],
-                                    V: jax.Array) -> jax.Array:
-        """Update voltage parameters using JAX arrays (CPU path)."""
-        inputs = static_inputs  # Already JAX array
-
-        for dev_idx, ctx in enumerate(device_contexts):
-            voltage_node_pairs = ctx['voltage_node_pairs']
-            for i, (n1, n2) in enumerate(voltage_node_pairs):
-                v1 = jax.lax.cond(n1 < len(V), lambda: V[n1], lambda: 0.0)
-                v2 = jax.lax.cond(n2 < len(V), lambda: V[n2], lambda: 0.0)
-                inputs = inputs.at[dev_idx, voltage_indices[i]].set(v1 - v2)
-
-        return inputs
-
-    def _update_voltage_inputs_jax_gpu(self, static_inputs: jax.Array,
-                                        voltage_indices: List[int],
-                                        device_contexts: List[Dict],
-                                        V: jax.Array,
-                                        device: Any, dtype: Any) -> jax.Array:
-        """Update voltage parameters using JAX arrays (GPU path)."""
-        n_devices = len(device_contexts)
-        n_voltages = len(voltage_indices)
-
-        # Build voltage updates as JAX array
-        voltage_updates = jnp.zeros((n_devices, n_voltages), dtype=dtype)
-
-        for dev_idx, ctx in enumerate(device_contexts):
-            voltage_node_pairs = ctx['voltage_node_pairs']
-            for i, (n1, n2) in enumerate(voltage_node_pairs):
-                v1 = jax.lax.cond(n1 < len(V), lambda: V[n1], lambda: 0.0)
-                v2 = jax.lax.cond(n2 < len(V), lambda: V[n2], lambda: 0.0)
-                voltage_updates = voltage_updates.at[dev_idx, i].set(v1 - v2)
-
-        # Update voltage columns
-        inputs = static_inputs
-        for i, vid in enumerate(voltage_indices):
-            inputs = inputs.at[:, vid].set(voltage_updates[:, i])
-
-        return inputs
-
-    def _stamp_residuals_jax(self, model_type: str, batch_residuals: jax.Array,
-                              device_contexts: List[Dict], f: jax.Array,
-                              ground: int) -> jax.Array:
-        """Stamp batched residuals into f vector (JAX version)."""
-        compiled = self._compiled_models.get(model_type)
-        if not compiled:
-            return f
-
-        metadata = compiled['array_metadata']
-        node_names = metadata['node_names']
-
-        for dev_idx, ctx in enumerate(device_contexts):
-            node_map = ctx['node_map']
-
-            for res_idx, node_name in enumerate(node_names):
-                if node_name.startswith('sim_'):
-                    model_node = node_name[4:]
-                else:
-                    model_node = node_name
-
-                node_idx = node_map.get(model_node, node_map.get(node_name, None))
-                if node_idx is None or node_idx == ground:
-                    continue
-
-                resist = float(batch_residuals[dev_idx, res_idx])
-                if not jnp.isnan(resist) and node_idx > 0 and node_idx - 1 < len(f):
-                    f = f.at[node_idx - 1].add(resist)
-
-        return f
+    # NOTE: GMRES sparse path (_run_transient_hybrid_sparse) removed
+    # Use BCOO/BCSR + spsolve via _run_transient_hybrid(use_dense=False) instead
 
     def _compute_voltage_param(self, name: str, V: jax.Array,
                                 node_map: Dict[str, int],
