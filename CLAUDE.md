@@ -5,6 +5,12 @@
 **CRITICAL**: This is a JAX-native circuit simulator. All numerical code MUST use JAX, not numpy or scipy.
 **CRITICAL**: All functionality should be optimised to run as much on GPU as possible, minimising CPU to GPU context switching and data transfer
 
+You should try to minimise the code base size:
+
+ * Avoid duplication
+ * Where possible unify critical paths.
+ * Regularly check for duplications of code and look for any opportunities to minimise the code base without impacting the tested functionality. Conform with the user.
+
 ### Forbidden Patterns
 
 Do NOT use these:
@@ -35,20 +41,13 @@ jnp.array([1, 2, 3])
 jnp.zeros(n)
 jax.scipy.linalg.solve(A, b)
 
-# REQUIRED - JAX sparse
-from jax.experimental.sparse import BCOO
+# REQUIRED - JAX sparse (BCOO/BCSR formats)
+from jax.experimental.sparse import BCOO, BCSR
 from jax.experimental.sparse.linalg import spsolve
 
 # REQUIRED - JAX linear algebra
 jax.scipy.linalg.inv(A)
 jax.scipy.linalg.lstsq(A, b)
-
-# REQUIRED - Matrix-free GMRES (for large sparse systems)
-from jax.scipy.sparse.linalg import gmres
-def matvec(v):
-    _, jvp = jax.jvp(residual_fn, (x,), (v,))
-    return jvp
-delta, info = gmres(matvec, -f, tol=1e-6)
 ```
 
 ### Why Pure JAX?
@@ -60,24 +59,26 @@ delta, info = gmres(matvec, -f, tol=1e-6)
 
 ### Sparse Solver Strategy
 
-For large circuits (>1000 nodes), use matrix-free Newton-Raphson with GMRES:
+The simulator supports two solver modes:
+
+1. **Dense solver** (default): Uses `jax.scipy.linalg.solve()` for small-medium circuits
+2. **Sparse solver**: Uses BCOO/BCSR + `spsolve` for large circuits (>1000 nodes)
+
+For large circuits, use sparse mode with `use_sparse=True`:
 
 ```python
-def newton_step_sparse(residual_fn, V, tol=1e-6):
-    """Sparse Newton step using matrix-free GMRES."""
-    from jax.scipy.sparse.linalg import gmres
+from jax.experimental.sparse import BCOO, BCSR
+from jax.experimental.sparse.linalg import spsolve
 
-    f = residual_fn(V)
+# Build Jacobian as BCOO, convert to BCSR for solving
+J_bcoo = BCOO((j_data, jnp.stack([j_rows, j_cols], axis=1)), shape=(n, n))
+J_bcsr = BCSR.from_bcoo(J_bcoo)
 
-    def matvec(v):
-        # Jacobian-vector product via forward-mode AD
-        v_padded = jnp.concatenate([jnp.array([0.0]), v])
-        _, jvp = jax.jvp(residual_fn, (V,), (v_padded,))
-        return jvp
-
-    delta, info = gmres(matvec, -f, tol=tol)
-    return V.at[1:].add(delta)
+# Solve J @ delta = -f using sparse direct solver
+delta = spsolve(J_bcsr.data, J_bcsr.indices, J_bcsr.indptr, -f, (n, n))
 ```
+
+Note: c6288 benchmark (~86k nodes) requires sparse mode as dense would need ~56GB memory.
 
 ## Test Commands
 
@@ -91,8 +92,12 @@ JAX_PLATFORMS=cpu uv run pytest tests/test_vacask_suite.py -v
 # Run openvaf-py tests
 cd openvaf-py && JAX_PLATFORMS=cpu ../.venv/bin/python -m pytest tests/ -v
 
-# Profile GPU performance
-uv run python scripts/profile_gpu.py --benchmark ring
+# Run and profile GPU tests on non-CUDA systems (e.g. Apple silicon)
+uv run scripts/profile_gpu_cloudrun.py --benchmark ring,c6288
+
+# Profile GPU performance on CUDA systems
+uv run python scripts/profile_gpu.py --benchmark ring,c6288
+
 ```
 
 Note: `jax_enable_x64` is set automatically on import via `jax_spice/__init__.py`.
@@ -114,6 +119,19 @@ jax_spice/devices/
 jax_spice/benchmarks/
 └── runner.py          # VACASK benchmark runner
 ```
+
+## Device Routing
+
+All devices are routed through OpenVAF except voltage/current sources:
+
+- **OpenVAF path**: resistor, capacitor, diode, psp103, and other VA models
+  - Batched evaluation via `vmap` for GPU efficiency
+  - VA models from `vendor/VACASK/devices/` (resistor.va, capacitor.va, diode.va)
+  - Complex models from `openvaf-py/vendor/OpenVAF/integration_tests/` (PSP103)
+
+- **Source path**: vsource, isource only
+  - Time-varying behavior (pulse, sine, DC)
+  - Handled separately with vectorized stamping
 
 ## Migration Status: COMPLETE
 
