@@ -16,12 +16,15 @@ Where J is the Jacobian (partial derivatives of residual w.r.t. voltages).
 """
 
 from dataclasses import dataclass, field
-from typing import Dict, List, Tuple, Optional, Callable, Any
+from typing import Dict, List, Tuple, Optional, Callable, Any, Union
 from enum import Enum
 import jax
 import jax.numpy as jnp
 from jax import Array
 import numpy as np
+
+# Type that accepts both JAX and numpy arrays
+ArrayLike = Union[Array, np.ndarray]
 
 from jax_spice.netlist.circuit import Circuit, Instance, Model
 from jax_spice.analysis.context import AnalysisContext
@@ -316,7 +319,7 @@ class MNASystem:
         self,
         voltages: Array,
         context: AnalysisContext
-    ) -> Tuple[Tuple[np.ndarray, np.ndarray, np.ndarray, Tuple[int, int]], np.ndarray]:
+    ) -> Tuple[Tuple[ArrayLike, ArrayLike, ArrayLike, Tuple[int, int]], ArrayLike]:
         """Build Jacobian matrix and residual vector in sparse CSR format
 
         This is more memory-efficient for large circuits. Uses COO accumulation
@@ -399,7 +402,7 @@ class MNASystem:
         self,
         voltages: Array,
         context: AnalysisContext
-    ) -> Tuple[Tuple[np.ndarray, np.ndarray, np.ndarray, Tuple[int, int]], np.ndarray]:
+    ) -> Tuple[Tuple[ArrayLike, ArrayLike, ArrayLike, Tuple[int, int]], ArrayLike]:
         """Build Jacobian matrix and residual using vectorized device evaluation
 
         GPU-friendly version that evaluates all devices of the same type in parallel

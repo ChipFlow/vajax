@@ -88,17 +88,19 @@ jobs:
           uv sync
           uv run maturin develop --release
 
-      - name: Install jax-spice
-        run: uv sync
+      - name: Install jax-spice with dev dependencies
+        run: uv sync --extra dev
 
-      - name: Run jax-spice tests
+      - name: Run jax-spice tests (with jaxtyping runtime checks)
         env:
           JAX_PLATFORMS: cpu
-          JAX_ENABLE_X64: "1"
         run: uv run pytest tests/test_vacask_suite.py tests/test_vacask_jax.py -v --tb=short
 
       - name: Run benchmark tests
         env:
           JAX_PLATFORMS: cpu
-          JAX_ENABLE_X64: "1"
         run: uv run pytest benchmarks/test_benchmarks.py -v --tb=short
+
+      - name: Run type checker
+        continue-on-error: true
+        run: uv run pyright jax_spice/

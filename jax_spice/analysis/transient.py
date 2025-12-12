@@ -17,13 +17,22 @@ Backward Euler formulation:
         I_eq = -C * V_{n-1} / h
 """
 
-from typing import Dict, List, Optional, Tuple, Callable, NamedTuple
+from typing import Dict, List, Optional, Tuple, Callable, NamedTuple, Union
 from functools import partial
 import jax
 import jax.numpy as jnp
 from jax import Array
 from jax.scipy.linalg import solve
 import jax.lax as lax
+from jaxtyping import Float, Int, Num
+
+from jaxtyping import Bool
+
+# Scalar types - use Array[""] for scalar arrays
+# These are used in JIT-compiled functions where Python primitives become traced arrays
+Scalar = Num[Array, ""]
+IntScalar = Num[Array, ""]
+BoolScalar = Bool[Array, ""]
 
 from jax_spice.analysis.mna import MNASystem
 from jax_spice.analysis.context import AnalysisContext
@@ -122,12 +131,12 @@ def _stamp_device(
     residual: Array,
     V_curr: Array,
     V_prev: Array,
-    node_p: int,
-    node_n: int,
-    device_type: int,
+    node_p: IntScalar,
+    node_n: IntScalar,
+    device_type: IntScalar,
     params: Array,
-    dt: float,
-    ground_node: int,
+    dt: Scalar,
+    ground_node: IntScalar,
 ) -> Tuple[Array, Array]:
     """Stamp a single device into Jacobian and residual
 
@@ -277,7 +286,7 @@ def _build_system_jit(
     circuit: CircuitData,
     V_curr: Array,
     V_prev: Array,
-    dt: float,
+    dt: Scalar,
     dtype,
 ) -> Tuple[Array, Array]:
     """Build Jacobian and residual using JIT-compatible operations
@@ -327,10 +336,10 @@ def _newton_step(
     circuit: CircuitData,
     V_iter: Array,
     V_prev: Array,
-    dt: float,
-    abstol: float,
-    reltol: float,
-) -> Tuple[Array, bool, float]:
+    dt: Scalar,
+    abstol: Scalar,
+    reltol: Scalar,
+) -> Tuple[Array, BoolScalar, Scalar]:
     """Perform one Newton-Raphson iteration
 
     Args:
@@ -372,11 +381,11 @@ def _newton_solve(
     circuit: CircuitData,
     V_init: Array,
     V_prev: Array,
-    dt: float,
-    max_iterations: int,
-    abstol: float,
-    reltol: float,
-) -> Tuple[Array, int, float]:
+    dt: Scalar,
+    max_iterations: IntScalar,
+    abstol: Scalar,
+    reltol: Scalar,
+) -> Tuple[Array, IntScalar, Scalar]:
     """Solve one timestep using Newton-Raphson with jax.lax.while_loop
 
     Args:
@@ -442,11 +451,11 @@ def _timestep_fn(carry, t_idx):
 def _run_simulation_jit(
     circuit: CircuitData,
     V0: Array,
-    dt: float,
+    dt: Scalar,
     num_timesteps: int,
     max_iterations: int,
-    abstol: float,
-    reltol: float,
+    abstol: Scalar,
+    reltol: Scalar,
 ) -> Array:
     """JIT-compiled simulation loop using jax.lax.scan
 
@@ -642,7 +651,7 @@ def transient_analysis_vectorized(
             from jax.scipy.sparse.linalg import gmres
 
             @jax.jit
-            def newton_timestep(V_prev: Array, dt: float) -> Array:
+            def newton_timestep(V_prev: Array, dt: Scalar) -> Array:
                 """Solve one timestep using Newton-Raphson with GMRES."""
                 V = V_prev  # Initial guess is previous solution
 
@@ -703,7 +712,7 @@ def transient_analysis_vectorized(
         else:
             # Dense Newton (original implementation)
             @jax.jit
-            def newton_timestep(V_prev: Array, dt: float) -> Array:
+            def newton_timestep(V_prev: Array, dt: Scalar) -> Array:
                 """Solve one timestep using Newton-Raphson."""
                 V = V_prev  # Initial guess is previous solution
 

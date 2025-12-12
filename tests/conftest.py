@@ -4,6 +4,8 @@ Handles platform-specific JAX configuration:
 - macOS: Forces CPU backend since Metal doesn't support triangular_solve
 - Linux with CUDA: Preloads CUDA libraries to help JAX discover them
 
+Enables jaxtyping runtime checks with beartype for array shape validation.
+
 Uses pytest_configure hook to ensure CUDA setup happens before any test imports.
 """
 
@@ -32,6 +34,16 @@ def _setup_cuda_libraries():
             pass  # Some libraries may not be available
 
 
+def _setup_jaxtyping():
+    """Enable jaxtyping runtime checking with beartype."""
+    try:
+        from jaxtyping import install_import_hook
+        # Enable runtime type checking for jax_spice modules
+        install_import_hook("jax_spice", "beartype.beartype")
+    except ImportError:
+        pass  # beartype not installed, skip runtime checking
+
+
 def pytest_configure(config):
     """
     Pytest hook that runs before test collection.
@@ -46,6 +58,9 @@ def pytest_configure(config):
     elif sys.platform == 'linux' and os.environ.get('JAX_PLATFORMS', '').startswith('cuda'):
         # Linux with CUDA: Preload CUDA libraries before JAX import
         _setup_cuda_libraries()
+
+    # Enable jaxtyping runtime checking (must be before jax_spice imports)
+    _setup_jaxtyping()
 
     # Import JAX and configure it
     import jax

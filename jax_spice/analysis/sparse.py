@@ -16,11 +16,15 @@ IMPORTANT: This module uses pure JAX - no numpy or scipy allowed.
 See CLAUDE.md for coding guidelines.
 """
 
-from typing import Tuple
+from typing import Tuple, Union
+import numpy as np
 import jax
 import jax.numpy as jnp
 from jax import Array
 from jax.experimental.sparse.linalg import spsolve as jax_spsolve
+
+# ArrayLike accepts both numpy and JAX arrays (will be converted to JAX)
+ArrayLike = Union[Array, np.ndarray]
 
 
 def sparse_solve_csr(
@@ -55,9 +59,9 @@ def sparse_solve_csr(
 
 
 def build_csr_arrays(
-    rows: Array,
-    cols: Array,
-    values: Array,
+    rows: ArrayLike,
+    cols: ArrayLike,
+    values: ArrayLike,
     shape: Tuple[int, int],
 ) -> Tuple[Array, Array, Array]:
     """Convert COO triplets to CSR format arrays using pure JAX.

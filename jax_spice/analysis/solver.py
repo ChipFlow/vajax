@@ -12,7 +12,13 @@ from typing import Any, Callable, Dict, NamedTuple, Tuple
 
 import jax
 import jax.numpy as jnp
-from jax import lax
+from jax import lax, Array
+from jaxtyping import Num, Bool
+
+# Scalar types for JIT-traced values
+Scalar = Num[Array, ""]
+IntScalar = Num[Array, ""]
+BoolScalar = Bool[Array, ""]
 
 
 class NRConfig(NamedTuple):
@@ -107,7 +113,7 @@ def _newton_loop(
     reltol: float,
     damping: float,
     max_step: float,
-) -> Tuple[jax.Array, int, bool, float]:
+) -> Tuple[jax.Array, IntScalar, BoolScalar, Scalar]:
     """JIT-compiled Newton-Raphson iteration using lax.while_loop.
 
     This function runs entirely on device with no host-device transfers
@@ -218,7 +224,7 @@ def _newton_loop_system(
     reltol: float,
     damping: float,
     max_step: float,
-) -> Tuple[jax.Array, int, bool, float]:
+) -> Tuple[jax.Array, IntScalar, BoolScalar, Scalar]:
     """JIT-compiled Newton loop using combined system builder."""
     init_state = (V_init, 0, False, jnp.array(jnp.inf))
 
@@ -315,7 +321,7 @@ def _newton_loop_parameterized(
     reltol: float,
     damping: float,
     max_step: float,
-) -> Tuple[jax.Array, jax.Array, jax.Array, jax.Array]:
+) -> Tuple[jax.Array, IntScalar, BoolScalar, Scalar]:
     """JIT-compatible Newton loop for parameterized residuals.
 
     Returns raw JAX arrays, no Python type conversion, safe for lax.scan.

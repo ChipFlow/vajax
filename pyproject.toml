@@ -35,6 +35,7 @@ dev = [
     "pytest-cov",
     "ruff",
     "pyright",
+    "beartype>=0.18.0",
 ]
 
 [build-system]
@@ -63,3 +64,18 @@ select = ["E", "F", "I", "N", "W"]
 [tool.pyright]
 pythonVersion = "3.11"
 typeCheckingMode = "basic"
+reportMissingImports = "warning"
+reportAttributeAccessIssue = "warning"
+reportArgumentType = "warning"
+reportReturnType = "warning"
+reportOptionalMemberAccess = "warning"
+reportOptionalCall = "warning"
+reportInvalidTypeForm = "warning"
+reportOperatorIssue = "warning"
+reportOptionalOperand = "warning"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+filterwarnings = [
+    "ignore::DeprecationWarning",
+]

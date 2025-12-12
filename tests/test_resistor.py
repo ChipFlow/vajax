@@ -186,11 +186,11 @@ class TestResistorParameterSweep:
             if kind == 'voltage':
                 voltages[name] = V
 
-        resistances = [100, 1000, 10000, 100000]
+        resistances = [100.0, 1000.0, 10000.0, 100000.0]
         currents = []
 
         for R in resistances:
-            res, _ = resistor_model.eval(voltages=voltages, params={'R': R})
+            res, _ = resistor_model.eval(voltages=voltages, params={'R': float(R)})
             # Get current from node0 (positive direction)
             I = float(res['sim_node0']['resist'])
             currents.append(I)
