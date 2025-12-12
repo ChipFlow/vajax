@@ -118,6 +118,11 @@ class VACASKBenchmarkRunner:
     def parse(self):
         """Parse the sim file and extract circuit information."""
         import time
+        import sys
+
+        if self.verbose:
+            print(f"parse(): starting...", flush=True)
+            sys.stdout.flush()
 
         t0 = time.perf_counter()
         parser = VACASKParser()
@@ -125,17 +130,19 @@ class VACASKBenchmarkRunner:
         t1 = time.perf_counter()
 
         if self.verbose:
-            print(f"Parsed: {self.circuit.title} ({t1-t0:.1f}s)")
-            print(f"Models: {list(self.circuit.models.keys())}")
+            print(f"Parsed: {self.circuit.title} ({t1-t0:.1f}s)", flush=True)
+            print(f"Models: {list(self.circuit.models.keys())}", flush=True)
             if self.circuit.subckts:
-                print(f"Subcircuits: {list(self.circuit.subckts.keys())}")
+                print(f"Subcircuits: {list(self.circuit.subckts.keys())}", flush=True)
 
         # Flatten subcircuit instances to leaf devices
+        if self.verbose:
+            print(f"Flattening subcircuit instances...", flush=True)
         self.flat_instances = self._flatten_top_instances()
         t2 = time.perf_counter()
 
         if self.verbose:
-            print(f"Flattened: {len(self.flat_instances)} leaf devices ({t2-t1:.1f}s)")
+            print(f"Flattened: {len(self.flat_instances)} leaf devices ({t2-t1:.1f}s)", flush=True)
             for name, terms, model, params in self.flat_instances[:10]:
                 print(f"  {name}: {model} {terms}")
             if len(self.flat_instances) > 10:
@@ -154,14 +161,14 @@ class VACASKBenchmarkRunner:
         t3 = time.perf_counter()
 
         if self.verbose:
-            print(f"Node mapping: {self.num_nodes} nodes ({t3-t2:.1f}s)")
+            print(f"Node mapping: {self.num_nodes} nodes ({t3-t2:.1f}s)", flush=True)
 
         # Build devices
         self._build_devices()
         t4 = time.perf_counter()
 
         if self.verbose:
-            print(f"Built devices: {len(self.devices)} ({t4-t3:.1f}s)")
+            print(f"Built devices: {len(self.devices)} ({t4-t3:.1f}s)", flush=True)
 
         # Extract analysis parameters
         self._extract_analysis_params()
@@ -330,6 +337,14 @@ class VACASKBenchmarkRunner:
 
     def _build_devices(self):
         """Build device list from flattened instances."""
+        import time
+        import sys
+        t_start = time.perf_counter()
+
+        if self.verbose:
+            print(f"_build_devices(): starting with {len(self.flat_instances)} instances", flush=True)
+            sys.stdout.flush()
+
         self.devices = []
 
         # Parameters that should be kept as strings (not parsed as numbers)
@@ -369,7 +384,10 @@ class VACASKBenchmarkRunner:
             if is_openvaf:
                 self._has_openvaf_devices = True
 
+        t_loop = time.perf_counter()
         if self.verbose:
+            print(f"_build_devices(): loop done in {t_loop - t_start:.1f}s", flush=True)
+            sys.stdout.flush()
             print(f"Devices: {len(self.devices)}")
             for dev in self.devices[:10]:
                 print(f"  {dev['name']}: {dev['model']} nodes={dev['nodes']}")
