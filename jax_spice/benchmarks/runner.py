@@ -535,10 +535,13 @@ class VACASKBenchmarkRunner:
             if kind == 'voltage':
                 voltage_indices.append(i)
 
-        all_inputs = []
+        # Pre-allocate numpy array to avoid 20x memory overhead from jnp.array(nested_list)
+        n_devices = len(openvaf_devices)
+        n_params = len(param_names)
+        all_inputs = np.zeros((n_devices, n_params), dtype=np.float64)
         device_contexts = []
 
-        for dev in openvaf_devices:
+        for dev_idx, dev in enumerate(openvaf_devices):
             ext_nodes = dev['nodes']  # [d, g, s, b]
             params = dev['params']
             internal_nodes = device_internal_nodes.get(dev['name'], {})
@@ -566,31 +569,25 @@ class VACASKBenchmarkRunner:
                 node_pair = self._parse_voltage_param(name, node_map, model_nodes, ground)
                 voltage_node_pairs.append(node_pair)
 
-            # Build input array for this device (static params only, voltages set to 0)
-            inputs = []
-            for name, kind in zip(param_names, param_kinds):
+            # Fill input array for this device (static params only, voltages stay 0)
+            for param_idx, (name, kind) in enumerate(zip(param_names, param_kinds)):
                 if kind == 'voltage':
-                    inputs.append(0.0)  # Will be updated dynamically
+                    pass  # Already 0 from np.zeros
                 elif kind == 'param':
                     param_lower = name.lower()
                     if param_lower in params:
-                        inputs.append(float(params[param_lower]))
+                        all_inputs[dev_idx, param_idx] = float(params[param_lower])
                     elif name in params:
-                        inputs.append(float(params[name]))
+                        all_inputs[dev_idx, param_idx] = float(params[name])
                     elif 'temperature' in param_lower or name == '$temperature':
-                        inputs.append(300.15)
+                        all_inputs[dev_idx, param_idx] = 300.15
                     elif param_lower in ('tnom', 'tref', 'tr'):
-                        inputs.append(300.0)
+                        all_inputs[dev_idx, param_idx] = 300.0
                     elif param_lower == 'mfactor':
-                        inputs.append(params.get('mfactor', 1.0))
+                        all_inputs[dev_idx, param_idx] = params.get('mfactor', 1.0)
                     else:
-                        inputs.append(1.0)
-                elif kind == 'hidden_state':
-                    inputs.append(0.0)
-                else:
-                    inputs.append(0.0)
-
-            all_inputs.append(inputs)
+                        all_inputs[dev_idx, param_idx] = 1.0
+                # hidden_state and others stay 0 from np.zeros
             device_contexts.append({
                 'name': dev['name'],
                 'node_map': node_map,
@@ -598,7 +595,7 @@ class VACASKBenchmarkRunner:
                 'voltage_node_pairs': voltage_node_pairs,
             })
 
-        return jnp.array(all_inputs), voltage_indices, device_contexts
+        return jnp.asarray(all_inputs), voltage_indices, device_contexts
 
     def _build_stamp_index_mapping(
         self,
