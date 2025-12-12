@@ -29,6 +29,12 @@ from contextlib import nullcontext
 # Ensure jax-spice is importable
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
+# Configure JAX memory allocation BEFORE importing JAX
+# Disable preallocation to avoid grabbing all GPU memory at startup
+os.environ.setdefault('XLA_PYTHON_CLIENT_PREALLOCATE', 'false')
+# Use memory growth instead of fixed allocation
+os.environ.setdefault('XLA_PYTHON_CLIENT_ALLOCATOR', 'platform')
+
 import jax
 import jax.numpy as jnp
 import numpy as np
