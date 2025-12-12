@@ -165,6 +165,12 @@ class OpenVAFToJAX:
 
     def _generate_code(self) -> List[str]:
         """Generate the JAX function code"""
+        import sys
+        import time
+        t0 = time.perf_counter()
+        print("      _generate_code: starting...", flush=True)
+        sys.stdout.flush()
+
         lines = []
         lines.append("def device_eval(inputs):")
         lines.append("    import jax.numpy as jnp")
@@ -206,6 +212,9 @@ class OpenVAFToJAX:
             lines.append("    v3 = 0.0")
 
         lines.append("")
+
+        print(f"      _generate_code: constants done ({len(lines)} lines)", flush=True)
+        sys.stdout.flush()
 
         # Map function parameters to inputs
         # Named eval params from user inputs, derivative selectors default to 0
@@ -294,6 +303,9 @@ class OpenVAFToJAX:
 
         lines.append("")
 
+        print(f"      _generate_code: init done ({len(lines)} lines)", flush=True)
+        sys.stdout.flush()
+
         # Process eval blocks in topological order
         block_order = self._topological_sort()
         defined_vars: Set[str] = set(self.constants.keys())
@@ -330,6 +342,9 @@ class OpenVAFToJAX:
 
         lines.append("")
 
+        print(f"      _generate_code: eval blocks done ({len(lines)} lines)", flush=True)
+        sys.stdout.flush()
+
         # Build output expressions
         lines.append("    # Build outputs")
         lines.append("    residuals = {")
@@ -348,6 +363,10 @@ class OpenVAFToJAX:
         lines.append("    }")
 
         lines.append("    return residuals, jacobian")
+
+        t1 = time.perf_counter()
+        print(f"      _generate_code: done ({len(lines)} lines in {t1-t0:.1f}s)", flush=True)
+        sys.stdout.flush()
 
         return lines
 
