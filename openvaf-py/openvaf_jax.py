@@ -89,14 +89,30 @@ class OpenVAFToJAX:
 
         The inputs should be ordered according to self.params
         """
+        import sys
+        import time
+        t0 = time.perf_counter()
+        print("    translate: generating code...", flush=True)
+        sys.stdout.flush()
         code_lines = self._generate_code()
+        t1 = time.perf_counter()
+        print(f"    translate: code generated ({len(code_lines)} lines) in {t1-t0:.1f}s", flush=True)
+        sys.stdout.flush()
+
         code = '\n'.join(code_lines)
+        print(f"    translate: code size = {len(code)} chars", flush=True)
+        sys.stdout.flush()
 
         # Compile and return
         import jax.numpy as jnp
         from jax import lax
         local_ns = {'jnp': jnp, 'lax': lax}
+        print("    translate: exec()...", flush=True)
+        sys.stdout.flush()
         exec(code, local_ns)
+        t2 = time.perf_counter()
+        print(f"    translate: exec() done in {t2-t1:.1f}s", flush=True)
+        sys.stdout.flush()
         return local_ns['device_eval']
 
     def translate_array(self) -> Tuple[Callable, Dict]:
@@ -111,14 +127,30 @@ class OpenVAFToJAX:
 
         This output format is compatible with jax.vmap for batched evaluation.
         """
+        import sys
+        import time
+        t0 = time.perf_counter()
+        print("    translate_array: generating code...", flush=True)
+        sys.stdout.flush()
         code_lines = self._generate_code_array()
+        t1 = time.perf_counter()
+        print(f"    translate_array: code generated ({len(code_lines)} lines) in {t1-t0:.1f}s", flush=True)
+        sys.stdout.flush()
+
         code = '\n'.join(code_lines)
+        print(f"    translate_array: code size = {len(code)} chars", flush=True)
+        sys.stdout.flush()
 
         # Compile and return
         import jax.numpy as jnp
         from jax import lax
         local_ns = {'jnp': jnp, 'lax': lax}
+        print("    translate_array: exec()...", flush=True)
+        sys.stdout.flush()
         exec(code, local_ns)
+        t2 = time.perf_counter()
+        print(f"    translate_array: exec() done in {t2-t1:.1f}s", flush=True)
+        sys.stdout.flush()
 
         # Build metadata
         node_names = list(self.dae_data['residuals'].keys())
