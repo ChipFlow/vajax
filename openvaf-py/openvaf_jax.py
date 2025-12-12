@@ -208,16 +208,20 @@ class OpenVAFToJAX:
 
         return local_ns['device_eval_array'], metadata, code
 
-    def _generate_code(self) -> List[str]:
-        """Generate the JAX function code"""
+    def _generate_core_code(self, func_name: str = "device_eval") -> Tuple[List[str], Set[str]]:
+        """Generate core computation code shared by both output formats.
+
+        Returns:
+            (lines, defined_vars) - code lines and set of defined variable names
+        """
         import sys
         import time
         t0 = time.perf_counter()
-        print("      _generate_code: starting...", flush=True)
+        print(f"      _generate_core_code: starting...", flush=True)
         sys.stdout.flush()
 
         lines = []
-        lines.append("def device_eval(inputs):")
+        lines.append(f"def {func_name}(inputs):")
         lines.append("    import jax.numpy as jnp")
         lines.append("    from jax import lax")
         lines.append("")
@@ -258,7 +262,7 @@ class OpenVAFToJAX:
 
         lines.append("")
 
-        print(f"      _generate_code: constants done ({len(lines)} lines)", flush=True)
+        print(f"      _generate_core_code: constants done ({len(lines)} lines)", flush=True)
         sys.stdout.flush()
 
         # Map function parameters to inputs
@@ -348,7 +352,7 @@ class OpenVAFToJAX:
 
         lines.append("")
 
-        print(f"      _generate_code: init done ({len(lines)} lines)", flush=True)
+        print(f"      _generate_core_code: init done ({len(lines)} lines)", flush=True)
         sys.stdout.flush()
 
         # Process eval blocks in topological order
@@ -387,11 +391,18 @@ class OpenVAFToJAX:
 
         lines.append("")
 
-        print(f"      _generate_code: eval blocks done ({len(lines)} lines)", flush=True)
+        t1 = time.perf_counter()
+        print(f"      _generate_core_code: eval blocks done ({len(lines)} lines in {t1-t0:.1f}s)", flush=True)
         sys.stdout.flush()
 
-        # Build output expressions
-        lines.append("    # Build outputs")
+        return lines, defined_vars
+
+    def _generate_code(self) -> List[str]:
+        """Generate JAX function code with dict outputs."""
+        lines, defined_vars = self._generate_core_code("device_eval")
+
+        # Build dict output expressions
+        lines.append("    # Build outputs (dict format)")
         lines.append("    residuals = {")
         for node, res in self.dae_data['residuals'].items():
             resist_val = res['resist'] if res['resist'] in defined_vars else '0.0'
@@ -408,67 +419,30 @@ class OpenVAFToJAX:
         lines.append("    }")
 
         lines.append("    return residuals, jacobian")
-
-        t1 = time.perf_counter()
-        print(f"      _generate_code: done ({len(lines)} lines in {t1-t0:.1f}s)", flush=True)
-        sys.stdout.flush()
-
         return lines
 
     def _generate_code_array(self) -> List[str]:
-        """Generate JAX function code that returns arrays (vmap-compatible)
+        """Generate JAX function code with array outputs (vmap-compatible)."""
+        lines, defined_vars = self._generate_core_code("device_eval_array")
 
-        This generates the same computation as _generate_code but returns
-        jnp.array outputs instead of dictionaries, making it compatible with
-        jax.vmap for batched evaluation.
-        """
-        # Generate all the code the same as _generate_code, but change the return
-        lines = self._generate_code()
-
-        # Remove the last few lines that build dict outputs
-        # Find where "# Build outputs" starts
-        build_idx = None
-        for i, line in enumerate(lines):
-            if '# Build outputs' in line:
-                build_idx = i
-                break
-
-        if build_idx is None:
-            raise ValueError("Could not find '# Build outputs' in generated code")
-
-        # Truncate at build_idx and add array-based outputs
-        lines = lines[:build_idx]
-
-        # Figure out what variables are defined (approximation - use all residual/jacobian vars)
-        defined_vars = set()
-        for node, res in self.dae_data['residuals'].items():
-            if res['resist']:
-                defined_vars.add(res['resist'])
-        for entry in self.dae_data['jacobian']:
-            if entry['resist']:
-                defined_vars.add(entry['resist'])
-
+        # Build array output expressions
         lines.append("    # Build output arrays (vmap-compatible)")
 
         # Residuals array - one entry per node
         residual_exprs = []
         for node, res in self.dae_data['residuals'].items():
-            resist_val = res['resist'] if res['resist'] else '0.0'
+            resist_val = res['resist'] if res['resist'] in defined_vars else '0.0'
             residual_exprs.append(resist_val)
         lines.append(f"    residuals = jnp.array([{', '.join(residual_exprs)}])")
 
         # Jacobian array - one entry per (row, col) pair
         jacobian_exprs = []
         for entry in self.dae_data['jacobian']:
-            resist_val = entry['resist'] if entry['resist'] else '0.0'
+            resist_val = entry['resist'] if entry['resist'] in defined_vars else '0.0'
             jacobian_exprs.append(resist_val)
         lines.append(f"    jacobian = jnp.array([{', '.join(jacobian_exprs)}])")
 
         lines.append("    return residuals, jacobian")
-
-        # Rename the function
-        lines[0] = "def device_eval_array(inputs):"
-
         return lines
 
     def _build_init_param_mapping(self) -> Dict[str, Optional[int]]:
