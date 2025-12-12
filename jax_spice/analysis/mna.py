@@ -954,6 +954,153 @@ class MNASystem:
 
         return residual_fn, jacobian_fn
 
+    def build_transient_residual_fn(
+        self,
+        gmin: float = 1e-12,
+    ) -> Callable[[Array, Array, float], Array]:
+        """Build vectorized transient residual function for GPU execution.
+
+        Returns a function f(V, V_prev, dt) -> residual that uses batched
+        JAX operations for GPU-friendly execution. This is the transient
+        counterpart to build_gpu_residual_fn.
+
+        Capacitor companion model (backward Euler):
+            I_cap = C/dt * (V - V_prev)
+
+        Args:
+            gmin: GMIN conductance for numerical stability
+
+        Returns:
+            f(V, V_prev, dt) -> residual function
+
+        Note:
+            Requires device_groups to be populated (via build_device_groups()).
+        """
+        from jax_spice.devices.mosfet_simple import mosfet_batch
+        from jax_spice.analysis.mna_gpu import (
+            stamp_2terminal_residual_gpu,
+            stamp_4terminal_residual_gpu,
+            stamp_gmin_residual_gpu,
+            build_mosfet_params_from_group,
+        )
+
+        # Pre-extract static data from device groups
+        group_data = []
+        for group in self.device_groups:
+            if group.n_devices == 0:
+                continue
+
+            data = {
+                'type': group.device_type,
+                'n_devices': group.n_devices,
+                'node_indices': group.node_indices,
+                'params': group.params,
+            }
+
+            if group.device_type == DeviceType.MOSFET:
+                data['mosfet_params'] = build_mosfet_params_from_group(group)
+
+            group_data.append(data)
+
+        n = self.num_nodes - 1
+        ground_node = self.ground_node
+
+        def residual_fn(V: Array, V_prev: Array, dt: float) -> Array:
+            """Compute transient residual vector using GPU-native operations.
+
+            Args:
+                V: Current node voltages (num_nodes,) including ground
+                V_prev: Previous timestep voltages (num_nodes,)
+                dt: Timestep size
+
+            Returns:
+                Residual vector (num_nodes-1,) excluding ground
+            """
+            residual = jnp.zeros(n, dtype=V.dtype)
+
+            for data in group_data:
+                dtype_enum = data['type']
+                node_indices = data['node_indices']
+                params = data['params']
+
+                # Get terminal voltages for all devices
+                V_batch = V[node_indices]  # (n_devices, n_terminals)
+
+                if dtype_enum == DeviceType.RESISTOR:
+                    # Resistor: I = (V_p - V_n) / R
+                    R_batch = params.get('r', params.get('R', jnp.ones(data['n_devices']) * 1000.0))
+                    V_diff = V_batch[:, 0] - V_batch[:, 1]
+                    I_batch = V_diff / R_batch
+
+                    node_p = node_indices[:, 0]
+                    node_n = node_indices[:, 1]
+                    residual = stamp_2terminal_residual_gpu(
+                        residual, node_p, node_n, I_batch, ground_node
+                    )
+
+                elif dtype_enum == DeviceType.CAPACITOR:
+                    # Capacitor companion model: I = C/dt * (V - V_prev)
+                    C_batch = params.get('c', params.get('C', jnp.ones(data['n_devices']) * 1e-12))
+                    V_prev_batch = V_prev[node_indices]
+
+                    V_diff = V_batch[:, 0] - V_batch[:, 1]
+                    V_prev_diff = V_prev_batch[:, 0] - V_prev_batch[:, 1]
+
+                    # Backward Euler: I = C/dt * (V_curr - V_prev)
+                    G_cap = C_batch / dt
+                    I_batch = G_cap * (V_diff - V_prev_diff)
+
+                    node_p = node_indices[:, 0]
+                    node_n = node_indices[:, 1]
+                    residual = stamp_2terminal_residual_gpu(
+                        residual, node_p, node_n, I_batch, ground_node
+                    )
+
+                elif dtype_enum == DeviceType.VSOURCE:
+                    # Voltage source: enforce V_p - V_n = V_target
+                    V_target = params.get('v', params.get('dc', jnp.zeros(data['n_devices'])))
+                    V_diff = V_batch[:, 0] - V_batch[:, 1]
+                    G_vsource = 1e12
+                    I_batch = G_vsource * (V_diff - V_target)
+
+                    node_p = node_indices[:, 0]
+                    node_n = node_indices[:, 1]
+                    residual = stamp_2terminal_residual_gpu(
+                        residual, node_p, node_n, I_batch, ground_node
+                    )
+
+                elif dtype_enum == DeviceType.ISOURCE:
+                    # Current source: fixed current
+                    I_target = params.get('i', params.get('dc', jnp.zeros(data['n_devices'])))
+                    I_batch = I_target
+
+                    node_p = node_indices[:, 0]
+                    node_n = node_indices[:, 1]
+                    residual = stamp_2terminal_residual_gpu(
+                        residual, node_p, node_n, I_batch, ground_node
+                    )
+
+                elif dtype_enum == DeviceType.MOSFET:
+                    # MOSFET: batched drain current evaluation
+                    mosfet_params = data['mosfet_params']
+                    Ids, _gm, _gds, _gmb = mosfet_batch(V_batch, mosfet_params)
+
+                    node_d = node_indices[:, 0]
+                    node_g = node_indices[:, 1]
+                    node_s = node_indices[:, 2]
+                    node_b = node_indices[:, 3]
+                    residual = stamp_4terminal_residual_gpu(
+                        residual, node_d, node_g, node_s, node_b,
+                        Ids, ground_node
+                    )
+
+            # Add GMIN contribution
+            residual = stamp_gmin_residual_gpu(residual, V, gmin, ground_node)
+
+            return residual
+
+        return residual_fn
+
     def build_sparsity_pattern(self) -> Tuple[Array, Array]:
         """Build sparsity pattern (row, col indices) for Jacobian.
 

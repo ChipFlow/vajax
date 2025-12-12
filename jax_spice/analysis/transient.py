@@ -560,6 +560,150 @@ def transient_analysis_jit(
     return times, solutions, info
 
 
+def transient_analysis_vectorized(
+    system: MNASystem,
+    t_stop: float,
+    t_step: float,
+    t_start: float = 0.0,
+    initial_conditions: Optional[Dict[str, float]] = None,
+    max_iterations: int = 20,
+    abstol: float = 1e-12,
+    reltol: float = 1e-3,
+    gmin: float = 1e-12,
+    backend: Optional[str] = None,
+) -> Tuple[Array, Array, Dict]:
+    """GPU-optimized transient analysis using vectorized device evaluation.
+
+    This version uses batched device evaluation where all devices of the same
+    type are processed in parallel using JAX scatter operations. This provides
+    significant speedup on GPU compared to the sequential lax.fori_loop approach.
+
+    Args:
+        system: MNA system with devices
+        t_stop: End time
+        t_step: Timestep (fixed)
+        t_start: Start time (default 0)
+        initial_conditions: Optional dict of node_name -> initial voltage
+        max_iterations: Max NR iterations per timepoint
+        abstol: Absolute convergence tolerance
+        reltol: Relative convergence tolerance
+        gmin: GMIN conductance for numerical stability
+        backend: 'gpu', 'cpu', or None (auto-select based on circuit size)
+
+    Returns:
+        Tuple of (times, solutions, info)
+    """
+    from jax_spice.analysis.gpu_backend import select_backend, get_device, get_default_dtype
+    from jax_spice.analysis.dc import dc_operating_point
+
+    n = system.num_nodes
+
+    # Select backend
+    if backend is None or backend == "auto":
+        backend = select_backend(n)
+
+    device = get_device(backend)
+    dtype = get_default_dtype(backend)
+
+    # Build device groups for vectorized evaluation
+    system.build_device_groups()
+
+    # Build vectorized residual function
+    residual_fn = system.build_transient_residual_fn(gmin=gmin)
+
+    # Run on selected device
+    with jax.default_device(device):
+        # Build initial conditions
+        if initial_conditions is not None:
+            V0 = jnp.zeros(n, dtype=dtype)
+            for name, voltage in initial_conditions.items():
+                idx = system.node_names.get(name)
+                if idx is not None and idx > 0:
+                    V0 = V0.at[idx].set(voltage)
+        else:
+            V0, dc_info = dc_operating_point(system)
+            V0 = V0.astype(dtype)
+            if not dc_info['converged']:
+                raise RuntimeError(f"DC operating point did not converge: {dc_info}")
+
+        # Generate time points
+        num_timesteps = int((t_stop - t_start) / t_step)
+        times = jnp.linspace(t_start, t_stop, num_timesteps + 1)
+
+        # JIT-compiled Newton solver for one timestep
+        @jax.jit
+        def newton_timestep(V_prev: Array, dt: float) -> Array:
+            """Solve one timestep using Newton-Raphson."""
+            V = V_prev  # Initial guess is previous solution
+
+            def cond_fn(state):
+                V_iter, iteration, converged = state
+                return jnp.logical_and(~converged, iteration < max_iterations)
+
+            def body_fn(state):
+                V_iter, iteration, _ = state
+
+                # Compute residual
+                f = residual_fn(V_iter, V_prev, dt)
+                residual_norm = jnp.max(jnp.abs(f))
+
+                # Compute Jacobian via autodiff (only w.r.t. V, not V_prev)
+                J = jax.jacfwd(lambda v: residual_fn(v, V_prev, dt))(V_iter)
+                J = J[:, 1:]  # Remove ground column
+
+                # Regularization for numerical stability
+                reg = 1e-14 * jnp.eye(J.shape[0], dtype=J.dtype)
+                J_reg = J + reg
+
+                # Solve for update
+                delta_V = jax.scipy.linalg.solve(J_reg, -f)
+
+                # Update (ground stays at 0)
+                V_new = V_iter.at[1:].add(delta_V)
+
+                # Check convergence
+                delta_norm = jnp.max(jnp.abs(delta_V))
+                v_norm = jnp.max(jnp.abs(V_new[1:]))
+                converged = jnp.logical_or(
+                    residual_norm < abstol,
+                    delta_norm < (abstol + reltol * jnp.maximum(v_norm, 1.0))
+                )
+
+                return (V_new, iteration + 1, converged)
+
+            init_state = (V, jnp.array(0), jnp.array(False))
+            final_state = lax.while_loop(cond_fn, body_fn, init_state)
+            V_final, _, _ = final_state
+
+            return V_final
+
+        # JIT-compiled timestep function for lax.scan
+        @jax.jit
+        def timestep_fn(V_prev: Array, t_idx: int) -> Tuple[Array, Array]:
+            """Single timestep for lax.scan."""
+            V_new = newton_timestep(V_prev, t_step)
+            return V_new, V_new
+
+        # Run simulation using lax.scan
+        _, solutions = lax.scan(
+            timestep_fn,
+            V0,
+            jnp.arange(num_timesteps),
+        )
+
+        # Prepend initial condition
+        all_solutions = jnp.concatenate([V0[None, :], solutions], axis=0)
+
+    info = {
+        'num_timepoints': num_timesteps + 1,
+        'vectorized': True,
+        'backend': backend,
+        'device': str(device),
+    }
+
+    return times, all_solutions, info
+
+
 # Keep original implementation for compatibility and debugging
 def transient_analysis(
     system: MNASystem,
