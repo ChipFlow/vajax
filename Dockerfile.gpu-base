@@ -74,7 +74,6 @@ RUN --mount=type=bind,source=uv.lock,target=uv.lock \
     uv sync --frozen --no-install-workspace --extra cuda12 -p 3.13
 
 # Set environment variables
-ENV JAX_ENABLE_X64=1
 ENV JAX_PLATFORMS=cuda,cpu
 ENV RUSTC_WRAPPER=sccache
 
