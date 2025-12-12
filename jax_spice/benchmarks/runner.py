@@ -117,20 +117,25 @@ class VACASKBenchmarkRunner:
 
     def parse(self):
         """Parse the sim file and extract circuit information."""
+        import time
+
+        t0 = time.perf_counter()
         parser = VACASKParser()
         self.circuit = parser.parse_file(self.sim_path)
+        t1 = time.perf_counter()
 
         if self.verbose:
-            print(f"Parsed: {self.circuit.title}")
+            print(f"Parsed: {self.circuit.title} ({t1-t0:.1f}s)")
             print(f"Models: {list(self.circuit.models.keys())}")
             if self.circuit.subckts:
                 print(f"Subcircuits: {list(self.circuit.subckts.keys())}")
 
         # Flatten subcircuit instances to leaf devices
         self.flat_instances = self._flatten_top_instances()
+        t2 = time.perf_counter()
 
         if self.verbose:
-            print(f"Flattened: {len(self.flat_instances)} leaf devices")
+            print(f"Flattened: {len(self.flat_instances)} leaf devices ({t2-t1:.1f}s)")
             for name, terms, model, params in self.flat_instances[:10]:
                 print(f"  {name}: {model} {terms}")
             if len(self.flat_instances) > 10:
@@ -146,9 +151,17 @@ class VACASKBenchmarkRunner:
         for i, name in enumerate(sorted(n for n in node_set if n != '0'), start=1):
             self.node_names[name] = i
         self.num_nodes = len(self.node_names)
+        t3 = time.perf_counter()
+
+        if self.verbose:
+            print(f"Node mapping: {self.num_nodes} nodes ({t3-t2:.1f}s)")
 
         # Build devices
         self._build_devices()
+        t4 = time.perf_counter()
+
+        if self.verbose:
+            print(f"Built devices: {len(self.devices)} ({t4-t3:.1f}s)")
 
         # Extract analysis parameters
         self._extract_analysis_params()
