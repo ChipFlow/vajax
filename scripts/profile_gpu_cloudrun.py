@@ -68,6 +68,12 @@ def main():
         help="Number of timesteps to simulate (default: 50)",
     )
     parser.add_argument(
+        "--warmup-steps",
+        type=int,
+        default=5,
+        help="Number of warmup steps (default: 5)",
+    )
+    parser.add_argument(
         "--sparse-only",
         action="store_true",
         help="Only run sparse solver",
@@ -116,6 +122,7 @@ def main():
         "uv", "run", "python", "scripts/profile_gpu.py",
         "--benchmark", args.benchmark,
         "--timesteps", str(args.timesteps),
+        "--warmup-steps", str(args.warmup_steps),
         "--trace",
         "--trace-dir", "/tmp/jax-trace",
     ]
