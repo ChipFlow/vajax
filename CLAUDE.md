@@ -82,17 +82,19 @@ def newton_step_sparse(residual_fn, V, tol=1e-6):
 
 ```bash
 # Run all tests (CPU)
-JAX_PLATFORMS=cpu JAX_ENABLE_X64=1 uv run pytest tests/ -v
+JAX_PLATFORMS=cpu uv run pytest tests/ -v
 
 # Run VACASK benchmark tests
-JAX_PLATFORMS=cpu JAX_ENABLE_X64=1 uv run pytest tests/test_vacask_suite.py -v
+JAX_PLATFORMS=cpu uv run pytest tests/test_vacask_suite.py -v
 
 # Run openvaf-py tests
 cd openvaf-py && JAX_PLATFORMS=cpu ../.venv/bin/python -m pytest tests/ -v
 
 # Profile GPU performance
-JAX_ENABLE_X64=1 uv run python scripts/profile_gpu.py --benchmark ring
+uv run python scripts/profile_gpu.py --benchmark ring
 ```
+
+Note: `jax_enable_x64` is set automatically on import via `jax_spice/__init__.py`.
 
 ## Key Architecture
 
