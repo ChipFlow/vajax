@@ -11,6 +11,9 @@ The solver uses jax.experimental.sparse.linalg.spsolve which:
 Note: For CPU-optimized circuit simulation, see VACASK which uses
 native sparse solvers. This module prioritizes code consistency
 across platforms over maximum single-platform performance.
+
+IMPORTANT: This module uses pure JAX - no numpy or scipy allowed.
+See CLAUDE.md for coding guidelines.
 """
 
 from typing import Tuple
@@ -18,8 +21,6 @@ import jax
 import jax.numpy as jnp
 from jax import Array
 from jax.experimental.sparse.linalg import spsolve as jax_spsolve
-import numpy as np
-from scipy.sparse import coo_matrix
 
 
 def sparse_solve_csr(
@@ -54,48 +55,77 @@ def sparse_solve_csr(
 
 
 def build_csr_arrays(
-    rows: np.ndarray,
-    cols: np.ndarray,
-    values: np.ndarray,
+    rows: Array,
+    cols: Array,
+    values: Array,
     shape: Tuple[int, int],
-) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
-    """Convert COO triplets to CSR format arrays
+) -> Tuple[Array, Array, Array]:
+    """Convert COO triplets to CSR format arrays using pure JAX.
 
-    Uses scipy for reliable handling of duplicate entries (sums them).
+    Handles duplicate entries by summing them using segment_sum.
 
     Args:
-        rows: Row indices (COO format)
-        cols: Column indices (COO format)
-        values: Non-zero values (COO format)
+        rows: Row indices (COO format) as JAX array
+        cols: Column indices (COO format) as JAX array
+        values: Non-zero values (COO format) as JAX array
         shape: Matrix shape (n, n)
 
     Returns:
-        Tuple of (data, indices, indptr) in CSR format
+        Tuple of (data, indices, indptr) in CSR format as JAX arrays
     """
-    # Build COO matrix and convert to CSR
-    # scipy handles duplicate summing correctly
-    A_coo = coo_matrix((values, (rows, cols)), shape=shape)
-    A_csr = A_coo.tocsr()
-    A_csr.sum_duplicates()  # Combine duplicate entries
+    rows = jnp.asarray(rows)
+    cols = jnp.asarray(cols)
+    values = jnp.asarray(values)
 
-    return A_csr.data, A_csr.indices, A_csr.indptr
+    n_rows = shape[0]
+
+    # Create linear indices for sorting (row-major order)
+    linear_idx = rows * shape[1] + cols
+
+    # Sort by linear index to group duplicates
+    sort_order = jnp.argsort(linear_idx)
+    sorted_linear = linear_idx[sort_order]
+    sorted_rows = rows[sort_order]
+    sorted_cols = cols[sort_order]
+    sorted_values = values[sort_order]
+
+    # Find unique entries and sum duplicates
+    # Use segment_sum with unique keys
+    unique_linear, unique_inverse = jnp.unique(sorted_linear, return_inverse=True)
+    summed_values = jax.ops.segment_sum(sorted_values, unique_inverse, num_segments=len(unique_linear))
+
+    # Get unique row/col indices
+    unique_rows = unique_linear // shape[1]
+    unique_cols = unique_linear % shape[1]
+
+    # Sort by row for CSR format
+    row_order = jnp.argsort(unique_rows)
+    csr_rows = unique_rows[row_order]
+    csr_cols = unique_cols[row_order]
+    csr_data = summed_values[row_order]
+
+    # Build indptr (row pointers)
+    # Count entries per row
+    row_counts = jnp.zeros(n_rows + 1, dtype=jnp.int32)
+    row_counts = row_counts.at[csr_rows + 1].add(1)
+    indptr = jnp.cumsum(row_counts)
+
+    return csr_data, csr_cols.astype(jnp.int32), indptr
 
 
 def build_csc_arrays(
-    rows: np.ndarray,
-    cols: np.ndarray,
-    values: np.ndarray,
+    rows: Array,
+    cols: Array,
+    values: Array,
     shape: Tuple[int, int],
-) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
-    """Convert COO triplets to CSC format arrays
+) -> Tuple[Array, Array, Array]:
+    """Convert COO triplets to CSC format arrays using pure JAX.
 
-    Note: Prefer build_csr_arrays for new code as JAX uses CSR format.
+    Note: Prefer build_csr_arrays for new code as JAX spsolve uses CSR format.
     """
-    A_coo = coo_matrix((values, (rows, cols)), shape=shape)
-    A_csc = A_coo.tocsc()
-    A_csc.sum_duplicates()
-
-    return A_csc.data, A_csc.indices, A_csc.indptr
+    # CSC is CSR of the transpose
+    data, row_indices, colptr = build_csr_arrays(cols, rows, values, (shape[1], shape[0]))
+    return data, row_indices, colptr
 
 
 # Legacy alias

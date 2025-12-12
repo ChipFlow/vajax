@@ -11,6 +11,9 @@ Features:
 - JIT-compiled vmapped functions for efficient parallel evaluation
 - Static/dynamic input separation for NR iteration performance
 
+IMPORTANT: This module uses pure JAX - no numpy in the hot path.
+See CLAUDE.md for coding guidelines.
+
 Usage:
     from jax_spice.devices.openvaf_device import CompiledModelBatch, VADevice
 
@@ -33,7 +36,6 @@ from dataclasses import dataclass, field
 
 import jax
 import jax.numpy as jnp
-import numpy as np
 from jax import Array
 
 # Add openvaf-py to path
@@ -198,8 +200,9 @@ class CompiledModelBatch:
     param_kinds: List[str]
     model_nodes: List[str]
     array_metadata: Dict[str, Any]
-    # Batch state
-    _static_inputs: Optional[np.ndarray] = field(default=None, repr=False)
+    # Batch state - stored as Python list during building, converted to JAX in prepare()
+    _inputs_list: List[List[float]] = field(default_factory=list, repr=False)
+    _static_inputs: Optional[Array] = field(default=None, repr=False)
     _voltage_indices: List[int] = field(default_factory=list, repr=False)
     _device_contexts: List[DeviceContext] = field(default_factory=list, repr=False)
     _prepared: bool = field(default=False, repr=False)
@@ -346,11 +349,8 @@ class CompiledModelBatch:
             else:
                 inputs.append(0.0)
 
-        # Accumulate inputs
-        if self._static_inputs is None:
-            self._static_inputs = np.array([inputs])
-        else:
-            self._static_inputs = np.vstack([self._static_inputs, inputs])
+        # Accumulate inputs (stored as Python list, converted to JAX in prepare())
+        self._inputs_list.append(inputs)
 
         self._device_contexts.append(DeviceContext(
             name=name,
@@ -399,37 +399,51 @@ class CompiledModelBatch:
         return (node1_idx, node2_idx)
 
     def prepare(self) -> None:
-        """Finalize batch setup. Call after all devices are added."""
+        """Finalize batch setup. Call after all devices are added.
+
+        Converts the accumulated inputs list to a JAX array for efficient
+        batched evaluation.
+        """
         if not self._device_contexts:
             raise RuntimeError("No devices added to batch")
+        if not self._inputs_list:
+            raise RuntimeError("No inputs accumulated")
+
+        # Convert Python list to JAX array
+        self._static_inputs = jnp.array(self._inputs_list, dtype=jnp.float64)
+        self._inputs_list = []  # Free memory
         self._prepared = True
 
     def num_devices(self) -> int:
         """Return number of devices in batch."""
         return len(self._device_contexts)
 
-    def update_voltage_inputs(self, V: np.ndarray) -> jnp.ndarray:
+    def update_voltage_inputs(self, V: Array) -> Array:
         """Update voltage parameters from current voltage solution.
 
         This is the fast path called each NR iteration - only updates voltages.
+        Uses pure JAX operations for GPU compatibility.
 
         Args:
-            V: Current voltage solution array
+            V: Current voltage solution array (JAX array)
 
         Returns:
             JAX array with updated inputs ready for vmapped evaluation
         """
-        inputs = self._static_inputs.copy()
+        # Start from static inputs (already a JAX array)
+        inputs = self._static_inputs
 
+        # Update voltage parameters using JAX scatter operations
         for dev_idx, ctx in enumerate(self._device_contexts):
             for i, (n1, n2) in enumerate(ctx.voltage_node_pairs):
-                v1 = V[n1] if n1 < len(V) else 0.0
-                v2 = V[n2] if n2 < len(V) else 0.0
-                inputs[dev_idx, self._voltage_indices[i]] = v1 - v2
+                # Safe indexing with bounds checking via lax.cond
+                v1 = jax.lax.cond(n1 < V.shape[0], lambda: V[n1], lambda: 0.0)
+                v2 = jax.lax.cond(n2 < V.shape[0], lambda: V[n2], lambda: 0.0)
+                inputs = inputs.at[dev_idx, self._voltage_indices[i]].set(v1 - v2)
 
-        return jnp.array(inputs)
+        return inputs
 
-    def evaluate(self, V: np.ndarray) -> Tuple[jnp.ndarray, jnp.ndarray]:
+    def evaluate(self, V: Array) -> Tuple[Array, Array]:
         """Evaluate all devices at current voltages.
 
         Args:
@@ -446,34 +460,27 @@ class CompiledModelBatch:
         inputs = self.update_voltage_inputs(V)
         return self.vmapped_fn(inputs)
 
-    def stamp_into_system(
+    def stamp_residuals(
         self,
-        batch_residuals: jnp.ndarray,
-        batch_jacobian: jnp.ndarray,
-        f: np.ndarray,
-        J: np.ndarray,
+        batch_residuals: Array,
+        f: Array,
         ground: int = 0,
-    ) -> None:
-        """Stamp batched evaluation results into system matrices.
+    ) -> Array:
+        """Stamp batched residuals into system vector using pure JAX.
 
         Args:
             batch_residuals: Shape (num_devices, num_nodes) residuals
-            batch_jacobian: Shape (num_devices, num_jac_entries) jacobian values
-            f: Residual vector to stamp into (modified in place)
-            J: Jacobian matrix to stamp into (modified in place)
+            f: Residual vector to stamp into (JAX array)
             ground: Ground node index
+
+        Returns:
+            Updated residual vector f
         """
         node_names = self.array_metadata['node_names']
-        jacobian_keys = self.array_metadata['jacobian_keys']
-
-        # Convert to numpy for stamping
-        batch_residuals_np = np.asarray(batch_residuals)
-        batch_jacobian_np = np.asarray(batch_jacobian)
 
         for dev_idx, ctx in enumerate(self._device_contexts):
             node_map = ctx.node_map
 
-            # Stamp residuals
             for res_idx, node_name in enumerate(node_names):
                 # Map node name to global index
                 if node_name.startswith('sim_'):
@@ -485,29 +492,13 @@ class CompiledModelBatch:
                 if node_idx is None or node_idx == ground:
                     continue
 
-                resist = batch_residuals_np[dev_idx, res_idx]
-                if not np.isnan(resist) and node_idx > 0 and node_idx - 1 < len(f):
-                    f[node_idx - 1] += resist
+                if node_idx > 0 and node_idx - 1 < f.shape[0]:
+                    resist = batch_residuals[dev_idx, res_idx]
+                    # Use where to handle NaN (NaN check via isnan)
+                    resist_safe = jnp.where(jnp.isnan(resist), 0.0, resist)
+                    f = f.at[node_idx - 1].add(resist_safe)
 
-            # Stamp Jacobian
-            for jac_idx, (row_name, col_name) in enumerate(jacobian_keys):
-                row_model = row_name[4:] if row_name.startswith('sim_') else row_name
-                col_model = col_name[4:] if col_name.startswith('sim_') else col_name
-
-                row_idx = node_map.get(row_model, node_map.get(row_name, None))
-                col_idx = node_map.get(col_model, node_map.get(col_name, None))
-
-                if row_idx is None or col_idx is None:
-                    continue
-                if row_idx == ground or col_idx == ground:
-                    continue
-
-                resist = batch_jacobian_np[dev_idx, jac_idx]
-                if not np.isnan(resist):
-                    ri = row_idx - 1
-                    ci = col_idx - 1
-                    if 0 <= ri < len(f) and 0 <= ci < J.shape[1]:
-                        J[ri, ci] += resist
+        return f
 
     @property
     def node_names(self) -> List[str]:
