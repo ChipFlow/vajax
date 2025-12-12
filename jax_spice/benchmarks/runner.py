@@ -22,6 +22,7 @@ from typing import Callable, Dict, List, Tuple, Any, Optional
 
 import jax
 import jax.numpy as jnp
+from jax import lax
 import numpy as np
 
 from jax_spice.netlist.parser import VACASKParser
@@ -1357,6 +1358,12 @@ class VACASKBenchmarkRunner:
 
         logger.info("Running time steps")
 
+        # Create GPU-resident build_system function (closure captures all static data)
+        build_system_fn = self._make_gpu_resident_build_system_fn(
+            source_device_data, vmapped_fns, static_inputs_cache, n_unknowns, use_dense
+        )
+        logger.info("Created GPU-resident build_system function")
+
         times = []
         voltages = {i: [] for i in range(n_external)}
 
@@ -1370,122 +1377,26 @@ class VACASKBenchmarkRunner:
             # Build source value arrays once per timestep (Python loop here, not in NR loop)
             vsource_vals, isource_vals = build_source_arrays(source_values)
 
-            converged = False
-            V_iter = V
+            # GPU-resident NR solve - entire loop runs on GPU via lax.while_loop
+            V_new, iterations, converged, max_f = self._gpu_resident_nr_solve(
+                build_system_fn, V, vsource_vals, isource_vals,
+                max_iterations=MAX_NR_ITERATIONS, abstol=1e-9, max_step=1.0
+            )
 
-            for nr_iter in range(MAX_NR_ITERATIONS):
-                # === Pure JAX: COO collection for both dense and sparse paths ===
-                f_indices_list = []
-                f_values_list = []
-                j_rows_list = []
-                j_cols_list = []
-                j_vals_list = []
+            # Transfer results back to Python for logging/tracking (once per timestep)
+            nr_iters = int(iterations)
+            is_converged = bool(converged)
+            residual = float(max_f)
 
-                # Collect from source devices (vsource, isource) - fully vectorized
-                self._collect_source_devices_coo(
-                    source_device_data, V_iter, vsource_vals, isource_vals,
-                    f_indices_list, f_values_list, j_rows_list, j_cols_list, j_vals_list
-                )
+            V = V_new
+            total_nr_iters += nr_iters
 
-                # Collect from OpenVAF devices
-                for model_type in openvaf_by_type:
-                    if model_type in vmapped_fns and model_type in static_inputs_cache:
-                        static_inputs, voltage_indices, stamp_indices, voltage_node1, voltage_node2 = \
-                            static_inputs_cache[model_type]
-
-                        # Vectorized voltage update (no Python loops)
-                        voltage_updates = V_iter[voltage_node1] - V_iter[voltage_node2]
-                        batch_inputs = static_inputs.at[:, jnp.array(voltage_indices)].set(voltage_updates)
-
-                        batch_residuals, batch_jacobian = vmapped_fns[model_type](batch_inputs)
-
-                        self._collect_openvaf_coo(
-                            batch_residuals, batch_jacobian, stamp_indices,
-                            f_indices_list, f_values_list,
-                            j_rows_list, j_cols_list, j_vals_list
-                        )
-
-                # Build residual vector using segment_sum
-                if f_indices_list:
-                    all_f_idx = jnp.concatenate(f_indices_list)
-                    all_f_val = jnp.concatenate(f_values_list)
-                    f = jax.ops.segment_sum(all_f_val, all_f_idx, num_segments=n_unknowns)
+            if not is_converged:
+                non_converged_steps.append((t, residual))
+                if nr_iters >= MAX_NR_ITERATIONS:
+                    logger.warning(f"t={t:.2e}s hit max iterations ({MAX_NR_ITERATIONS}), max_f={residual:.2e}")
                 else:
-                    f = jnp.zeros(n_unknowns, dtype=jnp.float64)
-
-                # Check convergence
-                max_f = float(jnp.max(jnp.abs(f)))
-                if max_f < 1e-9:
-                    converged = True
-                    break
-
-                if use_dense:
-                    # === DENSE PATH: COO -> dense matrix via segment_sum ===
-                    if j_rows_list:
-                        all_j_rows = jnp.concatenate(j_rows_list)
-                        all_j_cols = jnp.concatenate(j_cols_list)
-                        all_j_vals = jnp.concatenate(j_vals_list)
-
-                        # Convert (row, col) to flat index and use segment_sum
-                        flat_indices = all_j_rows * n_unknowns + all_j_cols
-                        J_flat = jax.ops.segment_sum(
-                            all_j_vals, flat_indices, num_segments=n_unknowns * n_unknowns
-                        )
-                        J = J_flat.reshape((n_unknowns, n_unknowns))
-                    else:
-                        J = jnp.zeros((n_unknowns, n_unknowns), dtype=jnp.float64)
-
-                    # Dense solve with regularization
-                    J_reg = J + 1e-12 * jnp.eye(n_unknowns, dtype=jnp.float64)
-                    delta = jax.scipy.linalg.solve(J_reg, -f)
-
-                else:
-                    # === SPARSE PATH: Build BCOO from COO and solve ===
-                    if j_rows_list:
-                        all_j_rows = jnp.concatenate(j_rows_list)
-                        all_j_cols = jnp.concatenate(j_cols_list)
-                        all_j_vals = jnp.concatenate(j_vals_list)
-
-                        # Add diagonal regularization (larger for sparse solver stability)
-                        # Sparse direct solvers are more sensitive to near-singular matrices
-                        diag_idx = jnp.arange(n_unknowns, dtype=jnp.int32)
-                        all_j_rows = jnp.concatenate([all_j_rows, diag_idx])
-                        all_j_cols = jnp.concatenate([all_j_cols, diag_idx])
-                        all_j_vals = jnp.concatenate([all_j_vals, jnp.full(n_unknowns, 1e-9)])
-
-                        # Build BCOO and sum duplicates (native JAX sparse)
-                        indices = jnp.stack([all_j_rows, all_j_cols], axis=1)
-                        J_bcoo = BCOO((all_j_vals, indices), shape=(n_unknowns, n_unknowns))
-                        J_bcoo = J_bcoo.sum_duplicates()
-
-                        # Convert to BCSR for solve (JAX spsolve expects CSR format)
-                        J_bcsr = BCSR.from_bcoo(J_bcoo)
-                        delta = sparse_solve_csr(
-                            J_bcsr.data, J_bcsr.indices, J_bcsr.indptr, -f, (n_unknowns, n_unknowns)
-                        )
-                    else:
-                        delta = -f
-
-                # Limit voltage step
-                max_delta = float(jnp.max(jnp.abs(delta)))
-                if max_delta > 1.0:
-                    delta = delta * (1.0 / max_delta)
-
-                V_iter = V_iter.at[1:].add(delta)
-
-                if max_delta < 1e-12:
-                    converged = True
-                    break
-
-            V = V_iter
-            total_nr_iters += nr_iter + 1
-
-            if not converged:
-                non_converged_steps.append((t, max_f))
-                if nr_iter + 1 >= MAX_NR_ITERATIONS:
-                    logger.warning(f"t={t:.2e}s hit max iterations ({MAX_NR_ITERATIONS}), max_f={max_f:.2e}")
-                else:
-                    logger.warning(f"t={t:.2e}s did not converge (max_f={max_f:.2e})")
+                    logger.warning(f"t={t:.2e}s did not converge (max_f={residual:.2e})")
 
             # Record state
             times.append(t)
@@ -1718,6 +1629,240 @@ class VACASKBenchmarkRunner:
         j_rows.append(flat_jac_rows[valid_jac])
         j_cols.append(flat_jac_cols[valid_jac])
         j_vals.append(flat_jac_vals[valid_jac])
+
+    def _make_gpu_resident_build_system_fn(
+        self,
+        source_device_data: Dict[str, Any],
+        vmapped_fns: Dict[str, Callable],
+        static_inputs_cache: Dict[str, Tuple],
+        n_unknowns: int,
+        use_dense: bool,
+    ) -> Callable:
+        """Create a JIT-compilable function that builds J and f from V.
+
+        This closure captures all the static data structures (stamp indices,
+        vmapped functions) and returns a function that can be traced by JAX.
+        The returned function is suitable for use inside lax.while_loop.
+
+        Args:
+            source_device_data: Pre-computed source device stamp templates
+            vmapped_fns: Dict of vmapped OpenVAF functions per model type
+            static_inputs_cache: Dict of (static_inputs, voltage_indices, stamp_indices,
+                                          voltage_node1, voltage_node2) per model type
+            n_unknowns: Number of unknowns (total nodes - 1 for ground)
+            use_dense: Whether to use dense or sparse matrix assembly
+
+        Returns:
+            Function build_system(V, vsource_vals, isource_vals) -> (J, f)
+        """
+        from jax.experimental.sparse import BCOO, BCSR
+        from jax_spice.analysis.sparse import sparse_solve_csr
+
+        # Capture model types as static list (unrolled at trace time)
+        model_types = list(static_inputs_cache.keys())
+
+        def build_system(V: jax.Array, vsource_vals: jax.Array, isource_vals: jax.Array
+                        ) -> Tuple[jax.Array, jax.Array]:
+            """Build Jacobian J and residual f from current voltages.
+
+            Fully JAX-traceable - no Python lists or dynamic allocation.
+            All device contributions are concatenated into fixed-size arrays.
+            """
+            f_parts = []
+            j_parts = []
+
+            # === Source devices contribution ===
+            # Voltage sources: I = G * (Vp - Vn - Vtarget), G = 1e12
+            if 'vsource' in source_device_data and vsource_vals.size > 0:
+                d = source_device_data['vsource']
+                G = 1e12
+                Vp, Vn = V[d['node_p']], V[d['node_n']]
+                I = G * (Vp - Vn - vsource_vals)
+                G_arr = jnp.full(d['n'], G)
+
+                # Residual contribution
+                f_vals = I[:, None] * d['f_signs'][None, :]  # (n, 2)
+                f_idx = d['f_indices'].ravel()
+                f_val = f_vals.ravel()
+                f_valid = f_idx >= 0
+                f_parts.append((jnp.where(f_valid, f_idx, 0), jnp.where(f_valid, f_val, 0.0)))
+
+                # Jacobian contribution
+                j_vals_arr = G_arr[:, None] * d['j_signs'][None, :]  # (n, 4)
+                j_row = d['j_rows'].ravel()
+                j_col = d['j_cols'].ravel()
+                j_val = j_vals_arr.ravel()
+                j_valid = j_row >= 0
+                j_parts.append((
+                    jnp.where(j_valid, j_row, 0),
+                    jnp.where(j_valid, j_col, 0),
+                    jnp.where(j_valid, j_val, 0.0)
+                ))
+
+            # Current sources (residual only)
+            if 'isource' in source_device_data and isource_vals.size > 0:
+                d = source_device_data['isource']
+                f_vals = isource_vals[:, None] * jnp.array([-1.0, 1.0])[None, :]
+                f_idx = d['f_indices'].ravel()
+                f_val = f_vals.ravel()
+                f_valid = f_idx >= 0
+                f_parts.append((jnp.where(f_valid, f_idx, 0), jnp.where(f_valid, f_val, 0.0)))
+
+            # === OpenVAF devices contribution (unrolled at trace time) ===
+            for model_type in model_types:
+                static_inputs, voltage_indices, stamp_indices, voltage_node1, voltage_node2 = \
+                    static_inputs_cache[model_type]
+                vmapped_fn = vmapped_fns[model_type]
+
+                # Vectorized voltage update
+                voltage_updates = V[voltage_node1] - V[voltage_node2]
+                batch_inputs = static_inputs.at[:, jnp.array(voltage_indices)].set(voltage_updates)
+
+                # Batched device evaluation
+                batch_residuals, batch_jacobian = vmapped_fn(batch_inputs)
+
+                # Collect COO triplets using pre-computed indices
+                res_idx = stamp_indices['res_indices']
+                jac_row_idx = stamp_indices['jac_row_indices']
+                jac_col_idx = stamp_indices['jac_col_indices']
+
+                # Residuals - use masking instead of boolean indexing for static shapes
+                flat_res_idx = res_idx.ravel()
+                flat_res_val = batch_residuals.ravel()
+                valid_res = flat_res_idx >= 0
+                # Mask invalid indices to 0, mask invalid values to 0
+                flat_res_idx_masked = jnp.where(valid_res, flat_res_idx, 0)
+                flat_res_val_masked = jnp.where(valid_res, flat_res_val, 0.0)
+                flat_res_val_masked = jnp.where(jnp.isnan(flat_res_val_masked), 0.0, flat_res_val_masked)
+                f_parts.append((flat_res_idx_masked, flat_res_val_masked))
+
+                # Jacobian - use masking instead of boolean indexing
+                flat_jac_rows = jac_row_idx.ravel()
+                flat_jac_cols = jac_col_idx.ravel()
+                flat_jac_vals = batch_jacobian.ravel()
+                valid_jac = (flat_jac_rows >= 0) & (flat_jac_cols >= 0)
+                flat_jac_rows_masked = jnp.where(valid_jac, flat_jac_rows, 0)
+                flat_jac_cols_masked = jnp.where(valid_jac, flat_jac_cols, 0)
+                flat_jac_vals_masked = jnp.where(valid_jac, flat_jac_vals, 0.0)
+                flat_jac_vals_masked = jnp.where(jnp.isnan(flat_jac_vals_masked), 0.0, flat_jac_vals_masked)
+                j_parts.append((
+                    flat_jac_rows_masked,
+                    flat_jac_cols_masked,
+                    flat_jac_vals_masked
+                ))
+
+            # === Build residual vector f using segment_sum ===
+            if f_parts:
+                all_f_idx = jnp.concatenate([p[0] for p in f_parts])
+                all_f_val = jnp.concatenate([p[1] for p in f_parts])
+                f = jax.ops.segment_sum(all_f_val, all_f_idx, num_segments=n_unknowns)
+            else:
+                f = jnp.zeros(n_unknowns, dtype=jnp.float64)
+
+            # === Build Jacobian J ===
+            if j_parts:
+                all_j_rows = jnp.concatenate([p[0] for p in j_parts])
+                all_j_cols = jnp.concatenate([p[1] for p in j_parts])
+                all_j_vals = jnp.concatenate([p[2] for p in j_parts])
+
+                if use_dense:
+                    # Dense: COO -> dense matrix via segment_sum
+                    flat_indices = all_j_rows * n_unknowns + all_j_cols
+                    J_flat = jax.ops.segment_sum(
+                        all_j_vals, flat_indices, num_segments=n_unknowns * n_unknowns
+                    )
+                    J = J_flat.reshape((n_unknowns, n_unknowns))
+                    # Add regularization
+                    J = J + 1e-12 * jnp.eye(n_unknowns, dtype=jnp.float64)
+                else:
+                    # Sparse path - return COO data for external handling
+                    # For now, still build dense (sparse lax.while_loop needs more work)
+                    flat_indices = all_j_rows * n_unknowns + all_j_cols
+                    J_flat = jax.ops.segment_sum(
+                        all_j_vals, flat_indices, num_segments=n_unknowns * n_unknowns
+                    )
+                    J = J_flat.reshape((n_unknowns, n_unknowns))
+                    J = J + 1e-12 * jnp.eye(n_unknowns, dtype=jnp.float64)
+            else:
+                J = jnp.eye(n_unknowns, dtype=jnp.float64) * 1e-12
+
+            return J, f
+
+        return build_system
+
+    def _gpu_resident_nr_solve(
+        self,
+        build_system_fn: Callable,
+        V_init: jax.Array,
+        vsource_vals: jax.Array,
+        isource_vals: jax.Array,
+        max_iterations: int = MAX_NR_ITERATIONS,
+        abstol: float = 1e-9,
+        max_step: float = 1.0,
+    ) -> Tuple[jax.Array, int, bool, float]:
+        """GPU-resident Newton-Raphson solver using lax.while_loop.
+
+        Runs entirely on GPU with no host-device transfers during iteration.
+
+        Args:
+            build_system_fn: Function (V, vsource_vals, isource_vals) -> (J, f)
+            V_init: Initial voltage vector
+            vsource_vals: Voltage source target values
+            isource_vals: Current source values
+            max_iterations: Maximum NR iterations
+            abstol: Absolute tolerance for convergence
+            max_step: Maximum voltage step per iteration
+
+        Returns:
+            Tuple of (V_final, iterations, converged, residual_norm)
+        """
+        # State: (V, iteration, converged, max_f, max_delta)
+        init_state = (
+            V_init,
+            jnp.array(0, dtype=jnp.int32),
+            jnp.array(False),
+            jnp.array(jnp.inf),
+            jnp.array(jnp.inf),
+        )
+
+        def cond_fn(state):
+            V, iteration, converged, max_f, max_delta = state
+            return jnp.logical_and(~converged, iteration < max_iterations)
+
+        def body_fn(state):
+            V, iteration, _, _, _ = state
+
+            # Build system (J and f)
+            J, f = build_system_fn(V, vsource_vals, isource_vals)
+
+            # Check residual convergence
+            max_f = jnp.max(jnp.abs(f))
+            residual_converged = max_f < abstol
+
+            # Solve: J @ delta = -f
+            delta = jax.scipy.linalg.solve(J, -f)
+
+            # Step limiting
+            max_delta = jnp.max(jnp.abs(delta))
+            scale = jnp.where(max_delta > max_step, max_step / max_delta, 1.0)
+            delta = delta * scale
+
+            # Update V (ground at index 0 stays fixed)
+            V_new = V.at[1:].add(delta)
+
+            # Check delta-based convergence
+            delta_converged = max_delta < 1e-12
+
+            converged = jnp.logical_or(residual_converged, delta_converged)
+
+            return (V_new, iteration + 1, converged, max_f, max_delta)
+
+        # Run NR loop on GPU
+        V_final, iterations, converged, max_f, max_delta = lax.while_loop(
+            cond_fn, body_fn, init_state
+        )
+
+        return V_final, iterations, converged, max_f
 
     def _compute_voltage_param(self, name: str, V: jax.Array,
                                 node_map: Dict[str, int],
