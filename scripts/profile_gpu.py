@@ -156,7 +156,8 @@ class GPUProfiler:
             sys.stderr.flush()
             warmup_start = time.perf_counter()
             runner.run_transient(t_stop=dt * warmup_steps, dt=dt,
-                                max_steps=warmup_steps, use_sparse=use_sparse)
+                                max_steps=warmup_steps, use_sparse=use_sparse,
+                                backend="gpu")
             warmup_time = time.perf_counter() - warmup_start
             log(f"      warmup done ({warmup_time:.1f}s)")
 
@@ -166,7 +167,8 @@ class GPUProfiler:
                 start = time.perf_counter()
                 times, voltages, stats = runner.run_transient(
                     t_stop=dt * num_steps, dt=dt,
-                    max_steps=num_steps, use_sparse=use_sparse
+                    max_steps=num_steps, use_sparse=use_sparse,
+                    backend="gpu"
                 )
                 elapsed = time.perf_counter() - start
 
