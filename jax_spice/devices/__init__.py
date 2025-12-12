@@ -12,29 +12,16 @@ from jax_spice.devices.vsource import (
 # Optional Verilog-A support (requires openvaf_py)
 try:
     from jax_spice.devices.verilog_a import VerilogADevice, compile_va
-    from jax_spice.devices.openvaf_device import (
-        VADevice,
-        CompiledModelBatch,
-        compile_model,
-        clear_model_cache,
-        HAS_OPENVAF,
-    )
     _HAS_VERILOG_A = True
 except ImportError:
     VerilogADevice = None
     compile_va = None
-    VADevice = None
-    CompiledModelBatch = None
-    compile_model = None
-    clear_model_cache = None
-    HAS_OPENVAF = False
     _HAS_VERILOG_A = False
 
 __all__ = [
     "Device", "DeviceStamps",
     "MOSFETSimple",
     "VerilogADevice", "compile_va",
-    "VADevice", "CompiledModelBatch", "compile_model", "clear_model_cache", "HAS_OPENVAF",
     "Resistor", "resistor",
     "Capacitor", "capacitor", "capacitor_companion",
     "VoltageSource", "CurrentSource",

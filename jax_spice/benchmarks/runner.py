@@ -6,6 +6,13 @@ and runs transient analysis using the production JAX-based solver.
 For circuits with OpenVAF-compiled devices (like PSP103 MOSFETs), uses a
 hybrid solver that combines the JIT-compiled solver for simple devices
 with Python-based Newton-Raphson for complex Verilog-A models.
+
+TODO: Split out OpenVAF model compilation and caching into a separate module
+(e.g., jax_spice/devices/openvaf_compiler.py) so it can be reused by other
+components. The key functionality is:
+- _COMPILED_MODEL_CACHE: module-level cache of compiled jitted functions
+- _compile_openvaf_models(): compiles VA files to JAX functions with vmap+jit
+- Static input preparation and batched evaluation
 """
 
 import re
