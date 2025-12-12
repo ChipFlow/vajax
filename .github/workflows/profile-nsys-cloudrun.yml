@@ -7,11 +7,11 @@ on:
         description: 'Circuit to profile'
         type: choice
         options:
-          - inv_test
-          - nor_test
-          - and_test
-          - c6288_test
-        default: and_test
+          - rc
+          - graetz
+          - mul
+          - ring
+        default: ring
       timesteps:
         description: 'Number of timesteps'
         default: '50'

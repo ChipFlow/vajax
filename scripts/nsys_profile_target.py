@@ -13,14 +13,15 @@ Usage:
     python scripts/nsys_profile_target.py [circuit] [timesteps]
 
 Arguments:
-    circuit: One of inv_test, nor_test, and_test, c6288_test (default: and_test)
+    circuit: One of rc, graetz, mul, ring (default: ring)
     timesteps: Number of timesteps to simulate (default: 50)
 
 Example:
-    nsys-jax -o /tmp/profile.zip python scripts/nsys_profile_target.py and_test 100
+    nsys-jax -o /tmp/profile.zip python scripts/nsys_profile_target.py ring 100
 """
 import argparse
 import sys
+from pathlib import Path
 
 sys.path.insert(0, ".")
 
@@ -29,7 +30,7 @@ import jax
 jax.config.update("jax_enable_x64", True)
 
 from jax_spice.analysis.transient import transient_analysis_vectorized
-from jax_spice.benchmarks.c6288 import C6288Benchmark
+from jax_spice.benchmarks import VACASKBenchmarkRunner
 
 
 def main():
@@ -37,9 +38,9 @@ def main():
     parser.add_argument(
         "circuit",
         nargs="?",
-        default="and_test",
-        choices=["inv_test", "nor_test", "and_test", "c6288_test"],
-        help="Circuit to profile (default: and_test)",
+        default="ring",
+        choices=["rc", "graetz", "mul", "ring"],
+        help="Circuit to profile (default: ring)",
     )
     parser.add_argument(
         "timesteps",
@@ -53,6 +54,12 @@ def main():
         action="store_true",
         help="Skip warmup run (includes JIT compilation in profile)",
     )
+    parser.add_argument(
+        "--backend",
+        default="gpu",
+        choices=["cpu", "gpu", "auto"],
+        help="Backend to use (default: gpu)",
+    )
     args = parser.parse_args()
 
     print(f"JAX backend: {jax.default_backend()}")
@@ -61,16 +68,28 @@ def main():
     print(f"Timesteps: {args.timesteps}")
     print()
 
-    # Setup circuit
-    print("Setting up circuit...")
-    bench = C6288Benchmark(verbose=False)
-    bench.parse()
-    bench.flatten(args.circuit)
-    bench.build_system(args.circuit)
-    system = bench.system
+    # Find benchmark .sim file
+    script_dir = Path(__file__).parent
+    repo_root = script_dir.parent
+    sim_path = repo_root / "vendor" / "VACASK" / "benchmark" / args.circuit / "vacask" / "runme.sim"
+
+    if not sim_path.exists():
+        print(f"ERROR: Benchmark file not found: {sim_path}")
+        sys.exit(1)
+
+    # Setup circuit using VACASKBenchmarkRunner
+    print(f"Setting up circuit from {sim_path}...")
+    runner = VACASKBenchmarkRunner(sim_path, verbose=False)
+    runner.parse()
+    system = runner.to_mna_system()
     system.build_device_groups()
 
     print(f"Circuit size: {system.num_nodes} nodes, {len(system.devices)} devices")
+    print()
+
+    # Timestep from analysis params or default
+    dt = runner.analysis_params.get("step", 1e-12)
+    print(f"Using dt={dt}")
     print()
 
     if not args.skip_warmup:
@@ -78,10 +97,9 @@ def main():
         print("Warmup run (JIT compilation)...")
         _, _, _ = transient_analysis_vectorized(
             system,
-            t_stop=1e-12,
-            t_step=1e-12,
-            initial_conditions={},  # Use DC operating point
-            backend="gpu",
+            t_stop=dt,
+            t_step=dt,
+            backend=args.backend,
         )
         print("Warmup complete")
         print()
@@ -90,10 +108,9 @@ def main():
     print(f"Starting profiled run ({args.timesteps} timesteps)...")
     times, solutions, info = transient_analysis_vectorized(
         system,
-        t_stop=args.timesteps * 1e-12,
-        t_step=1e-12,
-        initial_conditions={},  # Use DC operating point
-        backend="gpu",
+        t_stop=args.timesteps * dt,
+        t_step=dt,
+        backend=args.backend,
     )
 
     print()
