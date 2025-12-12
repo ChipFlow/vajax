@@ -829,7 +829,7 @@ class VACASKBenchmarkRunner:
                 sources[dev['name']] = lambda t, v=dc_val: v
 
             elif source_type == 'pulse':
-                # Pulse source
+                # Pulse source - using jnp.where for GPU compatibility
                 val0 = params.get('val0', 0)
                 val1 = params.get('val1', 1)
                 rise = params.get('rise', 1e-9)
@@ -839,17 +839,23 @@ class VACASKBenchmarkRunner:
                 delay = params.get('delay', 0)
 
                 def pulse_fn(t, v0=val0, v1=val1, r=rise, f=fall, w=width, p=period, d=delay):
-                    if t < d:
-                        return v0
+                    # Use jnp.where for GPU-friendly conditionals
                     t_in_period = (t - d) % p
-                    if t_in_period < r:
-                        return v0 + (v1 - v0) * t_in_period / r
-                    elif t_in_period < r + w:
-                        return v1
-                    elif t_in_period < r + w + f:
-                        return v1 - (v1 - v0) * (t_in_period - r - w) / f
-                    else:
-                        return v0
+                    # Rising edge
+                    rising = v0 + (v1 - v0) * t_in_period / r
+                    # Falling edge
+                    falling = v1 - (v1 - v0) * (t_in_period - r - w) / f
+                    # Select based on phase
+                    return jnp.where(
+                        t < d, v0,
+                        jnp.where(
+                            t_in_period < r, rising,
+                            jnp.where(
+                                t_in_period < r + w, v1,
+                                jnp.where(t_in_period < r + w + f, falling, v0)
+                            )
+                        )
+                    )
 
                 sources[dev['name']] = pulse_fn
 
@@ -1104,12 +1110,15 @@ class VACASKBenchmarkRunner:
                 # Pre-compute voltage node arrays for vectorized update
                 n_devices = len(device_contexts)
                 n_voltages = len(voltage_indices)
-                voltage_node1 = jnp.zeros((n_devices, n_voltages), dtype=jnp.int32)
-                voltage_node2 = jnp.zeros((n_devices, n_voltages), dtype=jnp.int32)
-                for dev_idx, ctx in enumerate(device_contexts):
-                    for i, (n1, n2) in enumerate(ctx['voltage_node_pairs']):
-                        voltage_node1 = voltage_node1.at[dev_idx, i].set(n1)
-                        voltage_node2 = voltage_node2.at[dev_idx, i].set(n2)
+                # Build arrays directly from list comprehension (setup phase only)
+                voltage_node1 = jnp.array([
+                    [n1 for n1, n2 in ctx['voltage_node_pairs']]
+                    for ctx in device_contexts
+                ], dtype=jnp.int32)
+                voltage_node2 = jnp.array([
+                    [n2 for n1, n2 in ctx['voltage_node_pairs']]
+                    for ctx in device_contexts
+                ], dtype=jnp.int32)
 
                 if backend == "gpu":
                     with jax.default_device(device):
