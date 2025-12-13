@@ -1878,7 +1878,8 @@ class VACASKBenchmarkRunner:
                     diag_idx = jnp.arange(n_unknowns, dtype=jnp.int32)
                     all_j_rows = jnp.concatenate([all_j_rows, diag_idx])
                     all_j_cols = jnp.concatenate([all_j_cols, diag_idx])
-                    all_j_vals = jnp.concatenate([all_j_vals, jnp.full(n_unknowns, 1e-6)])
+                    # Large regularization needed for GPU spsolve (stricter than scipy)
+                    all_j_vals = jnp.concatenate([all_j_vals, jnp.full(n_unknowns, 1e-3)])
 
                     # Build BCOO with duplicates (BCSR.from_bcoo handles them)
                     indices = jnp.stack([all_j_rows, all_j_cols], axis=1)
