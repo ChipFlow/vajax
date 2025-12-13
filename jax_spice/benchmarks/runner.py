@@ -1439,6 +1439,27 @@ class VACASKBenchmarkRunner:
             self._cached_solver_key = cache_key
             logger.info(f"Cached {'dense' if use_dense else 'sparse'} NR solver")
 
+            # Warmup: explicit lower/compile phases with timing
+            import time as time_module
+            warmup_V = jnp.zeros(n_nodes, dtype=jnp.float64)
+            warmup_vsource = jnp.zeros(n_vsources, dtype=jnp.float64)
+            warmup_isource = jnp.zeros(n_isources, dtype=jnp.float64)
+
+            logger.info("Warmup: lowering (tracing JAX IR)...")
+            t0 = time_module.perf_counter()
+            lowered = nr_solve.lower(warmup_V, warmup_vsource, warmup_isource)
+            t1 = time_module.perf_counter()
+            logger.info(f"Warmup: lowered in {t1-t0:.1f}s")
+
+            logger.info("Warmup: compiling (XLA compilation)...")
+            compiled = lowered.compile()
+            t2 = time_module.perf_counter()
+            logger.info(f"Warmup: compiled in {t2-t1:.1f}s")
+
+            # Replace nr_solve with compiled version for faster subsequent calls
+            nr_solve = compiled
+            self._cached_nr_solve = nr_solve
+
         times = []
 
         logger.info(f"initialising voltages: {n_external}")
