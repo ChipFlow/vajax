@@ -5,6 +5,9 @@ Profiles CPU/GPU performance of VACASK benchmark circuits using VACASKBenchmarkR
 Compares dense vs sparse solvers across different circuit sizes.
 Outputs a report suitable for GitHub Actions job summaries.
 
+Each benchmark runs in a separate subprocess to ensure complete memory cleanup
+between benchmarks and avoid OOM from GPU memory accumulation.
+
 Usage:
     # Local benchmarking
     uv run scripts/profile_gpu.py
@@ -21,8 +24,9 @@ import os
 import sys
 import time
 import json
+import subprocess
 from pathlib import Path
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, asdict
 from typing import Dict, List, Optional, Tuple
 from contextlib import nullcontext
 
@@ -132,8 +136,8 @@ class GPUProfiler:
             total_nodes_estimate = nodes + estimated_internal
             logger.info(f"      nodes: {nodes} external, ~{estimated_internal} internal ({total_nodes_estimate} total)")
 
-            # Always use GPU backend (checked at startup)
-            selected_backend = "gpu"
+            # Use GPU if available, otherwise CPU
+            selected_backend = "gpu" if any(d.platform == 'gpu' for d in jax.devices()) else "cpu"
 
             # Skip sparse for non-OpenVAF circuits (they use JIT solver)
             if use_sparse and not runner._has_openvaf_devices:
@@ -179,7 +183,7 @@ class GPUProfiler:
             actual_steps = len(times)
             time_per_step = (elapsed / actual_steps * 1000) if actual_steps > 0 else 0
 
-            solver='sparse' if use_sparse else 'dense',
+            solver = 'sparse' if use_sparse else 'dense'
 
             logger.info(f"benchmark ({solver}) ran in {elapsed:.2f}s and {actual_steps} steps")
 
@@ -291,6 +295,88 @@ def get_vacask_benchmarks(names: Optional[List[str]] = None) -> List[Tuple[str, 
     return benchmarks
 
 
+def run_single_benchmark(args):
+    """Run a single benchmark in subprocess mode and output JSON result."""
+    # Parse the single benchmark spec: "name:dense" or "name:sparse"
+    parts = args.single.split(':')
+    if len(parts) != 2:
+        print(json.dumps({'error': f'Invalid --single format: {args.single}'}))
+        sys.exit(1)
+
+    name, solver = parts
+    use_sparse = solver == 'sparse'
+
+    # Find the benchmark
+    benchmarks = get_vacask_benchmarks([name])
+    if not benchmarks:
+        print(json.dumps({'error': f'Benchmark not found: {name}'}))
+        sys.exit(1)
+
+    _, sim_path = benchmarks[0]
+
+    # Run the benchmark
+    profiler = GPUProfiler()
+    result = profiler.run_benchmark(
+        sim_path, name, use_sparse=use_sparse,
+        num_steps=args.timesteps
+    )
+
+    # Output JSON result
+    print(json.dumps(asdict(result)))
+
+
+def run_benchmark_subprocess(name: str, solver: str, timesteps: int, warmup_steps: int) -> Optional[BenchmarkResult]:
+    """Run a benchmark in a separate subprocess to ensure memory cleanup."""
+    script_path = Path(__file__)
+    cmd = [
+        sys.executable, str(script_path),
+        '--single', f'{name}:{solver}',
+        '--timesteps', str(timesteps),
+        '--warmup-steps', str(warmup_steps),
+    ]
+
+    try:
+        result = subprocess.run(
+            cmd,
+            capture_output=True,
+            text=True,
+            timeout=1800,  # 30 minute timeout
+            env={**os.environ, 'JAX_PLATFORMS': 'cuda'},
+        )
+
+        # Find the JSON line in output (last non-empty line)
+        stdout_lines = [l for l in result.stdout.strip().split('\n') if l.strip()]
+        if not stdout_lines:
+            logger.error(f"  No output from subprocess")
+            logger.error(f"  stderr: {result.stderr[:500] if result.stderr else 'none'}")
+            return None
+
+        # Try to parse the last line as JSON
+        json_line = stdout_lines[-1]
+        try:
+            data = json.loads(json_line)
+            if 'error' in data and data.get('nodes') is None:
+                logger.error(f"  Subprocess error: {data['error']}")
+                return None
+            return BenchmarkResult(**data)
+        except json.JSONDecodeError:
+            logger.error(f"  Failed to parse JSON from subprocess")
+            logger.error(f"  Last line: {json_line[:200]}")
+            return None
+
+    except subprocess.TimeoutExpired:
+        logger.error(f"  Benchmark timed out after 30 minutes")
+        return BenchmarkResult(
+            name=name, nodes=0, devices=0, openvaf_devices=0,
+            timesteps=0, total_time_s=0, time_per_step_ms=0,
+            solver=solver, backend='gpu', converged=False,
+            error="Timeout after 30 minutes"
+        )
+    except Exception as e:
+        logger.error(f"  Subprocess failed: {e}")
+        return None
+
+
 def main():
     parser = argparse.ArgumentParser(
         description="Profile VACASK benchmarks on CPU/GPU"
@@ -328,7 +414,24 @@ def main():
         action="store_true",
         help="Only run dense solver (skip sparse comparison)",
     )
+    parser.add_argument(
+        "--single",
+        type=str,
+        default=None,
+        help="Internal: run single benchmark (format: name:sparse|dense)",
+    )
+    parser.add_argument(
+        "--warmup-steps",
+        type=int,
+        default=5,
+        help="Number of warmup steps for JIT compilation (default: 5)",
+    )
     args = parser.parse_args()
+
+    # Single benchmark mode (run in subprocess)
+    if args.single:
+        run_single_benchmark(args)
+        return
 
     logger.info("=" * 70)
     logger.info("JAX-SPICE GPU Profiling")
@@ -369,6 +472,7 @@ def main():
         logger.info(f"  Created trace directory: {args.trace_dir}")
 
     logger.info("[Stage 3/4] Running benchmarks...")
+    logger.info("  (Each benchmark runs in a separate subprocess for memory isolation)")
     logger.info("")
 
     # Use trace context for entire benchmark suite if tracing
@@ -391,29 +495,33 @@ def main():
                 if not args.sparse_only:
                     logger.info(f"    Skipping dense (would need ~56GB memory)")
 
-            # Run dense
+            # Run dense (in subprocess)
             if run_dense:
-                result_dense = profiler.run_benchmark(
-                    sim_path, name, use_sparse=False,
-                    num_steps=args.timesteps
-                )
-                profiler.results.append(result_dense)
-                if result_dense.error:
-                    logger.info(f"    dense:  ERROR - {result_dense.error}")
+                logger.info(f"    dense:  running in subprocess...")
+                sys.stdout.flush()
+                result_dense = run_benchmark_subprocess(name, 'dense', args.timesteps, args.warmup_steps)
+                if result_dense:
+                    profiler.results.append(result_dense)
+                    if result_dense.error:
+                        logger.info(f"    dense:  ERROR - {result_dense.error}")
+                    else:
+                        logger.info(f"    dense:  {result_dense.time_per_step_ms:.1f}ms/step ({result_dense.timesteps} steps)")
                 else:
-                    logger.info(f"    dense:  {result_dense.time_per_step_ms:.1f}ms/step ({result_dense.timesteps} steps)")
+                    logger.info(f"    dense:  FAILED (subprocess error)")
 
-            # Run sparse
+            # Run sparse (in subprocess)
             if run_sparse:
-                result_sparse = profiler.run_benchmark(
-                    sim_path, name, use_sparse=True,
-                    num_steps=args.timesteps
-                )
-                profiler.results.append(result_sparse)
-                if result_sparse.error:
-                    logger.info(f"    sparse: {result_sparse.error}")
+                logger.info(f"    sparse: running in subprocess...")
+                sys.stdout.flush()
+                result_sparse = run_benchmark_subprocess(name, 'sparse', args.timesteps, args.warmup_steps)
+                if result_sparse:
+                    profiler.results.append(result_sparse)
+                    if result_sparse.error:
+                        logger.info(f"    sparse: {result_sparse.error}")
+                    else:
+                        logger.info(f"    sparse: {result_sparse.time_per_step_ms:.1f}ms/step ({result_sparse.timesteps} steps)")
                 else:
-                    logger.info(f"    sparse: {result_sparse.time_per_step_ms:.1f}ms/step ({result_sparse.timesteps} steps)")
+                    logger.info(f"    sparse: FAILED (subprocess error)")
 
             logger.info("")
 
