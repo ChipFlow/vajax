@@ -1374,11 +1374,17 @@ class VACASKBenchmarkRunner:
             build_system_fn = self._make_gpu_resident_build_system_fn(
                 source_device_data, vmapped_fns, static_inputs_cache, n_unknowns, use_dense
             )
-            logger.info("Created GPU-resident build_system function")
+
+            # Pre-JIT build_system_fn separately (layered compilation)
+            # This compiles device evaluation + matrix assembly as a separate unit,
+            # so nr_solve's trace only includes loop control + linear algebra
+            build_system_jit = jax.jit(build_system_fn)
+            logger.info("Pre-JIT compiled build_system function")
 
             # AoT compile NR solver (trace -> lower -> compile)
+            # Since build_system_jit is already compiled, this trace is small
             nr_solve = self._make_aot_compiled_solver(
-                build_system_fn, n_nodes, n_vsources, n_isources,
+                build_system_jit, n_nodes, n_vsources, n_isources,
                 max_iterations=MAX_NR_ITERATIONS, abstol=1e-9, max_step=1.0
             )
 
@@ -1815,7 +1821,7 @@ class VACASKBenchmarkRunner:
 
     def _make_aot_compiled_solver(
         self,
-        build_system_fn: Callable,
+        build_system_jit: Callable,
         n_nodes: int,
         n_vsources: int,
         n_isources: int,
@@ -1825,15 +1831,16 @@ class VACASKBenchmarkRunner:
     ) -> Callable:
         """Create an AoT-compiled NR solver with explicit shape specs.
 
-        Uses JAX's ahead-of-time compilation to:
-        1. Trace the function with ShapeDtypeStruct (no actual data needed)
-        2. Lower to StableHLO
-        3. Compile to optimized executable
+        Uses layered JIT compilation for efficient compilation of large circuits:
+        - build_system_jit should already be JIT-compiled (via jax.jit)
+        - This function's AoT trace only includes loop control + linear algebra
+        - Device evaluation and matrix assembly are NOT traced inline
 
-        The compiled function can be cached and reused for identical shapes.
+        This layered approach prevents OOM during AoT compilation for large
+        circuits like c6288 (86k nodes, 10k devices).
 
         Args:
-            build_system_fn: Function (V, vsource_vals, isource_vals) -> (J, f)
+            build_system_jit: Pre-JIT'd function (V, vsource_vals, isource_vals) -> (J, f)
             n_nodes: Total node count including ground (V.shape[0])
             n_vsources: Number of voltage sources
             n_isources: Number of current sources
@@ -1863,8 +1870,8 @@ class VACASKBenchmarkRunner:
             def body_fn(state):
                 V, iteration, _, _, _ = state
 
-                # Build system (J and f) - build_system_fn captured in closure
-                J, f = build_system_fn(V, vsource_vals, isource_vals)
+                # Build system (J and f) - calls pre-JIT'd function (not traced inline)
+                J, f = build_system_jit(V, vsource_vals, isource_vals)
 
                 # Check residual convergence
                 max_f = jnp.max(jnp.abs(f))
