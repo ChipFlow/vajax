@@ -1384,7 +1384,7 @@ class VACASKBenchmarkRunner:
             # This allows nested JIT to work correctly
             nr_solve = self._make_jit_compiled_solver(
                 build_system_jit, n_nodes,
-                max_iterations=MAX_NR_ITERATIONS, abstol=1e-9, max_step=1.0
+                max_iterations=MAX_NR_ITERATIONS, abstol=1e-6, max_step=1.0
             )
 
             # Cache for reuse within this instance
@@ -1800,8 +1800,8 @@ class VACASKBenchmarkRunner:
                         all_j_vals, flat_indices, num_segments=n_unknowns * n_unknowns
                     )
                     J = J_flat.reshape((n_unknowns, n_unknowns))
-                    # Add regularization
-                    J = J + 1e-12 * jnp.eye(n_unknowns, dtype=jnp.float64)
+                    # Add regularization (1e-9 matches sparse solver)
+                    J = J + 1e-9 * jnp.eye(n_unknowns, dtype=jnp.float64)
                 else:
                     # Sparse path - return COO data for external handling
                     # For now, still build dense (sparse lax.while_loop needs more work)
@@ -1823,7 +1823,7 @@ class VACASKBenchmarkRunner:
         build_system_jit: Callable,
         n_nodes: int,
         max_iterations: int = MAX_NR_ITERATIONS,
-        abstol: float = 1e-9,
+        abstol: float = 1e-6,
         max_step: float = 1.0,
     ) -> Callable:
         """Create a JIT-compiled NR solver with nested JIT for build_system.
@@ -1864,11 +1864,12 @@ class VACASKBenchmarkRunner:
                 # Build system (J and f) - calls JIT'd function
                 J, f = build_system_jit(V, vsource_vals, isource_vals)
 
-                # Check residual convergence
-                max_f = jnp.max(jnp.abs(f))
+                # Check residual convergence (exclude ground at index 0)
+                # Ground's residual includes current source stamps but ground is pinned
+                max_f = jnp.max(jnp.abs(f[1:]))
                 residual_converged = max_f < abstol
 
-                # Solve: J @ delta = -f
+                # Solve: J @ delta = -f (only updating non-ground nodes)
                 delta = jax.scipy.linalg.solve(J, -f)
 
                 # Step limiting
