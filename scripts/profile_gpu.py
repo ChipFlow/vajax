@@ -56,7 +56,12 @@ enable_performance_logging()
 
 @dataclass
 class BenchmarkResult:
-    """Results from a single benchmark run"""
+    """Results from a single benchmark run.
+
+    Metrics are designed to be directly comparable with VACASK benchmark.py output:
+    - total_time_s: Total wall-clock time for the simulation (comparable to VACASK "Runtime")
+    - time_per_step_ms: Derived metric for per-step performance analysis
+    """
     name: str
     nodes: int
     devices: int
@@ -66,6 +71,9 @@ class BenchmarkResult:
     time_per_step_ms: float
     solver: str  # 'dense' or 'sparse'
     backend: str  # 'cpu' or 'gpu'
+    # Analysis parameters (for VACASK comparison)
+    t_stop: float = 0.0  # Simulation stop time (seconds)
+    dt: float = 0.0  # Time step (seconds)
     converged: bool = True
     error: Optional[str] = None
 
@@ -93,20 +101,22 @@ class GPUProfiler:
         return 0.0
 
     def run_benchmark(self, sim_path: Path, name: str, use_sparse: bool,
-                      num_steps: int = 20, trace_ctx=None) -> BenchmarkResult:
+                      num_steps: int = 20, trace_ctx=None, full: bool = False,
+                      warmup_steps: int = 5) -> BenchmarkResult:
         """Run a single benchmark configuration.
 
         Args:
             sim_path: Path to the .sim file
             name: Benchmark name
             use_sparse: Whether to use sparse solver
-            num_steps: Number of timesteps for timing
+            num_steps: Number of timesteps for timing (ignored if full=True)
             trace_ctx: Optional JAX profiler trace context for Perfetto
+            full: If True, use original VACASK parameters for comparable results
+            warmup_steps: Number of warmup steps for JIT compilation
 
         Returns:
             BenchmarkResult with timing information
         """
-        warmup_steps = 5  # Fixed warmup for JIT compilation
         import sys
         logger.info("      starting...")
         sys.stdout.flush()
@@ -155,8 +165,19 @@ class GPUProfiler:
                     error="Sparse not applicable (no OpenVAF devices)"
                 )
 
-            # Get analysis params
+            # Get analysis params from .sim file
             dt = runner.analysis_params.get('step', 1e-12)
+            t_stop_original = runner.analysis_params.get('stop', 1e-9)
+
+            if full:
+                # Use original VACASK parameters for comparable benchmarking
+                t_stop = t_stop_original
+                expected_steps = int(t_stop / dt)
+                logger.info(f"      FULL mode: t_stop={t_stop:.2e}s, dt={dt:.2e}s ({expected_steps} steps)")
+            else:
+                # Use reduced parameters for quick testing
+                t_stop = dt * num_steps
+                expected_steps = num_steps
 
             # Warmup run (includes JIT compilation)
             logger.info(f"      warmup ({warmup_steps} steps, includes JIT)...")
@@ -170,12 +191,16 @@ class GPUProfiler:
             logger.info(f"      warmup done ({warmup_time:.1f}s)")
 
             # Timed run (optionally with tracing)
+            # This is the measurement comparable to VACASK benchmark.py "Runtime"
             ctx = trace_ctx if trace_ctx else nullcontext()
+            logger.info(f"      timed run: t_stop={t_stop:.2e}s, dt={dt:.2e}s...")
+            sys.stdout.flush()
             with ctx:
                 start = time.perf_counter()
                 times, voltages, stats = runner.run_transient(
-                    t_stop=dt * num_steps, dt=dt,
-                    max_steps=num_steps, use_sparse=use_sparse,
+                    t_stop=t_stop, dt=dt,
+                    max_steps=expected_steps * 2,  # Allow some margin
+                    use_sparse=use_sparse,
                     backend=selected_backend
                 )
                 elapsed = time.perf_counter() - start
@@ -185,7 +210,14 @@ class GPUProfiler:
 
             solver = 'sparse' if use_sparse else 'dense'
 
-            logger.info(f"benchmark ({solver}) ran in {elapsed:.2f}s and {actual_steps} steps")
+            # Log in VACASK-comparable format
+            logger.info(f"")
+            logger.info(f"      === VACASK-comparable metrics ===")
+            logger.info(f"      Runtime:        {elapsed:.3f}s")
+            logger.info(f"      Timesteps:      {actual_steps}")
+            logger.info(f"      Time per step:  {time_per_step:.3f}ms")
+            logger.info(f"      Solver:         {solver}")
+            logger.info(f"      Backend:        {selected_backend}")
 
             return BenchmarkResult(
                 name=name,
@@ -196,7 +228,9 @@ class GPUProfiler:
                 total_time_s=elapsed,
                 time_per_step_ms=time_per_step,
                 solver=solver,
-                backend=backend,
+                backend=selected_backend,
+                t_stop=t_stop,
+                dt=dt,
                 converged=True,
             )
 
@@ -239,21 +273,36 @@ class GPUProfiler:
         lines.append(f"- **Total Profiling Time**: {self.total_time_s:.3f}s")
         lines.append("")
 
-        # Results table
+        # VACASK-comparable results (main table)
         if self.results:
-            lines.append("## Benchmark Results\n")
-            lines.append("| Benchmark | Nodes | Devices | OpenVAF | Solver | Steps | Total (s) | Per Step (ms) | Status |")
-            lines.append("|-----------|-------|---------|---------|--------|-------|-----------|---------------|--------|")
+            lines.append("## VACASK-Comparable Results\n")
+            lines.append("These metrics are directly comparable with VACASK benchmark.py output.\n")
+            lines.append("| Benchmark | Solver | t_stop | dt | Steps | Runtime (s) | Status |")
+            lines.append("|-----------|--------|--------|-----|-------|-------------|--------|")
 
             for r in self.results:
                 status = "OK" if r.converged and not r.error else (r.error or "Failed")
-                if len(status) > 20:
-                    status = status[:17] + "..."
+                if len(status) > 15:
+                    status = status[:12] + "..."
+                t_stop_str = f"{r.t_stop:.2e}" if r.t_stop else "N/A"
+                dt_str = f"{r.dt:.2e}" if r.dt else "N/A"
                 lines.append(
-                    f"| {r.name} | {r.nodes} | {r.devices} | {r.openvaf_devices} | "
-                    f"{r.solver} | {r.timesteps} | {r.total_time_s:.3f} | "
-                    f"{r.time_per_step_ms:.1f} | {status} |"
+                    f"| {r.name} | {r.solver} | {t_stop_str} | {dt_str} | "
+                    f"{r.timesteps} | **{r.total_time_s:.3f}** | {status} |"
                 )
+            lines.append("")
+
+            # Detailed results table
+            lines.append("## Detailed Results\n")
+            lines.append("| Benchmark | Nodes | Devices | OpenVAF | Solver | Per Step (ms) | Backend |")
+            lines.append("|-----------|-------|---------|---------|--------|---------------|---------|")
+
+            for r in self.results:
+                if r.converged and not r.error:
+                    lines.append(
+                        f"| {r.name} | {r.nodes} | {r.devices} | {r.openvaf_devices} | "
+                        f"{r.solver} | {r.time_per_step_ms:.3f} | {r.backend} |"
+                    )
             lines.append("")
 
             # Dense vs Sparse comparison
@@ -262,16 +311,16 @@ class GPUProfiler:
 
             if dense_results and sparse_results:
                 lines.append("## Dense vs Sparse Comparison\n")
-                lines.append("| Benchmark | Dense (ms/step) | Sparse (ms/step) | Speedup |")
-                lines.append("|-----------|-----------------|------------------|---------|")
+                lines.append("| Benchmark | Dense Runtime (s) | Sparse Runtime (s) | Speedup |")
+                lines.append("|-----------|-------------------|--------------------|---------| ")
 
                 for dr in dense_results:
                     sr = next((r for r in sparse_results if r.name == dr.name), None)
-                    if sr and sr.time_per_step_ms > 0:
-                        speedup = dr.time_per_step_ms / sr.time_per_step_ms
+                    if sr and sr.total_time_s > 0:
+                        speedup = dr.total_time_s / sr.total_time_s
                         lines.append(
-                            f"| {dr.name} | {dr.time_per_step_ms:.1f} | "
-                            f"{sr.time_per_step_ms:.1f} | {speedup:.2f}x |"
+                            f"| {dr.name} | {dr.total_time_s:.3f} | "
+                            f"{sr.total_time_s:.3f} | {speedup:.2f}x |"
                         )
                 lines.append("")
 
@@ -318,14 +367,17 @@ def run_single_benchmark(args):
     profiler = GPUProfiler()
     result = profiler.run_benchmark(
         sim_path, name, use_sparse=use_sparse,
-        num_steps=args.timesteps
+        num_steps=args.timesteps,
+        full=args.full,
+        warmup_steps=args.warmup_steps,
     )
 
     # Output JSON result
     print(json.dumps(asdict(result)))
 
 
-def run_benchmark_subprocess(name: str, solver: str, timesteps: int, warmup_steps: int) -> Optional[BenchmarkResult]:
+def run_benchmark_subprocess(name: str, solver: str, timesteps: int, warmup_steps: int,
+                              full: bool = False) -> Optional[BenchmarkResult]:
     """Run a benchmark in a separate subprocess to ensure memory cleanup.
 
     Streams stdout/stderr in real-time and captures the JSON result from the last line.
@@ -337,6 +389,8 @@ def run_benchmark_subprocess(name: str, solver: str, timesteps: int, warmup_step
         '--timesteps', str(timesteps),
         '--warmup-steps', str(warmup_steps),
     ]
+    if full:
+        cmd.append('--full')
 
     try:
         # Start subprocess with pipes for streaming
@@ -439,6 +493,11 @@ def main():
         default=5,
         help="Number of warmup steps for JIT compilation (default: 5)",
     )
+    parser.add_argument(
+        "--full",
+        action="store_true",
+        help="Run with original VACASK parameters (full simulation, comparable results)",
+    )
     args = parser.parse_args()
 
     # Single benchmark mode (run in subprocess)
@@ -512,13 +571,13 @@ def main():
             if run_dense:
                 logger.info(f"    dense:  running in subprocess...")
                 sys.stdout.flush()
-                result_dense = run_benchmark_subprocess(name, 'dense', args.timesteps, args.warmup_steps)
+                result_dense = run_benchmark_subprocess(name, 'dense', args.timesteps, args.warmup_steps, args.full)
                 if result_dense:
                     profiler.results.append(result_dense)
                     if result_dense.error:
                         logger.info(f"    dense:  ERROR - {result_dense.error}")
                     else:
-                        logger.info(f"    dense:  {result_dense.time_per_step_ms:.1f}ms/step ({result_dense.timesteps} steps)")
+                        logger.info(f"    dense:  {result_dense.total_time_s:.3f}s total, {result_dense.timesteps} steps")
                 else:
                     logger.info(f"    dense:  FAILED (subprocess error)")
 
@@ -526,13 +585,13 @@ def main():
             if run_sparse:
                 logger.info(f"    sparse: running in subprocess...")
                 sys.stdout.flush()
-                result_sparse = run_benchmark_subprocess(name, 'sparse', args.timesteps, args.warmup_steps)
+                result_sparse = run_benchmark_subprocess(name, 'sparse', args.timesteps, args.warmup_steps, args.full)
                 if result_sparse:
                     profiler.results.append(result_sparse)
                     if result_sparse.error:
                         logger.info(f"    sparse: {result_sparse.error}")
                     else:
-                        logger.info(f"    sparse: {result_sparse.time_per_step_ms:.1f}ms/step ({result_sparse.timesteps} steps)")
+                        logger.info(f"    sparse: {result_sparse.total_time_s:.3f}s total, {result_sparse.timesteps} steps")
                 else:
                     logger.info(f"    sparse: FAILED (subprocess error)")
 
