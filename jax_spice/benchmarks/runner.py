@@ -100,6 +100,31 @@ class VACASKBenchmarkRunner:
         self._compiled_models: Dict[str, Any] = {}
         self._has_openvaf_devices = False
 
+    def clear_cache(self):
+        """Clear all cached data to free memory between benchmarks.
+
+        This should be called after completing a benchmark run to release:
+        - Compiled OpenVAF models
+        - Cached JIT-compiled NR solvers
+        - JAX internal compilation caches
+        """
+        import gc
+
+        # Clear instance caches
+        self._compiled_models.clear()
+        if hasattr(self, '_cached_nr_solve'):
+            del self._cached_nr_solve
+        if hasattr(self, '_cached_solver_key'):
+            del self._cached_solver_key
+
+        # Clear JAX compilation caches
+        jax.clear_caches()
+
+        # Force garbage collection
+        gc.collect()
+
+        logger.info("Cleared caches and freed memory")
+
     def parse_spice_number(self, s: str) -> float:
         """Parse SPICE number with suffix (e.g., 1u, 100n, 1.5k)"""
         if not isinstance(s, str):
