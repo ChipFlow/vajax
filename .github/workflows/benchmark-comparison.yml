@@ -67,8 +67,8 @@ jobs:
           # Skip Windows cross-compilation library generation (we only need Linux)
           RUST_CHECK: "1"
         run: |
-          # Build only openvaf package with llvm18 feature
-          cargo build --release -p openvaf --bin openvaf-r --no-default-features --features llvm18
+          # Build openvaf-r binary (in openvaf-driver package) with llvm18 feature
+          cargo build --release -p openvaf-driver --bin openvaf-r --no-default-features --features llvm18
           echo "OPENVAF_DIR=${{ github.workspace }}/openvaf-py/vendor/OpenVAF/target/release" >> "$GITHUB_ENV"
 
       - name: Install jax-spice
