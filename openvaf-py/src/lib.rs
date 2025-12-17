@@ -75,6 +75,15 @@ struct VaModule {
     /// Number of cached values from init
     #[pyo3(get)]
     num_cached_values: usize,
+
+    // Node collapse support
+    /// Collapsible node pairs: (node1_idx, node2_idx_or_ground)
+    /// If node2 is u32::MAX, it means collapse to ground
+    #[pyo3(get)]
+    collapsible_pairs: Vec<(u32, u32)>,
+    /// Number of collapsible pairs
+    #[pyo3(get)]
+    num_collapsible: usize,
 }
 
 #[pymethods]
@@ -943,6 +952,18 @@ fn compile_va(path: &str, allow_analog_in_cond: bool) -> PyResult<Vec<VaModule>>
             })
             .collect();
 
+        // Extract collapsible pairs for node collapse support
+        // Each pair is (node1_idx, node2_idx) where node2=u32::MAX means collapse to ground
+        let collapsible_pairs: Vec<(u32, u32)> = compiled.node_collapse
+            .pairs()
+            .map(|(_, node1, node2_opt)| {
+                let n1: u32 = node1.into();
+                let n2: u32 = node2_opt.map(|n| n.into()).unwrap_or(u32::MAX);
+                (n1, n2)
+            })
+            .collect();
+        let num_collapsible = collapsible_pairs.len();
+
         result.push(VaModule {
             name: module_info.module.name(&db).to_string(),
             param_names,
@@ -968,6 +989,9 @@ fn compile_va(path: &str, allow_analog_in_cond: bool) -> PyResult<Vec<VaModule>>
             init_num_params,
             cache_mapping: cache_mapping.clone(),
             num_cached_values: cache_mapping.len(),
+            // Node collapse support
+            collapsible_pairs,
+            num_collapsible,
         });
     }
 
