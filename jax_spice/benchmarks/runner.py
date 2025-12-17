@@ -524,6 +524,8 @@ class VACASKBenchmarkRunner:
                 'param_names': list(module.param_names),
                 'param_kinds': list(module.param_kinds),
                 'nodes': list(module.nodes),
+                'collapsible_pairs': list(module.collapsible_pairs),
+                'num_collapsible': module.num_collapsible,
             }
 
             # Store in both instance and module-level cache
@@ -1215,8 +1217,87 @@ class VACASKBenchmarkRunner:
 
         return times, voltages, stats
 
+    def _should_collapse_all_pairs(self, model_type: str, model_params: Dict[str, float]) -> bool:
+        """Determine if all collapsible pairs should be collapsed for a model.
+
+        For PSP103, when resistance parameters (rbulko, rwello, rjundo, rjunso) are all 0,
+        all internal nodes associated with those resistors should collapse.
+
+        Args:
+            model_type: The model type (e.g., 'psp103')
+            model_params: Model parameters dictionary
+
+        Returns:
+            True if all collapsible pairs should be collapsed
+        """
+        if model_type.lower() != 'psp103':
+            return False
+
+        # PSP103 collapse parameters - when all zero, collapse all internal nodes
+        collapse_params = ['rbulko', 'rwello', 'rjundo', 'rjunso']
+        for param in collapse_params:
+            if model_params.get(param, 0.0) != 0.0:
+                return False
+
+        return True
+
+    def _get_model_params_for_collapse(self, model_type: str) -> Dict[str, float]:
+        """Get model parameters relevant for collapse decision.
+
+        Searches through devices to find model parameters.
+        """
+        for dev in self.devices:
+            if dev.get('model') == model_type and dev.get('is_openvaf'):
+                return dev.get('params', {})
+        return {}
+
+    def _compute_collapse_roots(self, collapsible_pairs: List[Tuple[int, int]], n_nodes: int) -> Dict[int, int]:
+        """Compute the collapse root for each node using union-find.
+
+        Collapsible pairs (a, b) mean nodes a and b should be the same electrical node.
+        We use union-find to compute equivalence classes, preferring external nodes
+        (indices 0-3) as roots.
+
+        Args:
+            collapsible_pairs: List of (node1, node2) pairs that should collapse
+            n_nodes: Total number of model nodes
+
+        Returns:
+            Dict mapping each node index to its root (representative) node index
+        """
+        # Initialize parent array (each node is its own parent)
+        parent = list(range(n_nodes))
+
+        def find(x: int) -> int:
+            if parent[x] != x:
+                parent[x] = find(parent[x])  # Path compression
+            return parent[x]
+
+        def union(x: int, y: int) -> None:
+            px, py = find(x), find(y)
+            if px != py:
+                # Prefer external nodes (0-3) as root
+                if py < 4:
+                    parent[px] = py
+                elif px < 4:
+                    parent[py] = px
+                else:
+                    parent[py] = px
+
+        # Apply collapse pairs
+        for a, b in collapsible_pairs:
+            if b != 4294967295:  # u32::MAX = collapse to ground (handled separately)
+                if a < n_nodes and b < n_nodes:
+                    union(a, b)
+
+        # Build root mapping for all nodes
+        return {i: find(i) for i in range(n_nodes)}
+
     def _setup_internal_nodes(self) -> Tuple[int, Dict[str, Dict[str, int]]]:
-        """Set up internal nodes for OpenVAF devices.
+        """Set up internal nodes for OpenVAF devices with node collapse support.
+
+        Node collapse eliminates unnecessary internal nodes when model parameters
+        indicate they should be merged (e.g., when resistance parameters are 0).
 
         Returns:
             (total_nodes, device_internal_nodes) where device_internal_nodes maps
@@ -1225,6 +1306,10 @@ class VACASKBenchmarkRunner:
         n_external = self.num_nodes
         next_internal = n_external
         device_internal_nodes = {}
+
+        # Cache collapse decisions and root mappings per model type
+        collapse_decisions: Dict[str, bool] = {}
+        collapse_roots_cache: Dict[str, Dict[int, int]] = {}
 
         for dev in self.devices:
             if not dev.get('is_openvaf'):
@@ -1235,22 +1320,75 @@ class VACASKBenchmarkRunner:
             if not compiled:
                 continue
 
-            # Get model nodes (first 4 are external: D, G, S, B)
+            # Check if we should collapse nodes for this model type
+            if model_type not in collapse_decisions:
+                model_params = self._get_model_params_for_collapse(model_type)
+                collapse_decisions[model_type] = self._should_collapse_all_pairs(
+                    model_type, model_params
+                )
+
+                # Precompute collapse roots if collapsing
+                if collapse_decisions[model_type]:
+                    collapsible_pairs = compiled.get('collapsible_pairs', [])
+                    n_model_nodes = len(compiled['nodes'])
+                    collapse_roots_cache[model_type] = self._compute_collapse_roots(
+                        collapsible_pairs, n_model_nodes
+                    )
+
+            should_collapse = collapse_decisions[model_type]
             model_nodes = compiled['nodes']
             n_model_nodes = len(model_nodes)
 
-            # Allocate internal nodes (skip first 4 external and last 1 branch)
+            # Map external nodes to device's external circuit nodes (indices 0-3)
+            ext_nodes = dev['nodes']
+            ext_node_map = {}
+            for i in range(min(4, n_model_nodes)):
+                if i < len(ext_nodes):
+                    ext_node_map[i] = ext_nodes[i]
+                else:
+                    ext_node_map[i] = 0  # Ground
+
+            if should_collapse and model_type in collapse_roots_cache:
+                collapse_roots = collapse_roots_cache[model_type]
+
+                # Build node mapping using collapse roots
+                # Track which internal root nodes need circuit node allocation
+                internal_root_to_circuit: Dict[int, int] = {}
+                node_mapping: Dict[int, int] = {}
+
+                for i in range(4, n_model_nodes - 1):  # Internal nodes only (skip external and branch)
+                    root = collapse_roots.get(i, i)
+
+                    if root < 4:
+                        # Root is an external node - use its circuit node
+                        node_mapping[i] = ext_node_map[root]
+                    else:
+                        # Root is internal - need to allocate/reuse a circuit node
+                        if root not in internal_root_to_circuit:
+                            internal_root_to_circuit[root] = next_internal
+                            next_internal += 1
+                        node_mapping[i] = internal_root_to_circuit[root]
+            else:
+                # No collapse - allocate internal nodes normally
+                node_mapping = {}
+                for i in range(4, n_model_nodes - 1):
+                    node_mapping[i] = next_internal
+                    next_internal += 1
+
+            # Build internal_map: model node name -> circuit node index
             internal_map = {}
-            for i in range(4, n_model_nodes - 1):  # Skip external nodes and branch
+            for i in range(4, n_model_nodes - 1):
                 node_name = model_nodes[i]
-                internal_map[node_name] = next_internal
-                next_internal += 1
+                internal_map[node_name] = node_mapping[i]
 
             device_internal_nodes[dev['name']] = internal_map
 
         if device_internal_nodes:
             n_internal = next_internal - n_external
+            n_collapsed = sum(1 for v in collapse_decisions.values() if v)
             logger.info(f"Allocated {n_internal} internal nodes for {len(device_internal_nodes)} OpenVAF devices")
+            if n_collapsed > 0:
+                logger.info(f"  Node collapse applied to {n_collapsed} model type(s)")
 
         return next_internal, device_internal_nodes
 

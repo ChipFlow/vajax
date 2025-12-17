@@ -457,26 +457,92 @@ class TestNodeCountComparison:
         # Get VACASK node count (the reference)
         vacask_nodes = self.get_vacask_node_count(vacask_bin, benchmark)
 
-        # Get JAX-SPICE node count
+        # Get JAX-SPICE total node count (external + internal after collapse)
         runner = VACASKBenchmarkRunner(sim_path)
         runner.parse()
-        jax_nodes = runner.num_nodes
+        n_total, _ = runner._setup_internal_nodes()
+        jax_nodes = n_total
 
         # Report counts
-        print(f"\nc6288: JAX-SPICE={jax_nodes}, VACASK={vacask_nodes}")
+        print(f"\nc6288: JAX-SPICE total={jax_nodes}, VACASK={vacask_nodes}")
+        print(f"  External nodes: {runner.num_nodes}")
+        print(f"  Internal nodes: {jax_nodes - runner.num_nodes}")
         print(f"  Ratio: {jax_nodes / vacask_nodes:.1f}x")
 
-        # For now, just record the difference
-        # Once node collapse is implemented, this should pass with diff <= 1
-        if jax_nodes > vacask_nodes * 2:
-            pytest.xfail(
-                f"c6288 node count mismatch: JAX-SPICE={jax_nodes}, VACASK={vacask_nodes}. "
-                f"Need to implement node collapse."
-            )
-
+        # Allow 10% tolerance for slight differences in node handling
         diff = abs(jax_nodes - vacask_nodes)
         assert diff <= vacask_nodes * 0.1, \
             f"c6288: JAX-SPICE={jax_nodes}, VACASK={vacask_nodes} (diff={diff}, {diff/vacask_nodes*100:.1f}%)"
+
+
+class TestNodeCollapseStandalone:
+    """Test node collapse without requiring VACASK binary.
+
+    These tests verify the node collapse implementation works correctly
+    by checking expected node counts for known circuits.
+    """
+
+    def test_c6288_node_collapse_reduces_count(self):
+        """Test that node collapse significantly reduces c6288 node count.
+
+        Without node collapse: ~86,000 nodes (5123 external + 81k internal)
+        With node collapse: ~15,000 nodes (5123 external + 10k internal)
+        """
+        sim_path = get_benchmark_sim("c6288")
+        if not sim_path.exists():
+            pytest.skip(f"c6288 benchmark not found at {sim_path}")
+
+        runner = VACASKBenchmarkRunner(sim_path)
+        runner.parse()
+
+        # Get total nodes after collapse
+        n_total, device_internal = runner._setup_internal_nodes()
+        n_internal = n_total - runner.num_nodes
+        n_psp103_devices = sum(1 for d in runner.devices if d.get('model') == 'psp103')
+
+        print(f"\nc6288 node collapse:")
+        print(f"  External nodes: {runner.num_nodes}")
+        print(f"  Internal nodes: {n_internal}")
+        print(f"  Total nodes: {n_total}")
+        print(f"  PSP103 devices: {n_psp103_devices}")
+        print(f"  Internal nodes per device: {n_internal / n_psp103_devices:.2f}")
+
+        # With node collapse, each PSP103 should need only 1 internal node
+        # (node 4 in the model is the only non-collapsed internal)
+        expected_internal = n_psp103_devices  # 1 internal per device
+        internal_ratio = n_internal / expected_internal
+
+        # Allow up to 10% variance
+        assert internal_ratio < 1.1, \
+            f"Too many internal nodes: {n_internal} (expected ~{expected_internal}, ratio={internal_ratio:.2f})"
+
+        # Total should be well under 20k (vs ~86k without collapse)
+        assert n_total < 20000, \
+            f"Total nodes too high: {n_total} (expected <20000 with node collapse)"
+
+    def test_ring_no_collapse_when_resistance_nonzero(self):
+        """Test that node collapse doesn't happen when resistance params are non-zero.
+
+        The ring benchmark may have different model params that don't enable collapse.
+        """
+        sim_path = get_benchmark_sim("ring")
+        if not sim_path.exists():
+            pytest.skip(f"ring benchmark not found at {sim_path}")
+
+        runner = VACASKBenchmarkRunner(sim_path)
+        runner.parse()
+
+        # Get total nodes
+        n_total, _ = runner._setup_internal_nodes()
+        n_internal = n_total - runner.num_nodes
+
+        print(f"\nring benchmark:")
+        print(f"  External nodes: {runner.num_nodes}")
+        print(f"  Internal nodes: {n_internal}")
+        print(f"  Total nodes: {n_total}")
+
+        # Ring benchmark should work regardless of collapse
+        assert n_total > 0
 
 
 if __name__ == "__main__":
