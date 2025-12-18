@@ -1973,11 +1973,15 @@ class VACASKBenchmarkRunner:
         model_types = list(static_inputs_cache.keys())
 
         def build_system(V: jax.Array, vsource_vals: jax.Array, isource_vals: jax.Array
-                        ) -> Tuple[jax.Array, jax.Array]:
+                        ) -> Tuple[Any, jax.Array]:
             """Build Jacobian J and residual f from current voltages.
 
             Fully JAX-traceable - no Python lists or dynamic allocation.
             All device contributions are concatenated into fixed-size arrays.
+
+            Returns:
+                J: Jacobian matrix (dense jax.Array if use_dense=True, BCOO if use_dense=False)
+                f: Residual vector (jax.Array)
             """
             f_parts = []
             j_parts = []
