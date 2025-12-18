@@ -148,7 +148,7 @@ class TestVACASKBenchmarks:
 
             # Run transient analysis
             start = time.perf_counter()
-            times, voltages = runner.run_transient(
+            times, voltages, stats = runner.run_transient(
                 t_stop=t_stop, dt=dt, max_steps=max_steps, use_sparse=use_sparse
             )
             elapsed = time.perf_counter() - start
