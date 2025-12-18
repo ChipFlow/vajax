@@ -156,6 +156,17 @@ jobs:
 
             # Extract and display the comparison output
             if [ -f "/tmp/benchmark-comparison.log" ]; then
+              # Check if VACASK was available
+              if grep -q "VACASK binary: NOT FOUND" /tmp/benchmark-comparison.log; then
+                echo "### ⚠️ VACASK Not Available"
+                echo ""
+                echo "VACASK OSDI device compilation failed on Linux/LLVM18 (known upstream issue)."
+                echo "JAX-SPICE benchmarks ran successfully - showing JAX-SPICE only results."
+                echo ""
+                echo "For full comparison results, run locally on macOS or use a different LLVM version."
+                echo ""
+              fi
+
               echo "### Per-Step Timing"
               echo ""
               echo "| Benchmark | Steps | JAX-SPICE (ms/step) | VACASK (ms/step) | Ratio |"
@@ -184,10 +195,9 @@ jobs:
               echo ""
               echo "- **Ratio < 1.0**: JAX-SPICE is faster"
               echo "- **Ratio > 1.0**: JAX-SPICE is slower (overhead-dominated for small circuits)"
+              echo "- **N/A**: VACASK comparison not available"
               echo ""
-              echo "_Note: JAX-SPICE scales better than VACASK for large circuits (e.g., c6288 is 41% faster)._"
-              echo ""
-              echo "_VACASK benchmarks require OSDI device compilation which may fail on Linux/LLVM18._"
+              echo "_Note: JAX-SPICE scales better than VACASK for large circuits (e.g., c6288 is 41% faster on local macOS tests)._"
             else
               echo "**Error**: Benchmark comparison log not found"
             fi
