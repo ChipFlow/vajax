@@ -2089,6 +2089,9 @@ class VACASKBenchmarkRunner:
         # Run the fully JIT'd simulation
         all_V, all_iters, all_converged = run_all_steps(V0, all_vsource_vals, all_isource_vals)
 
+        # Wait for computation to complete (JAX operations are async)
+        all_V.block_until_ready()
+
         t3 = time_module.perf_counter()
         total_time = t3 - t2
 

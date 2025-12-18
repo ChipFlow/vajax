@@ -197,16 +197,19 @@ def run_jax_spice(config: BenchmarkConfig, num_steps: int, use_scan: bool,
         use_while_loop=use_scan
     )
 
-    # Timed run
+    # Timed run - measure full transient analysis including source pre-computation
+    # This is a fair comparison with VACASK which also evaluates sources during simulation
     start = time.perf_counter()
     times, voltages, stats = runner.run_transient(
         t_stop=t_stop, dt=config.dt,
         max_steps=num_steps, use_sparse=use_sparse,
         use_while_loop=use_scan
     )
+    # Force completion of async JAX operations
+    _ = float(voltages[0][0])
     elapsed = time.perf_counter() - start
 
-    actual_steps = len(times)
+    actual_steps = len(times) - 1  # Exclude t=0 initial condition
     time_per_step = elapsed / actual_steps * 1000
 
     return time_per_step, elapsed, stats
