@@ -121,8 +121,10 @@ jobs:
             -DCMAKE_PREFIX_PATH="/tmp/boost_1_88_0/stage/lib/cmake" \
             -DTOMLPP_DIR=/tmp/tomlplusplus-3.4.0 \
             -DOPENVAF_DIR="${OPENVAF_DIR}"
-          # Build simulator only - device OSDI compilation crashes openvaf on Linux/LLVM18
+          # Build simulator and OSDI device files
           ninja vacask
+          # Try to build device OSDI files (may fail on some platforms)
+          ninja build_and_stage_devices || echo "Warning: OSDI device compilation failed (some benchmarks will be skipped)"
 
       # Run benchmark comparison
       # NOTE: VACASK benchmarks require OSDI device files compiled by openvaf-r
