@@ -7,9 +7,9 @@
 View JAX profiling traces in Perfetto UI.
 
 This script:
-1. Lists available trace files in a directory
-2. Opens Perfetto UI in the browser
-3. Provides instructions for loading traces
+1. Downloads traces from CI or GCS (with local caching)
+2. Generates a signed URL for direct Perfetto access
+3. Opens Perfetto UI with the trace pre-loaded
 
 Usage:
     # View traces from latest CI run (default)
@@ -26,16 +26,16 @@ Usage:
 """
 
 import argparse
-import http.server
 import json
-import socketserver
 import subprocess
 import sys
-import tempfile
-import threading
 import urllib.parse
 import webbrowser
 from pathlib import Path
+
+# Cache directory for downloaded traces
+CACHE_DIR = Path.home() / ".cache" / "jax-spice-traces"
+GCS_BUCKET = "jax-spice-cuda-test-traces"
 
 
 def list_trace_files(trace_dir: Path) -> list[Path]:
@@ -47,122 +47,126 @@ def list_trace_files(trace_dir: Path) -> list[Path]:
     return sorted(set(trace_files))
 
 
-class CORSRequestHandler(http.server.SimpleHTTPRequestHandler):
-    """HTTP handler with CORS headers for Perfetto UI."""
+def get_gcs_path_for_trace(trace_file: Path, cache_dir: Path) -> str | None:
+    """Get the GCS path for a cached trace file.
 
-    def __init__(self, *args, directory=None, **kwargs):
-        self.directory = directory
-        super().__init__(*args, directory=directory, **kwargs)
-
-    def end_headers(self):
-        self.send_header("Access-Control-Allow-Origin", "*")
-        self.send_header("Access-Control-Allow-Methods", "GET, OPTIONS")
-        self.send_header("Access-Control-Allow-Headers", "*")
-        super().end_headers()
-
-    def do_OPTIONS(self):
-        self.send_response(200)
-        self.end_headers()
-
-    def log_message(self, format, *args):
-        # Suppress default logging
-        pass
-
-
-def serve_and_open_perfetto(trace_file: Path, port: int = 9001) -> None:
-    """Start a local HTTP server and open Perfetto UI with the trace.
-
-    Uses Perfetto's deep linking: https://perfetto.dev/docs/visualization/deep-linking-to-perfetto-ui
+    Returns the GCS object path if the trace was downloaded from GCS/CI.
     """
-    trace_dir = trace_file.parent
-    trace_name = trace_file.name
+    # Check if this is from a CI run (has commit SHA in path)
+    rel_path = trace_file.relative_to(cache_dir)
+    parts = rel_path.parts
 
-    # Find an available port
-    for try_port in range(port, port + 100):
-        try:
-            with socketserver.TCPServer(("", try_port), None) as test:
-                port = try_port
-                break
-        except OSError:
-            continue
+    # Pattern: run-{run_id}/profiling-traces-{sha}/benchmark_*/...
+    # or: {sha}/benchmark_*/...
+    for i, part in enumerate(parts):
+        if part.startswith("profiling-traces-"):
+            sha = part.replace("profiling-traces-", "")
+            remaining = "/".join(parts[i + 1 :])
+            return f"{sha}/{remaining}"
+        if len(part) == 40 and all(c in "0123456789abcdef" for c in part):
+            # Looks like a commit SHA
+            remaining = "/".join(parts[i + 1 :])
+            return f"{part}/{remaining}"
 
-    # Create handler with the trace directory
-    handler = lambda *args, **kwargs: CORSRequestHandler(
-        *args, directory=str(trace_dir), **kwargs
+    return None
+
+
+def generate_signed_url(gcs_object_path: str, duration: str = "1h") -> str | None:
+    """Generate a signed URL for a GCS object."""
+    gcs_url = f"gs://{GCS_BUCKET}/{gcs_object_path}"
+
+    result = subprocess.run(
+        ["gsutil", "signurl", "-d", duration, "-u", gcs_url],
+        capture_output=True,
+        text=True,
     )
 
-    # Start server in background thread
-    server = socketserver.TCPServer(("", port), handler)
-    server_thread = threading.Thread(target=server.serve_forever)
-    server_thread.daemon = True
-    server_thread.start()
+    if result.returncode != 0:
+        # signurl requires a service account key, try public URL if bucket is public
+        return None
 
-    # Build Perfetto deep link URL
-    trace_url = f"http://localhost:{port}/{trace_name}"
+    # Parse the signed URL from output (last line, last column)
+    for line in result.stdout.strip().split("\n"):
+        if "storage.googleapis.com" in line:
+            return line.split()[-1]
+
+    return None
+
+
+def open_perfetto_with_url(trace_url: str) -> None:
+    """Open Perfetto UI with a trace URL."""
     encoded_url = urllib.parse.quote(trace_url, safe="")
     perfetto_url = f"https://ui.perfetto.dev/#!/?url={encoded_url}"
 
-    print(f"Serving trace at: {trace_url}")
-    print(f"Opening Perfetto UI...")
-    print()
-    print(f"Deep link: {perfetto_url}")
-    print()
-    print("Press Ctrl+C to stop the server when done viewing.")
-
+    print(f"Opening Perfetto UI with trace...")
+    print(f"  {perfetto_url[:80]}...")
     webbrowser.open(perfetto_url)
 
-    # Keep server running until interrupted
-    try:
-        server_thread.join()
-    except KeyboardInterrupt:
-        print("\nShutting down server...")
-        server.shutdown()
 
-
-def download_from_github(run_id: str | None = None) -> Path:
+def download_from_github(run_id: str | None = None) -> tuple[Path, str | None]:
     """Download traces from GitHub workflow artifact.
 
+    Returns (local_dir, commit_sha) tuple.
     If run_id is None, downloads from the latest successful GPU Tests run.
     """
-    # Find the run ID if not specified
-    if run_id is None:
-        print("Finding latest GPU Tests workflow run...")
-        result = subprocess.run(
-            [
-                "gh", "run", "list",
-                "--workflow=GPU Tests (Cloud Run)",
-                "--status=success",
-                "--limit=1",
-                "--json=databaseId,headSha,createdAt",
-            ],
-            capture_output=True,
-            text=True,
-        )
-        if result.returncode != 0:
-            print(f"Error listing workflow runs: {result.stderr}")
-            sys.exit(1)
-
-        runs = json.loads(result.stdout)
-        if not runs:
-            print("No successful GPU Tests runs found.")
-            sys.exit(1)
-
-        run_id = str(runs[0]["databaseId"])
-        commit = runs[0]["headSha"][:8]
-        created = runs[0]["createdAt"]
-        print(f"  Found run {run_id} (commit {commit}, {created})")
-
-    # Create download directory
-    local_dir = Path(tempfile.gettempdir()) / f"jax-traces-run-{run_id}"
-    local_dir.mkdir(parents=True, exist_ok=True)
-
-    # Download the artifact
-    print(f"Downloading profiling traces from run {run_id}...")
+    # Find the run ID and commit SHA if not specified
+    print("Finding latest GPU Tests workflow run...")
     result = subprocess.run(
         [
-            "gh", "run", "download", run_id,
-            "--name", f"profiling-traces-*",
-            "--dir", str(local_dir),
+            "gh",
+            "run",
+            "list",
+            "--workflow=GPU Tests (Cloud Run)",
+            "--status=success",
+            "--limit=10",
+            "--json=databaseId,headSha,createdAt",
+        ],
+        capture_output=True,
+        text=True,
+    )
+    if result.returncode != 0:
+        print(f"Error listing workflow runs: {result.stderr}")
+        sys.exit(1)
+
+    runs = json.loads(result.stdout)
+    if not runs:
+        print("No successful GPU Tests runs found.")
+        sys.exit(1)
+
+    # Find the matching run
+    if run_id is None:
+        selected_run = runs[0]
+    else:
+        selected_run = next((r for r in runs if str(r["databaseId"]) == run_id), None)
+        if not selected_run:
+            print(f"Run {run_id} not found in recent successful runs.")
+            sys.exit(1)
+
+    run_id = str(selected_run["databaseId"])
+    commit_sha = selected_run["headSha"]
+    created = selected_run["createdAt"]
+    print(f"  Found run {run_id} (commit {commit_sha[:8]}, {created})")
+
+    # Check cache
+    cache_dir = CACHE_DIR / f"run-{run_id}"
+    if cache_dir.exists() and list_trace_files(cache_dir):
+        print(f"  Using cached traces from {cache_dir}")
+        return cache_dir, commit_sha
+
+    # Download the artifact
+    cache_dir.mkdir(parents=True, exist_ok=True)
+    print(f"Downloading profiling traces from run {run_id}...")
+
+    result = subprocess.run(
+        [
+            "gh",
+            "run",
+            "download",
+            run_id,
+            "--name",
+            f"profiling-traces-*",
+            "--dir",
+            str(cache_dir),
         ],
         capture_output=True,
         text=True,
@@ -172,9 +176,14 @@ def download_from_github(run_id: str | None = None) -> Path:
         # Try with pattern matching (older gh versions)
         result = subprocess.run(
             [
-                "gh", "run", "download", run_id,
-                "--pattern", "profiling-traces-*",
-                "--dir", str(local_dir),
+                "gh",
+                "run",
+                "download",
+                run_id,
+                "--pattern",
+                "profiling-traces-*",
+                "--dir",
+                str(cache_dir),
             ],
             capture_output=True,
             text=True,
@@ -186,24 +195,34 @@ def download_from_github(run_id: str | None = None) -> Path:
             print("  gh auth login")
             sys.exit(1)
 
-    return local_dir
+    return cache_dir, commit_sha
 
 
-def download_from_gcs(gcs_path: str) -> Path:
-    """Download traces from GCS to a temporary directory."""
-    # Extract bucket and path for unique local dir name
-    gcs_path = gcs_path.rstrip('/')
-    path_parts = gcs_path.replace('gs://', '').split('/')
-    dir_name = path_parts[-1] if len(path_parts) > 1 else 'traces'
+def download_from_gcs(gcs_path: str) -> tuple[Path, str | None]:
+    """Download traces from GCS to cache directory.
 
-    local_dir = Path(tempfile.gettempdir()) / f"jax-traces-{dir_name}"
-    local_dir.mkdir(parents=True, exist_ok=True)
+    Returns (local_dir, commit_sha) tuple.
+    """
+    # Extract path components for cache key
+    gcs_path = gcs_path.rstrip("/")
+    path_parts = gcs_path.replace("gs://", "").replace(f"{GCS_BUCKET}/", "").split("/")
+    cache_key = path_parts[0] if path_parts else "traces"
 
+    # Commit SHA is typically the first path component
+    commit_sha = cache_key if len(cache_key) == 40 else None
+
+    # Check cache
+    cache_dir = CACHE_DIR / cache_key
+    if cache_dir.exists() and list_trace_files(cache_dir):
+        print(f"Using cached traces from {cache_dir}")
+        return cache_dir, commit_sha
+
+    # Download
+    cache_dir.mkdir(parents=True, exist_ok=True)
     print(f"Downloading traces from {gcs_path}...")
 
-    # Use gsutil rsync for recursive download (handles nested directories)
     result = subprocess.run(
-        ["gsutil", "-m", "rsync", "-r", gcs_path, str(local_dir)],
+        ["gsutil", "-m", "rsync", "-r", gcs_path, str(cache_dir)],
         capture_output=True,
         text=True,
     )
@@ -211,7 +230,7 @@ def download_from_gcs(gcs_path: str) -> Path:
     if result.returncode != 0:
         # Try cp -r as fallback
         result = subprocess.run(
-            ["gsutil", "-m", "cp", "-r", f"{gcs_path}/**", str(local_dir)],
+            ["gsutil", "-m", "cp", "-r", f"{gcs_path}/*", str(cache_dir)],
             capture_output=True,
             text=True,
         )
@@ -219,7 +238,7 @@ def download_from_gcs(gcs_path: str) -> Path:
             print(f"Error downloading traces: {result.stderr}")
             sys.exit(1)
 
-    return local_dir
+    return cache_dir, commit_sha
 
 
 def main():
@@ -249,26 +268,40 @@ def main():
         action="store_true",
         help="Don't open browser, just list trace files",
     )
+    parser.add_argument(
+        "--clear-cache",
+        action="store_true",
+        help="Clear the trace cache before downloading",
+    )
     args = parser.parse_args()
 
+    # Clear cache if requested
+    if args.clear_cache and CACHE_DIR.exists():
+        import shutil
+
+        print(f"Clearing cache: {CACHE_DIR}")
+        shutil.rmtree(CACHE_DIR)
+
     # Determine trace source
+    commit_sha = None
     if args.gcs:
-        trace_dir = download_from_gcs(args.gcs)
+        trace_dir, commit_sha = download_from_gcs(args.gcs)
     elif args.run is not None:
-        # --run with optional run ID
         run_id = None if args.run == "latest" else args.run
-        trace_dir = download_from_github(run_id)
+        trace_dir, commit_sha = download_from_github(run_id)
     elif args.trace_dir:
         trace_dir = Path(args.trace_dir)
     else:
         # Default: download from latest CI run
-        trace_dir = download_from_github(None)
+        trace_dir, commit_sha = download_from_github(None)
 
     if not trace_dir.exists():
         print(f"Error: Trace directory does not exist: {trace_dir}")
         print()
         print("To generate traces, run benchmarks with profiling enabled:")
-        print("  JAX_SPICE_PROFILE_JAX=1 uv run python scripts/compare_vacask.py --profile")
+        print(
+            "  JAX_SPICE_PROFILE_JAX=1 uv run python scripts/compare_vacask.py --profile"
+        )
         print()
         print("Or run on Cloud Run GPU:")
         print("  uv run scripts/profile_gpu_cloudrun.py")
@@ -291,13 +324,18 @@ def main():
         sys.exit(1)
 
     # Sort by size (largest first - usually most interesting)
-    trace_files_by_size = sorted(trace_files, key=lambda f: f.stat().st_size, reverse=True)
+    trace_files_by_size = sorted(
+        trace_files, key=lambda f: f.stat().st_size, reverse=True
+    )
 
     print(f"Found {len(trace_files)} trace file(s):")
     for i, f in enumerate(trace_files_by_size[:10]):
         size_kb = f.stat().st_size / 1024
         # Show relative path from trace_dir for clarity
-        rel_path = f.relative_to(trace_dir) if trace_dir in f.parents or f.parent == trace_dir else f.name
+        try:
+            rel_path = f.relative_to(trace_dir)
+        except ValueError:
+            rel_path = f.name
         marker = " <- largest" if i == 0 else ""
         print(f"  {rel_path} ({size_kb:.1f} KB){marker}")
     if len(trace_files) > 10:
@@ -309,14 +347,34 @@ def main():
         print("  1. Open https://ui.perfetto.dev/")
         print("  2. Click 'Open trace file' or drag & drop")
         print(f"  3. Select file(s) from: {trace_dir}")
-    else:
-        # Select the largest .xplane.pb file (most detailed trace)
-        xplane_files = [f for f in trace_files_by_size if f.name.endswith(".xplane.pb")]
-        trace_to_open = xplane_files[0] if xplane_files else trace_files_by_size[0]
+        return
 
-        print(f"Opening: {trace_to_open.relative_to(trace_dir)}")
-        print()
-        serve_and_open_perfetto(trace_to_open)
+    # Select the largest .xplane.pb file (most detailed trace)
+    xplane_files = [f for f in trace_files_by_size if f.name.endswith(".xplane.pb")]
+    trace_to_open = xplane_files[0] if xplane_files else trace_files_by_size[0]
+
+    try:
+        rel_path = trace_to_open.relative_to(trace_dir)
+    except ValueError:
+        rel_path = trace_to_open.name
+    print(f"Opening: {rel_path}")
+    print()
+
+    # Try to get a signed GCS URL for direct Perfetto access
+    if commit_sha:
+        # Build GCS object path
+        gcs_object_path = get_gcs_path_for_trace(trace_to_open, CACHE_DIR)
+        if gcs_object_path:
+            print(f"Generating signed URL for gs://{GCS_BUCKET}/{gcs_object_path}...")
+            signed_url = generate_signed_url(gcs_object_path)
+            if signed_url:
+                open_perfetto_with_url(signed_url)
+                return
+
+    # Fallback: just open Perfetto and tell user to drag & drop
+    print("Could not generate signed URL. Opening Perfetto UI...")
+    print(f"Drag & drop this file: {trace_to_open}")
+    webbrowser.open("https://ui.perfetto.dev/")
 
 
 if __name__ == "__main__":

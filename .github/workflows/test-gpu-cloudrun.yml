@@ -226,20 +226,54 @@ jobs:
               echo "- **Ratio < 1.0**: JAX-SPICE is faster"
               echo "- **Ratio > 1.0**: JAX-SPICE is slower"
               echo "- **N/A**: VACASK comparison not available"
-              echo ""
-              echo "### Profiling Traces"
-              echo ""
-              echo "**GCS Location:** \`gs://jax-spice-cuda-test-traces/${{ github.sha }}/\`"
-              echo ""
-              echo "**How to view:**"
-              echo "1. Download traces: \`uv run scripts/view_traces.py --gcs gs://jax-spice-cuda-test-traces/${{ github.sha }}\`"
-              echo "2. Open [Perfetto UI](https://ui.perfetto.dev/) and load the \`.xplane.pb\` files"
-              echo ""
-              echo "Or download the workflow artifact below."
+              # Profiling traces section will be added after we generate signed URLs
             } >> "$GITHUB_STEP_SUMMARY"
           fi
 
-      - name: Fetch traces from GCS and upload as artifact
+      - name: Generate Perfetto links for traces
+        if: always()
+        run: |
+          # Generate signed URLs for traces and add clickable Perfetto links to summary
+          TRACE_PATH="${{ github.sha }}"
+          GCS_BUCKET="jax-spice-cuda-test-traces"
+
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "### Profiling Traces" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+
+          # List trace files in GCS
+          TRACE_FILES=$(gsutil ls "gs://${GCS_BUCKET}/${TRACE_PATH}/**/*.xplane.pb" 2>/dev/null || echo "")
+
+          if [ -z "$TRACE_FILES" ]; then
+            echo "No profiling traces found." >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "Click to open in Perfetto UI (links valid for 7 days):" >> "$GITHUB_STEP_SUMMARY"
+            echo "" >> "$GITHUB_STEP_SUMMARY"
+
+            for gcs_file in $TRACE_FILES; do
+              # Extract benchmark name from path (e.g., benchmark_c6288)
+              benchmark=$(echo "$gcs_file" | grep -oE 'benchmark_[^/]+' | head -1)
+              if [ -z "$benchmark" ]; then
+                benchmark="trace"
+              fi
+
+              # Generate signed URL (valid for 7 days)
+              signed_url=$(gsutil signurl -d 7d -u "$gcs_file" 2>/dev/null | grep -oE 'https://[^ ]+' | tail -1)
+
+              if [ -n "$signed_url" ]; then
+                # URL-encode the signed URL for Perfetto
+                encoded_url=$(python3 -c "import urllib.parse; print(urllib.parse.quote('$signed_url', safe=''))")
+                perfetto_url="https://ui.perfetto.dev/#!/?url=${encoded_url}"
+
+                echo "- [${benchmark}](${perfetto_url})" >> "$GITHUB_STEP_SUMMARY"
+              fi
+            done
+
+            echo "" >> "$GITHUB_STEP_SUMMARY"
+            echo "Or download via CLI: \`uv run scripts/view_traces.py\`" >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - name: Fetch traces from GCS for artifact upload
         if: always()
         run: |
           # Cloud Run uploads traces to GCS during job execution.
