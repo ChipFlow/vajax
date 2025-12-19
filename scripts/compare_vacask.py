@@ -271,7 +271,12 @@ def main():
     parser.add_argument(
         "--use-sparse",
         action="store_true",
-        help="Use sparse solver (required for large circuits like c6288)",
+        help="Use sparse solver (auto-enabled for c6288 unless --force-dense)",
+    )
+    parser.add_argument(
+        "--force-dense",
+        action="store_true",
+        help="Force dense solver even for large circuits (for GPU performance testing)",
     )
     parser.add_argument(
         "--profile",
@@ -407,8 +412,8 @@ def main():
         print(f"--- {name} ({num_steps} steps, dt={config.dt:.2e}) ---")
 
         # Run JAX-SPICE
-        # Auto-enable sparse for c6288 (too large for dense)
-        use_sparse = args.use_sparse or name == 'c6288'
+        # Auto-enable sparse for c6288 unless --force-dense is specified
+        use_sparse = args.use_sparse or (name == 'c6288' and not args.force_dense)
         print("  JAX-SPICE warmup...", end=" ", flush=True)
         jax_ms, jax_wall, stats = run_jax_spice(
             config, num_steps, args.use_scan, use_sparse, profile_config

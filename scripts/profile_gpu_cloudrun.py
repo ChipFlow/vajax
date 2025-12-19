@@ -84,6 +84,11 @@ def main():
         action="store_true",
         help="Open Perfetto UI after downloading traces",
     )
+    parser.add_argument(
+        "--use-sparse",
+        action="store_true",
+        help="Use sparse solver (default: dense for better GPU performance)",
+    )
     args = parser.parse_args()
 
     timestamp = int(time.time())
@@ -132,8 +137,12 @@ def main():
         "--max-steps", str(args.max_steps),
         "--use-scan",
     ]
+    if args.use_sparse:
+        compare_cmd.append("--use-sparse")
+    else:
+        compare_cmd.append("--force-dense")
     if enable_profiling:
-        compare_cmd.extend(["--profile", "--profile-dir", "/tmp/jax-trace"])
+        compare_cmd.extend(["--profile-mode", "jax", "--profile-dir", "/tmp/jax-trace"])
     compare_cmd_str = " ".join(compare_cmd)
 
     # Build the trace upload script (only if profiling enabled)
