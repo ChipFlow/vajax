@@ -49,6 +49,7 @@ GITHUB_REPO="${GITHUB_REPO:-ChipFlow/jax-spice}"
 # Cloud Run specific configuration
 AR_REMOTE_REPO="ghcr-remote"
 SCCACHE_BUCKET="jax-spice-sccache"
+TRACES_BUCKET="jax-spice-cuda-test-traces"
 
 # Machine configuration
 MACHINE_TYPE="n1-standard-4"
@@ -163,6 +164,24 @@ fi
 # Grant service account access to sccache bucket
 log_info "Granting service account access to sccache bucket..."
 gcloud storage buckets add-iam-policy-binding "gs://${SCCACHE_BUCKET}" \
+    --member="serviceAccount:${SA_EMAIL}" \
+    --role="roles/storage.objectAdmin" \
+    --quiet 2>/dev/null || true
+
+# Create traces GCS bucket (stores profiling traces from GPU CI)
+if gcloud storage buckets describe "gs://${TRACES_BUCKET}" &>/dev/null; then
+    log_info "Traces bucket already exists: ${TRACES_BUCKET}"
+else
+    log_info "Creating traces bucket: ${TRACES_BUCKET}"
+    gcloud storage buckets create "gs://${TRACES_BUCKET}" \
+        --location="${REGION}" \
+        --uniform-bucket-level-access \
+        --quiet
+fi
+
+# Grant service account access to traces bucket
+log_info "Granting service account access to traces bucket..."
+gcloud storage buckets add-iam-policy-binding "gs://${TRACES_BUCKET}" \
     --member="serviceAccount:${SA_EMAIL}" \
     --role="roles/storage.objectAdmin" \
     --quiet 2>/dev/null || true
@@ -382,6 +401,7 @@ echo "  - Secret (GCP):    ${SECRET_NAME}"
 echo "  - GitHub Secret:   GCP_SERVICE_ACCOUNT_KEY"
 echo "  - Artifact Repo:   ${AR_REMOTE_REPO} (${REGION})"
 echo "  - sccache Bucket:  ${SCCACHE_BUCKET}"
+echo "  - Traces Bucket:   ${TRACES_BUCKET}"
 if [ "${SETUP_VM}" = true ]; then
 echo "  - GPU VM:          ${VM_NAME} (${ZONE})"
 fi
