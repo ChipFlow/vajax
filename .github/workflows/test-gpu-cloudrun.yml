@@ -236,8 +236,6 @@ jobs:
           # Generate signed URLs for traces and add clickable Perfetto links to summary
           TRACE_PATH="${{ github.sha }}"
           GCS_BUCKET="jax-spice-cuda-test-traces"
-          # Service account email for signing (from the JSON credentials)
-          SA_EMAIL=$(jq -r '.client_email' "$GOOGLE_APPLICATION_CREDENTIALS")
 
           echo "" >> "$GITHUB_STEP_SUMMARY"
           echo "### Profiling Traces" >> "$GITHUB_STEP_SUMMARY"
@@ -245,6 +243,7 @@ jobs:
 
           # List trace files in GCS
           TRACE_FILES=$(gsutil ls "gs://${GCS_BUCKET}/${TRACE_PATH}/**/*.xplane.pb" 2>/dev/null || echo "")
+          export TRACE_FILES
 
           if [ -z "$TRACE_FILES" ]; then
             echo "No profiling traces found." >> "$GITHUB_STEP_SUMMARY"
@@ -252,28 +251,55 @@ jobs:
             echo "Click to open in Perfetto UI (links valid for 7 days):" >> "$GITHUB_STEP_SUMMARY"
             echo "" >> "$GITHUB_STEP_SUMMARY"
 
-            for gcs_file in $TRACE_FILES; do
-              # Extract benchmark name from path (e.g., benchmark_c6288)
-              benchmark=$(echo "$gcs_file" | grep -oE 'benchmark_[^/]+' | head -1)
-              if [ -z "$benchmark" ]; then
-                benchmark="trace"
-              fi
+            # Use Python to generate signed URLs from the SA JSON key
+            pip install --quiet google-cloud-storage
 
-              # Generate signed URL using service account impersonation
-              signed_output=$(gcloud storage sign-url "$gcs_file" --duration=7d --impersonate-service-account="$SA_EMAIL" 2>&1)
-              url=$(echo "$signed_output" | grep -oE 'https://storage\.googleapis\.com[^ ]+' | head -1)
+            python3 << 'PYTHON_SCRIPT'
+import json
+import os
+import urllib.parse
+from datetime import timedelta
+from google.cloud import storage
 
-              if [ -n "$url" ]; then
-                # URL-encode the signed URL for Perfetto
-                encoded_url=$(python3 -c "import urllib.parse; print(urllib.parse.quote('$url', safe=''))")
-                perfetto_url="https://ui.perfetto.dev/#!/?url=${encoded_url}"
+creds_file = os.environ["GOOGLE_APPLICATION_CREDENTIALS"]
+bucket_name = "jax-spice-cuda-test-traces"
+trace_path = os.environ.get("TRACE_PATH", "")
+summary_file = os.environ["GITHUB_STEP_SUMMARY"]
 
-                echo "- [${benchmark}](${perfetto_url})" >> "$GITHUB_STEP_SUMMARY"
-              else
-                # Show error for debugging (truncated)
-                echo "- ${benchmark}: (failed: ${signed_output:0:100})" >> "$GITHUB_STEP_SUMMARY"
-              fi
-            done
+# Get trace files from env (newline-separated)
+trace_files_str = os.environ.get("TRACE_FILES", "")
+trace_files = [f.strip() for f in trace_files_str.split("\n") if f.strip()]
+
+client = storage.Client()
+bucket = client.bucket(bucket_name)
+
+with open(summary_file, "a") as summary:
+    for gcs_path in trace_files:
+        # Extract blob name from gs:// URL
+        blob_name = gcs_path.replace(f"gs://{bucket_name}/", "")
+        blob = bucket.blob(blob_name)
+
+        # Extract benchmark name
+        import re
+        match = re.search(r'benchmark_[^/]+', blob_name)
+        benchmark = match.group(0) if match else "trace"
+
+        try:
+            # Generate signed URL valid for 7 days
+            signed_url = blob.generate_signed_url(
+                version="v4",
+                expiration=timedelta(days=7),
+                method="GET"
+            )
+
+            # URL-encode for Perfetto
+            encoded_url = urllib.parse.quote(signed_url, safe='')
+            perfetto_url = f"https://ui.perfetto.dev/#!/?url={encoded_url}"
+
+            summary.write(f"- [{benchmark}]({perfetto_url})\n")
+        except Exception as e:
+            summary.write(f"- {benchmark}: (failed: {str(e)[:100]})\n")
+PYTHON_SCRIPT
 
             echo "" >> "$GITHUB_STEP_SUMMARY"
             echo "Or download via CLI: \`uv run scripts/view_traces.py\`" >> "$GITHUB_STEP_SUMMARY"
