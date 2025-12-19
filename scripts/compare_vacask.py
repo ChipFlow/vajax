@@ -13,6 +13,9 @@ Usage:
 
     # Use lax.scan (faster)
     uv run scripts/compare_vacask.py --benchmark ring --use-scan
+
+    # Enable JAX profiling (GPU only)
+    uv run scripts/compare_vacask.py --profile --profile-dir /tmp/traces
 """
 
 import argparse
@@ -21,6 +24,7 @@ import subprocess
 import sys
 import time
 import re
+from contextlib import nullcontext
 from pathlib import Path
 from dataclasses import dataclass
 from typing import Dict, List, Optional, Tuple
@@ -42,6 +46,7 @@ import jax.numpy as jnp
 jax.config.update('jax_enable_x64', True)
 
 from jax_spice.benchmarks.runner import VACASKBenchmarkRunner
+from jax_spice.profiling import enable_profiling, profile_section, ProfileConfig
 
 
 @dataclass
@@ -187,8 +192,17 @@ def run_vacask(config: BenchmarkConfig, num_steps: int) -> Optional[Tuple[float,
 
 
 def run_jax_spice(config: BenchmarkConfig, num_steps: int, use_scan: bool,
-                  use_sparse: bool = False) -> Tuple[float, float, Dict]:
-    """Run JAX-SPICE and return (time_per_step_ms, wall_time_s, stats)."""
+                  use_sparse: bool = False, profile_config: Optional[ProfileConfig] = None
+                  ) -> Tuple[float, float, Dict]:
+    """Run JAX-SPICE and return (time_per_step_ms, wall_time_s, stats).
+
+    Args:
+        config: Benchmark configuration
+        num_steps: Number of timesteps
+        use_scan: Use lax.scan for faster execution
+        use_sparse: Use sparse solver
+        profile_config: If provided, enable JAX/CUDA profiling for this run
+    """
     runner = VACASKBenchmarkRunner(config.sim_path)
     runner.parse()
 
@@ -203,14 +217,18 @@ def run_jax_spice(config: BenchmarkConfig, num_steps: int, use_scan: bool,
 
     # Timed run - measure full transient analysis including source pre-computation
     # This is a fair comparison with VACASK which also evaluates sources during simulation
+    # Optionally wrap in profiling context
+    section_name = f"benchmark_{config.name}"
+
     start = time.perf_counter()
-    times, voltages, stats = runner.run_transient(
-        t_stop=t_stop, dt=config.dt,
-        max_steps=num_steps, use_sparse=use_sparse,
-        use_while_loop=use_scan
-    )
-    # Force completion of async JAX operations
-    _ = float(voltages[0][0])
+    with profile_section(section_name, profile_config) if profile_config else nullcontext():
+        times, voltages, stats = runner.run_transient(
+            t_stop=t_stop, dt=config.dt,
+            max_steps=num_steps, use_sparse=use_sparse,
+            use_while_loop=use_scan
+        )
+        # Force completion of async JAX operations
+        _ = float(voltages[0][0])
     elapsed = time.perf_counter() - start
 
     actual_steps = len(times) - 1  # Exclude t=0 initial condition
@@ -243,6 +261,17 @@ def main():
         action="store_true",
         help="Use sparse solver (required for large circuits like c6288)",
     )
+    parser.add_argument(
+        "--profile",
+        action="store_true",
+        help="Enable JAX/CUDA profiling (GPU only, creates Perfetto traces)",
+    )
+    parser.add_argument(
+        "--profile-dir",
+        type=str,
+        default="/tmp/jax-spice-traces",
+        help="Directory for profiling traces (default: /tmp/jax-spice-traces)",
+    )
     args = parser.parse_args()
 
     print("=" * 70)
@@ -260,6 +289,16 @@ def main():
     print(f"Mode: {'lax.scan' if args.use_scan else 'Python loop'}")
     print(f"Solver: {'sparse' if args.use_sparse else 'dense'}")
     print(f"Max steps: {args.max_steps}")
+
+    # Setup profiling if requested
+    profile_config = None
+    if args.profile:
+        has_gpu = any(d.platform != 'cpu' for d in jax.devices())
+        if has_gpu:
+            profile_config = ProfileConfig(jax=True, cuda=True, trace_dir=args.profile_dir)
+            print(f"Profiling: ENABLED (traces -> {args.profile_dir})")
+        else:
+            print("Profiling: SKIPPED (no GPU available)")
     print()
 
     # Select benchmarks
@@ -286,7 +325,9 @@ def main():
         # Auto-enable sparse for c6288 (too large for dense)
         use_sparse = args.use_sparse or name == 'c6288'
         print("  JAX-SPICE warmup...", end=" ", flush=True)
-        jax_ms, jax_wall, stats = run_jax_spice(config, num_steps, args.use_scan, use_sparse)
+        jax_ms, jax_wall, stats = run_jax_spice(
+            config, num_steps, args.use_scan, use_sparse, profile_config
+        )
         print(f"done")
         print(f"  JAX-SPICE: {jax_ms:.3f} ms/step ({jax_wall:.3f}s total)")
 
@@ -351,6 +392,19 @@ def main():
         print(f"| {r['name']:9} | {r['steps']:5} | {jax_wall_ms:14.1f} | {vacask_str:11} | {ratio_str:5} |")
 
     print()
+
+    # Report profiling traces location
+    if profile_config:
+        trace_dir = Path(args.profile_dir)
+        if trace_dir.exists():
+            traces = list(trace_dir.glob("*"))
+            if traces:
+                print(f"Profiling traces saved to: {trace_dir}")
+                print(f"  To view in Perfetto: https://ui.perfetto.dev/")
+                for t in traces[:5]:  # Show first 5
+                    print(f"    - {t.name}")
+                if len(traces) > 5:
+                    print(f"    ... and {len(traces) - 5} more")
     print("=" * 70)
 
 

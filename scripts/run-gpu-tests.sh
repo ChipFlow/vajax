@@ -68,10 +68,13 @@ else:
 "
 
 echo "Running JAX-SPICE vs VACASK benchmark comparison..."
+# Enable JAX profiling to capture GPU traces
 uv run python scripts/compare_vacask.py \
   --benchmark rc,graetz,ring,c6288 \
   --max-steps 200 \
-  --use-scan
+  --use-scan \
+  --profile \
+  --profile-dir /tmp/jax-spice-traces
 
 echo "Running tests..."
 uv run pytest tests/ -v --tb=short -x
