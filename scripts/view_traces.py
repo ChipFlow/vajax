@@ -41,19 +41,33 @@ def list_trace_files(trace_dir: Path) -> list[Path]:
 
 def download_from_gcs(gcs_path: str) -> Path:
     """Download traces from GCS to a temporary directory."""
-    local_dir = Path(tempfile.gettempdir()) / "jax-traces-download"
+    # Extract bucket and path for unique local dir name
+    gcs_path = gcs_path.rstrip('/')
+    path_parts = gcs_path.replace('gs://', '').split('/')
+    dir_name = path_parts[-1] if len(path_parts) > 1 else 'traces'
+
+    local_dir = Path(tempfile.gettempdir()) / f"jax-traces-{dir_name}"
     local_dir.mkdir(parents=True, exist_ok=True)
 
     print(f"Downloading traces from {gcs_path}...")
+
+    # Use gsutil rsync for recursive download (handles nested directories)
     result = subprocess.run(
-        ["gsutil", "-m", "cp", "-r", f"{gcs_path}/*", str(local_dir)],
+        ["gsutil", "-m", "rsync", "-r", gcs_path, str(local_dir)],
         capture_output=True,
         text=True,
     )
 
     if result.returncode != 0:
-        print(f"Error downloading traces: {result.stderr}")
-        sys.exit(1)
+        # Try cp -r as fallback
+        result = subprocess.run(
+            ["gsutil", "-m", "cp", "-r", f"{gcs_path}/**", str(local_dir)],
+            capture_output=True,
+            text=True,
+        )
+        if result.returncode != 0:
+            print(f"Error downloading traces: {result.stderr}")
+            sys.exit(1)
 
     return local_dir
 

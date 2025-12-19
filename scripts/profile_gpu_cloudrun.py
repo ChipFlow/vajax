@@ -150,17 +150,15 @@ if [ -z "$TOKEN" ]; then
 else
   echo "Got access token (length: ${{#TOKEN}})"
 
-  # Upload traces to GCS
+  # Upload traces to GCS (recursively - JAX creates subdirectories)
   echo "=== Uploading traces to GCS ==="
-  for f in /tmp/jax-trace/*; do
-    if [ -f "$f" ]; then
-      fname=$(basename "$f")
-      echo "Uploading $fname..."
-      curl -s -X PUT -H "Authorization: Bearer $TOKEN" \\
-        -H "Content-Type: application/octet-stream" \\
-        --data-binary @"$f" \\
-        "https://storage.googleapis.com/upload/storage/v1/b/{GCS_BUCKET_NAME}/o?uploadType=media&name={args.benchmark.replace(',', '-')}-{timestamp}/$fname"
-    fi
+  find /tmp/jax-trace -type f | while read -r f; do
+    relpath="${{f#/tmp/jax-trace/}}"
+    echo "Uploading $relpath..."
+    curl -s -X PUT -H "Authorization: Bearer $TOKEN" \\
+      -H "Content-Type: application/octet-stream" \\
+      --data-binary @"$f" \\
+      "https://storage.googleapis.com/upload/storage/v1/b/{GCS_BUCKET_NAME}/o?uploadType=media&name={args.benchmark.replace(',', '-')}-{timestamp}/$relpath"
   done
   echo "Traces uploaded to: {trace_gcs_path}"
 fi

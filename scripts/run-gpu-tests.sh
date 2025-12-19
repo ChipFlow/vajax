@@ -88,16 +88,21 @@ TOKEN=$(curl -s -H "Metadata-Flavor: Google" \
 
 if [ -n "$TOKEN" ] && [ -d "/tmp/jax-spice-traces" ]; then
   echo "Uploading traces to gs://${GCS_BUCKET}/${TRACE_PATH}/"
-  for f in /tmp/jax-spice-traces/*; do
-    if [ -f "$f" ]; then
-      fname=$(basename "$f")
-      echo "  Uploading $fname..."
-      curl -s -X PUT -H "Authorization: Bearer $TOKEN" \
-        -H "Content-Type: application/octet-stream" \
-        --data-binary @"$f" \
-        "https://storage.googleapis.com/upload/storage/v1/b/${GCS_BUCKET}/o?uploadType=media&name=${TRACE_PATH}/${fname}" || true
-    fi
+
+  # JAX profiler creates subdirectories for each trace (e.g., benchmark_rc/plugins/...)
+  # Find all actual files recursively
+  file_count=0
+  find /tmp/jax-spice-traces -type f | while read -r f; do
+    # Get relative path from trace dir
+    relpath="${f#/tmp/jax-spice-traces/}"
+    echo "  Uploading ${relpath}..."
+    curl -s -X PUT -H "Authorization: Bearer $TOKEN" \
+      -H "Content-Type: application/octet-stream" \
+      --data-binary @"$f" \
+      "https://storage.googleapis.com/upload/storage/v1/b/${GCS_BUCKET}/o?uploadType=media&name=${TRACE_PATH}/${relpath}" || true
+    file_count=$((file_count + 1))
   done
+
   echo "Traces uploaded to: gs://${GCS_BUCKET}/${TRACE_PATH}/"
   echo "TRACE_GCS_PATH=${TRACE_PATH}" >> /tmp/trace_info.env
 else
