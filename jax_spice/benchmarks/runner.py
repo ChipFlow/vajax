@@ -30,6 +30,7 @@ from jax_spice.netlist.circuit import Instance
 from jax_spice.analysis.mna import MNASystem, DeviceInfo
 from jax_spice.analysis.transient import transient_analysis_jit
 from jax_spice.logging import logger
+from jax_spice.profiling import profile
 
 # Try to import OpenVAF support
 _openvaf_path = Path(__file__).parent.parent.parent / "openvaf-py"
@@ -1180,6 +1181,7 @@ class VACASKBenchmarkRunner:
 
         return system
 
+    @profile
     def run_transient(self, t_stop: Optional[float] = None, dt: Optional[float] = None,
                       max_steps: int = 10000, use_sparse: Optional[bool] = None,
                       backend: Optional[str] = None,
