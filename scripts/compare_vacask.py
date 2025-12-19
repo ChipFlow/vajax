@@ -31,7 +31,6 @@ import subprocess
 import sys
 import time
 import re
-from contextlib import nullcontext
 from pathlib import Path
 from dataclasses import dataclass
 from typing import Dict, List, Optional, Tuple
@@ -53,7 +52,7 @@ import jax.numpy as jnp
 jax.config.update('jax_enable_x64', True)
 
 from jax_spice.benchmarks.runner import VACASKBenchmarkRunner
-from jax_spice.profiling import enable_profiling, profile_section, ProfileConfig
+from jax_spice.profiling import enable_profiling, ProfileConfig
 
 
 @dataclass
@@ -208,7 +207,7 @@ def run_jax_spice(config: BenchmarkConfig, num_steps: int, use_scan: bool,
         num_steps: Number of timesteps
         use_scan: Use lax.scan for faster execution
         use_sparse: Use sparse solver
-        profile_config: If provided, enable JAX/CUDA profiling for this run
+        profile_config: If provided, profile just the core simulation loop (not setup)
     """
     runner = VACASKBenchmarkRunner(config.sim_path)
     runner.parse()
@@ -222,20 +221,26 @@ def run_jax_spice(config: BenchmarkConfig, num_steps: int, use_scan: bool,
         use_while_loop=use_scan
     )
 
-    # Timed run - measure full transient analysis including source pre-computation
-    # This is a fair comparison with VACASK which also evaluates sources during simulation
-    # Optionally wrap in profiling context
-    section_name = f"benchmark_{config.name}"
-
-    start = time.perf_counter()
-    with profile_section(section_name, profile_config) if profile_config else nullcontext():
-        times, voltages, stats = runner.run_transient(
-            t_stop=t_stop, dt=config.dt,
-            max_steps=num_steps, use_sparse=use_sparse,
-            use_while_loop=use_scan
+    # Create benchmark-specific profile config if profiling is enabled
+    benchmark_profile_config = None
+    if profile_config:
+        benchmark_profile_config = ProfileConfig(
+            jax=profile_config.jax,
+            cuda=profile_config.cuda,
+            trace_dir=str(Path(profile_config.trace_dir) / f"benchmark_{config.name}"),
+            create_perfetto_link=profile_config.create_perfetto_link,
         )
-        # Force completion of async JAX operations
-        _ = float(voltages[0][0])
+
+    # Timed run - profiling happens inside run_transient around the core lax.scan call
+    start = time.perf_counter()
+    times, voltages, stats = runner.run_transient(
+        t_stop=t_stop, dt=config.dt,
+        max_steps=num_steps, use_sparse=use_sparse,
+        use_while_loop=use_scan,
+        profile_config=benchmark_profile_config,
+    )
+    # Force completion of async JAX operations
+    _ = float(voltages[0][0])
     elapsed = time.perf_counter() - start
 
     actual_steps = len(times) - 1  # Exclude t=0 initial condition

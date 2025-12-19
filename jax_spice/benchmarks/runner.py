@@ -30,7 +30,7 @@ from jax_spice.netlist.circuit import Instance
 from jax_spice.analysis.mna import MNASystem, DeviceInfo
 from jax_spice.analysis.transient import transient_analysis_jit
 from jax_spice.logging import logger
-from jax_spice.profiling import profile
+from jax_spice.profiling import profile, profile_section, ProfileConfig
 
 # Try to import OpenVAF support
 _openvaf_path = Path(__file__).parent.parent.parent / "openvaf-py"
@@ -1186,7 +1186,8 @@ class VACASKBenchmarkRunner:
                       max_steps: int = 10000, use_sparse: Optional[bool] = None,
                       backend: Optional[str] = None,
                       use_scan: bool = False,
-                      use_while_loop: bool = False) -> Tuple[jax.Array, Dict[int, jax.Array], Dict]:
+                      use_while_loop: bool = False,
+                      profile_config: Optional['ProfileConfig'] = None) -> Tuple[jax.Array, Dict[int, jax.Array], Dict]:
         """Run transient analysis.
 
         All computation is JIT-compiled. Automatically uses sparse matrices
@@ -1201,6 +1202,7 @@ class VACASKBenchmarkRunner:
                      For circuits >500 nodes with GPU available, uses GPU acceleration.
             use_scan: If True, use lax.scan (pre-computes all source values)
             use_while_loop: If True, use lax.while_loop (computes sources on-the-fly)
+            profile_config: If provided, profile just the core simulation (not setup)
 
         Returns:
             (times, voltages, stats) tuple where:
@@ -1242,13 +1244,15 @@ class VACASKBenchmarkRunner:
                 # lax.while_loop version - computes sources on-the-fly
                 logger.info(f"Using lax.while_loop solver ({self.num_nodes} nodes, "
                            f"{'sparse' if use_sparse else 'dense'})")
-                return self._run_transient_while_loop(t_stop, dt, backend=backend, use_dense=use_dense)
+                return self._run_transient_while_loop(t_stop, dt, backend=backend, use_dense=use_dense,
+                                                       profile_config=profile_config)
 
             if use_scan:
                 # lax.scan version - pre-computes all source values
                 logger.info(f"Using lax.scan solver ({self.num_nodes} nodes, "
                            f"{'sparse' if use_sparse else 'dense'})")
-                return self._run_transient_fully_jit(t_stop, dt, backend=backend, use_dense=use_dense)
+                return self._run_transient_fully_jit(t_stop, dt, backend=backend, use_dense=use_dense,
+                                                      profile_config=profile_config)
 
             if use_sparse:
                 logger.info(f"Using BCOO/BCSR sparse solver ({self.num_nodes} nodes, OpenVAF devices)")
@@ -1782,7 +1786,8 @@ class VACASKBenchmarkRunner:
 
     def _run_transient_while_loop(self, t_stop: float, dt: float,
                                    backend: str = "cpu",
-                                   use_dense: bool = True) -> Tuple[jax.Array, Dict[int, jax.Array], Dict]:
+                                   use_dense: bool = True,
+                                   profile_config: Optional['ProfileConfig'] = None) -> Tuple[jax.Array, Dict[int, jax.Array], Dict]:
         """Transient analysis using lax.while_loop for the timestep loop.
 
         This version uses lax.while_loop to eliminate Python loop overhead
@@ -1793,6 +1798,7 @@ class VACASKBenchmarkRunner:
             dt: Time step
             backend: 'gpu' or 'cpu' for device evaluation
             use_dense: If True, use dense solver; if False, use sparse solver
+            profile_config: If provided, profile just the core simulation loop
         """
         import time as time_module
 
@@ -1929,11 +1935,16 @@ class VACASKBenchmarkRunner:
             self._cached_scan_key = scan_cache_key
             logger.info("Created and cached lax.scan simulation function")
 
-        # Run the simulation
+        # Run the simulation (with optional profiling of just the core loop)
         logger.info("Running lax.scan simulation...")
         t0 = time_module.perf_counter()
-        all_V, all_iters, all_converged = run_simulation_with_outputs(V0, all_vsource_vals, all_isource_vals)
-        jax.block_until_ready(all_V)
+        if profile_config:
+            with profile_section("lax_scan_simulation", profile_config):
+                all_V, all_iters, all_converged = run_simulation_with_outputs(V0, all_vsource_vals, all_isource_vals)
+                jax.block_until_ready(all_V)
+        else:
+            all_V, all_iters, all_converged = run_simulation_with_outputs(V0, all_vsource_vals, all_isource_vals)
+            jax.block_until_ready(all_V)
         total_time = time_module.perf_counter() - t0
 
         # Build results
@@ -1962,7 +1973,8 @@ class VACASKBenchmarkRunner:
 
     def _run_transient_fully_jit(self, t_stop: float, dt: float,
                                   backend: str = "cpu",
-                                  use_dense: bool = True) -> Tuple[jax.Array, Dict[int, jax.Array], Dict]:
+                                  use_dense: bool = True,
+                                  profile_config: Optional[ProfileConfig] = None) -> Tuple[jax.Array, Dict[int, jax.Array], Dict]:
         """Fully JIT-compiled transient analysis using lax.scan.
 
         This version pre-computes all source values and uses lax.scan for the
@@ -1973,6 +1985,7 @@ class VACASKBenchmarkRunner:
             dt: Time step
             backend: 'gpu' or 'cpu' for device evaluation
             use_dense: If True, use dense solver; if False, use sparse solver
+            profile_config: If provided, profile just the core simulation loop
         """
         from jax_spice.analysis.gpu_backend import get_device, get_default_dtype
         import time as time_module
@@ -2084,15 +2097,18 @@ class VACASKBenchmarkRunner:
             )
             return all_V, all_iters, all_converged
 
-        # Warmup / compile
-        logger.info("JIT compiling full simulation (lax.scan)...")
+        # Run the fully JIT'd simulation (with optional profiling of just the core loop)
+        logger.info("Running full simulation (lax.scan)...")
         t2 = time_module.perf_counter()
 
-        # Run the fully JIT'd simulation
-        all_V, all_iters, all_converged = run_all_steps(V0, all_vsource_vals, all_isource_vals)
-
-        # Wait for computation to complete (JAX operations are async)
-        all_V.block_until_ready()
+        if profile_config:
+            with profile_section("lax_scan_simulation", profile_config):
+                all_V, all_iters, all_converged = run_all_steps(V0, all_vsource_vals, all_isource_vals)
+                # Wait for computation to complete (JAX operations are async)
+                all_V.block_until_ready()
+        else:
+            all_V, all_iters, all_converged = run_all_steps(V0, all_vsource_vals, all_isource_vals)
+            all_V.block_until_ready()
 
         t3 = time_module.perf_counter()
         total_time = t3 - t2
