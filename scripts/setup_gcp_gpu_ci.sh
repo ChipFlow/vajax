@@ -186,6 +186,16 @@ gcloud storage buckets add-iam-policy-binding "gs://${TRACES_BUCKET}" \
     --role="roles/storage.objectAdmin" \
     --quiet 2>/dev/null || true
 
+# Grant Cloud Run default service account access to traces bucket
+# (Cloud Run jobs use the default Compute Engine service account for workload identity)
+PROJECT_NUMBER=$(gcloud projects describe "${PROJECT_ID}" --format="value(projectNumber)")
+COMPUTE_SA="${PROJECT_NUMBER}-compute@developer.gserviceaccount.com"
+log_info "Granting Cloud Run default SA access to traces bucket..."
+gcloud storage buckets add-iam-policy-binding "gs://${TRACES_BUCKET}" \
+    --member="serviceAccount:${COMPUTE_SA}" \
+    --role="roles/storage.objectAdmin" \
+    --quiet 2>/dev/null || true
+
 log_info "Cloud Run resources configured"
 
 # =============================================================================
