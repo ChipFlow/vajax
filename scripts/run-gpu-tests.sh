@@ -67,8 +67,11 @@ else:
     print('No GPU devices found')
 "
 
-echo "Running GPU profiler..."
-uv run python scripts/profile_gpu.py
+echo "Running JAX-SPICE vs VACASK benchmark comparison..."
+uv run python scripts/compare_vacask.py \
+  --benchmark rc,graetz,ring,c6288 \
+  --max-steps 200 \
+  --use-scan
 
 echo "Running tests..."
 uv run pytest tests/ -v --tb=short -x

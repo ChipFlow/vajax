@@ -28,8 +28,12 @@ from typing import Dict, List, Optional, Tuple
 # Ensure jax-spice is importable
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-# Force CPU backend
-os.environ['JAX_PLATFORMS'] = 'cpu'
+# Configure JAX memory allocation BEFORE importing JAX
+# Disable preallocation to avoid grabbing all GPU memory at startup
+os.environ.setdefault('XLA_PYTHON_CLIENT_PREALLOCATE', 'false')
+# Use memory growth instead of fixed allocation
+os.environ.setdefault('XLA_PYTHON_CLIENT_ALLOCATOR', 'platform')
+# Note: Set JAX_PLATFORMS=cpu before running for CPU-only mode
 
 import jax
 import jax.numpy as jnp

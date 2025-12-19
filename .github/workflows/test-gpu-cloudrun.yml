@@ -184,16 +184,47 @@ jobs:
             exit 1
           fi
 
-      - name: Extract profiling report to summary
+      - name: Extract benchmark comparison to summary
         if: always()
         run: |
-          # Extract the profiling report from logs (between "# JAX-SPICE" and "Report written")
+          # Extract the benchmark comparison from logs
           if [ -f /tmp/job_logs.txt ]; then
-            echo "## GPU Profiling Results" >> "$GITHUB_STEP_SUMMARY"
-            echo "" >> "$GITHUB_STEP_SUMMARY"
+            {
+              echo "## JAX-SPICE vs VACASK Benchmark Comparison (GPU)"
+              echo ""
+              echo "### Environment"
+              echo "- **Platform**: GPU (Cloud Run with NVIDIA L4)"
+              echo "- **Mode**: lax.scan (JIT-compiled)"
+              echo "- **Steps**: 200"
+              echo ""
 
-            # Extract profiling report section - strip timestamps and get markdown content
-            sed -n '/# JAX-SPICE GPU Profiling Report/,/Report written to:/p' /tmp/job_logs.txt | \
-              sed 's/^[0-9-]* [0-9:]* //' | \
-              head -n -1 >> "$GITHUB_STEP_SUMMARY" || echo "Could not extract profiling report"
+              # Extract per-step timing table
+              echo "### Per-Step Timing"
+              echo ""
+              echo "| Benchmark | Steps | JAX-SPICE (ms/step) | VACASK (ms/step) | Ratio |"
+              echo "|-----------|-------|---------------------|------------------|-------|"
+
+              # Parse the per-step summary table from the log (strip Cloud Run timestamp prefix)
+              sed 's/^[0-9-]* [0-9:]* //' /tmp/job_logs.txt | \
+                grep -A 10 "Summary (per-step timing)" | \
+                grep "^|" | tail -n +3 || true
+
+              echo ""
+              echo "### Total Wall Time"
+              echo ""
+              echo "| Benchmark | Steps | JAX-SPICE (ms) | VACASK (ms) | Ratio |"
+              echo "|-----------|-------|----------------|-------------|-------|"
+
+              # Parse the total time summary table from the log
+              sed 's/^[0-9-]* [0-9:]* //' /tmp/job_logs.txt | \
+                grep -A 10 "Summary (total wall time)" | \
+                grep "^|" | tail -n +3 || true
+
+              echo ""
+              echo "### Interpretation"
+              echo ""
+              echo "- **Ratio < 1.0**: JAX-SPICE is faster"
+              echo "- **Ratio > 1.0**: JAX-SPICE is slower"
+              echo "- **N/A**: VACASK comparison not available"
+            } >> "$GITHUB_STEP_SUMMARY"
           fi
