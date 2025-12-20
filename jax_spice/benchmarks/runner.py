@@ -1698,7 +1698,7 @@ class VACASKBenchmarkRunner:
                     max_iterations=MAX_NR_ITERATIONS, abstol=DEFAULT_ABSTOL, max_step=1.0
                 )
             else:
-                # Sparse solver for large circuits (uses spsolve with QR factorization)
+                # Sparse solver for large circuits
                 # Pre-compute nse by running build_system once to get sparsity pattern
                 logger.info("Pre-computing sparse matrix nse...")
                 V_init = jnp.zeros(n_nodes, dtype=jnp.float64)
@@ -1714,10 +1714,35 @@ class VACASKBenchmarkRunner:
                 nse = int(unique_indices.shape[0])
                 logger.info(f"Sparse matrix: {J_bcoo_probe.nse} entries -> {nse} unique (nse)")
 
-                nr_solve = self._make_sparse_jit_compiled_solver(
-                    build_system_jit, n_nodes, nse,
-                    max_iterations=MAX_NR_ITERATIONS, abstol=DEFAULT_ABSTOL, max_step=1.0
-                )
+                # Try Spineax (cuDSS with cached symbolic factorization) on GPU
+                use_spineax = False
+                if jax.default_backend() == 'gpu':
+                    try:
+                        from spineax.cudss.solver import CuDSSSolver
+                        use_spineax = True
+                        logger.info("Spineax available - will use cuDSS with cached symbolic factorization")
+                    except ImportError:
+                        logger.info("Spineax not available - using JAX spsolve")
+
+                if use_spineax:
+                    # Pre-compute BCSR pattern for Spineax
+                    from jax.experimental.sparse import BCSR
+                    J_bcoo_dedup = J_bcoo_probe.sum_duplicates(nse=nse)
+                    J_bcsr_probe = BCSR.from_bcoo(J_bcoo_dedup)
+                    logger.info(f"BCSR pattern: indptr={J_bcsr_probe.indptr.shape}, indices={J_bcsr_probe.indices.shape}")
+
+                    nr_solve = self._make_spineax_jit_compiled_solver(
+                        build_system_jit, n_nodes, nse,
+                        bcsr_indptr=J_bcsr_probe.indptr,
+                        bcsr_indices=J_bcsr_probe.indices,
+                        max_iterations=MAX_NR_ITERATIONS, abstol=DEFAULT_ABSTOL, max_step=1.0
+                    )
+                else:
+                    # Fallback to JAX spsolve (QR factorization, no caching)
+                    nr_solve = self._make_sparse_jit_compiled_solver(
+                        build_system_jit, n_nodes, nse,
+                        max_iterations=MAX_NR_ITERATIONS, abstol=DEFAULT_ABSTOL, max_step=1.0
+                    )
 
             # Cache JIT-wrapped solver (JAX handles compilation automatically)
             self._cached_nr_solve = nr_solve
@@ -2725,6 +2750,108 @@ class VACASKBenchmarkRunner:
             return V_final, iterations, converged, max_f
 
         logger.info(f"Creating sparse JIT-compiled NR solver: V({n_nodes})")
+        return jax.jit(nr_solve)
+
+    def _make_spineax_jit_compiled_solver(
+        self,
+        build_system_jit: Callable,
+        n_nodes: int,
+        nse: int,
+        bcsr_indptr: jax.Array,
+        bcsr_indices: jax.Array,
+        max_iterations: int = MAX_NR_ITERATIONS,
+        abstol: float = 1e-6,
+        max_step: float = 1.0,
+    ) -> Callable:
+        """Create a JIT-compiled sparse NR solver using Spineax/cuDSS.
+
+        Uses Spineax's cuDSS wrapper with cached symbolic factorization.
+        The symbolic analysis (METIS reordering, fill-in pattern) is done once
+        when the solver is created, and reused for all subsequent solves.
+
+        Args:
+            build_system_jit: JIT-wrapped function returning (J_bcoo, f)
+            n_nodes: Total node count including ground
+            nse: Number of stored elements after summing duplicates
+            bcsr_indptr: Pre-computed BCSR row pointers
+            bcsr_indices: Pre-computed BCSR column indices
+            max_iterations: Maximum NR iterations
+            abstol: Absolute tolerance for convergence
+            max_step: Maximum voltage step per iteration
+
+        Returns:
+            JIT-compiled sparse solver function using Spineax
+        """
+        from jax.experimental.sparse import BCSR
+        from spineax.cudss.solver import CuDSSSolver
+
+        n_unknowns = n_nodes - 1  # Exclude ground
+
+        # Create Spineax solver with pre-computed sparsity pattern
+        # This does METIS reordering and symbolic analysis ONCE
+        spineax_solver = CuDSSSolver(
+            bcsr_indptr,
+            bcsr_indices,
+            device_id=0,
+            mtype_id=1,  # General matrix
+            mview_id=0,  # Full matrix
+        )
+        logger.info(f"Created Spineax solver with cached symbolic factorization")
+
+        def nr_solve(V_init: jax.Array, vsource_vals: jax.Array, isource_vals: jax.Array):
+            init_state = (
+                V_init,
+                jnp.array(0, dtype=jnp.int32),
+                jnp.array(False),
+                jnp.array(jnp.inf),
+                jnp.array(jnp.inf),
+            )
+
+            def cond_fn(state):
+                V, iteration, converged, max_f, max_delta = state
+                return jnp.logical_and(~converged, iteration < max_iterations)
+
+            def body_fn(state):
+                V, iteration, _, _, _ = state
+
+                # Build sparse system (J_bcoo and f)
+                J_bcoo, f = build_system_jit(V, vsource_vals, isource_vals)
+
+                # Check residual convergence (exclude ground)
+                max_f = jnp.max(jnp.abs(f[1:]))
+                residual_converged = max_f < abstol
+
+                # Sum duplicates before converting to BCSR
+                J_bcoo_dedup = J_bcoo.sum_duplicates(nse=nse)
+
+                # Convert BCOO to BCSR to get data in correct order
+                J_bcsr = BCSR.from_bcoo(J_bcoo_dedup)
+
+                # Solve using Spineax (cached symbolic factorization)
+                # Only numeric refactorization + triangular solve happens here
+                delta, _info = spineax_solver(-f, J_bcsr.data)
+
+                # Step limiting
+                max_delta = jnp.max(jnp.abs(delta))
+                scale = jnp.where(max_delta > max_step, max_step / max_delta, 1.0)
+                delta = delta * scale
+
+                # Update V (ground at index 0 stays fixed)
+                V_new = V.at[1:].add(delta)
+
+                # Check delta-based convergence
+                delta_converged = max_delta < 1e-12
+                converged = jnp.logical_or(residual_converged, delta_converged)
+
+                return (V_new, iteration + 1, converged, max_f, max_delta)
+
+            V_final, iterations, converged, max_f, max_delta = lax.while_loop(
+                cond_fn, body_fn, init_state
+            )
+
+            return V_final, iterations, converged, max_f
+
+        logger.info(f"Creating Spineax JIT-compiled NR solver: V({n_nodes})")
         return jax.jit(nr_solve)
 
     def _compute_voltage_param(self, name: str, V: jax.Array,

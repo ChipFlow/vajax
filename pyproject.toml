@@ -26,6 +26,8 @@ members = ["openvaf-py"]
 cuda12 = [
     # JAX 0.8+ uses jax-cuda12-plugin for CUDA support
     "jax-cuda12-plugin>=0.8.0; sys_platform != 'darwin'",
+    # Spineax: cuDSS sparse solver with cached symbolic factorization
+    "spineax @ git+https://github.com/johnviljoen/Spineax.git; sys_platform != 'darwin'",
 ]
 sax = [
     "sax>=0.13.0",
