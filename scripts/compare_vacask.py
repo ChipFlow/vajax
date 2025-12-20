@@ -26,8 +26,12 @@ Usage:
 """
 
 import argparse
+import logging
 import os
 import subprocess
+
+# Configure logging to see JAX-SPICE runner debug output
+logging.basicConfig(level=logging.INFO, format='%(name)s: %(message)s')
 import sys
 import time
 import re
