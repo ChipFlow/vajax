@@ -22,8 +22,21 @@ When running the c6288 benchmark on GPU with sparse solver, we observed that **9
 | VACASK (sparse) | CPU | 503 ms | Reference C implementation |
 | Dense | GPU (L4) | 8,509 ms | 28x slower than CPU |
 | Sparse (spsolve) | GPU (L4) | ~2,800 ms | From trace analysis |
+| **Sparse (Spineax)** | **GPU (L4)** | **442 ms** | **6.3x faster than spsolve** |
 
 **Source:** Cloud Run GPU jobs, Perfetto traces from `gs://jax-spice-cuda-test-traces/`
+
+### Spineax Results (2025-12-20)
+
+With Spineax (cuDSS with cached symbolic factorization):
+- **c6288 (20 steps):** 442.169 ms/step (8.843s total)
+- **Improvement vs spsolve:** 6.3x faster (2800ms → 442ms)
+- **Comparison to CPU dense:** 1.4x slower (306ms vs 442ms)
+
+The improvement comes from:
+1. Symbolic analysis (METIS reordering) done **once** during solver initialization
+2. Subsequent solves use only numeric refactorization + triangular solve
+3. Eliminated the ~100ms per-call symbolic overhead that dominated spsolve
 
 ### Trace Analysis (Sparse on GPU)
 
@@ -145,10 +158,13 @@ else:
 - [x] Created `jax_spice/analysis/spineax_solver.py`
 - [x] Integrated Spineax into `runner.py` sparse solver path
 - [x] Auto-detection: uses Spineax when available on GPU
+- [x] Fixed Spineax XLA FFI build issues (forked to robtaylor/spineax)
+- [x] Fixed CUDA kernel compilation issue (disabled pbatch_solve module)
+- [x] Fixed LD_LIBRARY_PATH for NVIDIA pip packages on Cloud Run
+- [x] Cloud Run GPU benchmark with Spineax: **442 ms/step** (6.3x improvement)
 
 ### Pending
-- [ ] Cloud Run GPU benchmark with Spineax
-- [ ] Performance comparison: spsolve vs Spineax
+- [ ] Report fix upstream to Spineax maintainer
 - [ ] GMRES fallback implementation for TPU
 
 ## Assumptions and Uncertainties
@@ -176,22 +192,26 @@ else:
 
 4. **JAX version compatibility** - Spineax uses XLA FFI headers which can have breaking changes between JAX versions. We encountered build failures on Cloud Run with jaxlib warnings being treated as errors in the XLA FFI API headers.
 
-### Build Failure (2025-12-20)
+### Build Issues Fixed (2025-12-20)
 
-Spineax failed to build on Cloud Run GPU with errors in XLA FFI headers:
-```
-/jaxlib/include/xla/ffi/api/api.h:193:1: warning: control reaches end of non-void function
-ninja: build stopped: subcommand failed.
-```
+We encountered and fixed two build issues:
 
-This suggests Spineax needs to be updated for compatibility with the latest jaxlib, or we need to pin to a known-working version.
+1. **XLA FFI Header Warnings** - The XLA FFI headers in jaxlib have `-Wreturn-type` warnings that were treated as errors. Fixed by adding compiler flags in CMakeLists.txt:
+   ```cmake
+   target_compile_options(${TARGET} PRIVATE
+       $<$<COMPILE_LANGUAGE:CXX>:-Wno-return-type -Wno-attributes>
+   )
+   ```
+
+2. **CUDA Kernel Version Mismatch** - The `pbatch_solve.cu` file uses internal CUDA API symbols (`__cudaGetKernel`) that differ between nvcc versions. Fixed by disabling the pbatch_solve module (we don't need it for single-matrix solves).
+
+Both fixes are in the ChipFlow fork at `robtaylor/spineax`.
 
 ## Next Steps
 
-1. **Immediate:** Report Spineax build issue to maintainer, try pinning jaxlib version
-2. **Short-term:** Implement GMRES + block-Jacobi fallback as agnostic solution
-3. **Medium-term:** Work with Spineax maintainer on JAX compatibility
-4. **Long-term:** Investigate contributing sparse solver improvements to JAX
+1. **Immediate:** Report fixes upstream to Spineax maintainer
+2. **Short-term:** Implement GMRES + block-Jacobi fallback for TPU
+3. **Long-term:** Investigate contributing sparse solver improvements to JAX
 
 ## References
 
