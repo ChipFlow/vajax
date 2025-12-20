@@ -1715,20 +1715,12 @@ class VACASKBenchmarkRunner:
                 logger.info(f"Sparse matrix: {J_bcoo_probe.nse} entries -> {nse} unique (nse)")
 
                 # Try Spineax (cuDSS with cached symbolic factorization) on GPU
-                # Note: Spineax requires jaxlib <= 0.4.31 for stateful FFI support
                 use_spineax = False
                 if jax.default_backend() == 'gpu':
                     try:
-                        import jaxlib
-                        # Spineax stateful FFI requires register_ffi_type_id which was
-                        # removed after jaxlib 0.4.31. Skip Spineax on newer versions.
-                        jaxlib_version = tuple(int(x) for x in jaxlib.__version__.split('.')[:3])
-                        if jaxlib_version > (0, 4, 31):
-                            logger.info(f"Spineax requires jaxlib <= 0.4.31 (have {jaxlib.__version__}) - using JAX spsolve")
-                        else:
-                            from spineax.cudss.solver import CuDSSSolver
-                            use_spineax = True
-                            logger.info("Spineax available - will use cuDSS with cached symbolic factorization")
+                        from spineax.cudss.solver import CuDSSSolver
+                        use_spineax = True
+                        logger.info("Spineax available - will use cuDSS with cached symbolic factorization")
                     except Exception as e:
                         logger.info(f"Spineax not available ({type(e).__name__}: {e}) - using JAX spsolve")
 
