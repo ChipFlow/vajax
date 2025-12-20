@@ -1967,10 +1967,13 @@ class VACASKBenchmarkRunner:
             with profile_section("lax_scan_simulation", profile_config):
                 all_V, all_iters, all_converged = run_simulation_with_outputs(V0, all_vsource_vals, all_isource_vals)
                 jax.block_until_ready(all_V)
+                # Measure time BEFORE profile_section.__exit__ (which saves trace to disk)
+                t1 = time_module.perf_counter()
         else:
             all_V, all_iters, all_converged = run_simulation_with_outputs(V0, all_vsource_vals, all_isource_vals)
             jax.block_until_ready(all_V)
-        total_time = time_module.perf_counter() - t0
+            t1 = time_module.perf_counter()
+        total_time = t1 - t0
 
         # Build results
         times = jnp.linspace(0.0, t_stop, num_timesteps)
@@ -2131,11 +2134,13 @@ class VACASKBenchmarkRunner:
                 all_V, all_iters, all_converged = run_all_steps(V0, all_vsource_vals, all_isource_vals)
                 # Wait for computation to complete (JAX operations are async)
                 all_V.block_until_ready()
+                # Measure time BEFORE profile_section.__exit__ (which saves trace to disk)
+                t3 = time_module.perf_counter()
         else:
             all_V, all_iters, all_converged = run_all_steps(V0, all_vsource_vals, all_isource_vals)
             all_V.block_until_ready()
+            t3 = time_module.perf_counter()
 
-        t3 = time_module.perf_counter()
         total_time = t3 - t2
 
         # Prepend initial condition
