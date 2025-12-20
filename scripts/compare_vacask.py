@@ -202,7 +202,8 @@ def run_vacask(config: BenchmarkConfig, num_steps: int) -> Optional[Tuple[float,
 
 
 def run_jax_spice(config: BenchmarkConfig, num_steps: int, use_scan: bool,
-                  use_sparse: bool = False, profile_config: Optional[ProfileConfig] = None
+                  use_sparse: bool = False, profile_config: Optional[ProfileConfig] = None,
+                  profile_full: bool = False
                   ) -> Tuple[float, float, Dict]:
     """Run JAX-SPICE and return (time_per_step_ms, wall_time_s, stats).
 
@@ -211,46 +212,66 @@ def run_jax_spice(config: BenchmarkConfig, num_steps: int, use_scan: bool,
         num_steps: Number of timesteps
         use_scan: Use lax.scan for faster execution
         use_sparse: Use sparse solver
-        profile_config: If provided, profile just the core simulation loop (not setup)
+        profile_config: If provided, profile the simulation
+        profile_full: If True, profile entire run including warmup (helps identify overhead)
     """
-    runner = VACASKBenchmarkRunner(config.sim_path)
-    runner.parse()
-
-    t_stop = config.dt * num_steps
-
-    # Warmup (use same num_steps to avoid re-tracing)
-    _ = runner.run_transient(
-        t_stop=t_stop, dt=config.dt,
-        max_steps=num_steps, use_sparse=use_sparse,
-        use_while_loop=use_scan
-    )
+    from jax_spice.profiling import profile_section
 
     # Create benchmark-specific profile config if profiling is enabled
-    benchmark_profile_config = None
+    full_profile_config = None
+    scan_profile_config = None
     if profile_config:
-        benchmark_profile_config = ProfileConfig(
+        base_dir = Path(profile_config.trace_dir) / f"benchmark_{config.name}"
+        if profile_full:
+            full_profile_config = ProfileConfig(
+                jax=profile_config.jax,
+                cuda=profile_config.cuda,
+                trace_dir=str(base_dir / "full_run"),
+                create_perfetto_link=profile_config.create_perfetto_link,
+            )
+        # Always profile the scan portion separately for comparison
+        scan_profile_config = ProfileConfig(
             jax=profile_config.jax,
             cuda=profile_config.cuda,
-            trace_dir=str(Path(profile_config.trace_dir) / f"benchmark_{config.name}"),
+            trace_dir=str(base_dir / "lax_scan_simulation"),
             create_perfetto_link=profile_config.create_perfetto_link,
         )
 
-    # Timed run - profiling happens inside run_transient around the core lax.scan call
-    start = time.perf_counter()
-    times, voltages, stats = runner.run_transient(
-        t_stop=t_stop, dt=config.dt,
-        max_steps=num_steps, use_sparse=use_sparse,
-        use_while_loop=use_scan,
-        profile_config=benchmark_profile_config,
-    )
-    # Force completion of async JAX operations
-    _ = float(voltages[0][0])
-    elapsed = time.perf_counter() - start
+    def do_run():
+        runner = VACASKBenchmarkRunner(config.sim_path)
+        runner.parse()
 
-    actual_steps = len(times) - 1  # Exclude t=0 initial condition
-    time_per_step = elapsed / actual_steps * 1000
+        t_stop = config.dt * num_steps
 
-    return time_per_step, elapsed, stats
+        # Warmup (use same num_steps to avoid re-tracing)
+        _ = runner.run_transient(
+            t_stop=t_stop, dt=config.dt,
+            max_steps=num_steps, use_sparse=use_sparse,
+            use_while_loop=use_scan
+        )
+
+        # Timed run
+        start = time.perf_counter()
+        times, voltages, stats = runner.run_transient(
+            t_stop=t_stop, dt=config.dt,
+            max_steps=num_steps, use_sparse=use_sparse,
+            use_while_loop=use_scan,
+            profile_config=scan_profile_config,
+        )
+        # Force completion of async JAX operations
+        _ = float(voltages[0][0])
+        elapsed = time.perf_counter() - start
+
+        actual_steps = len(times) - 1  # Exclude t=0 initial condition
+        time_per_step = elapsed / actual_steps * 1000
+
+        return time_per_step, elapsed, stats
+
+    if full_profile_config:
+        with profile_section("full_benchmark", full_profile_config):
+            return do_run()
+    else:
+        return do_run()
 
 
 def main():
@@ -299,6 +320,11 @@ def main():
         type=str,
         default="/tmp/jax-spice-traces",
         help="Directory for profiling traces (default: /tmp/jax-spice-traces)",
+    )
+    parser.add_argument(
+        "--profile-full",
+        action="store_true",
+        help="Profile entire run including warmup/setup (helps identify overhead)",
     )
     args = parser.parse_args()
 
@@ -420,7 +446,8 @@ def main():
         use_sparse = args.use_sparse or (name == 'c6288' and not args.force_dense)
         print("  JAX-SPICE warmup...", end=" ", flush=True)
         jax_ms, jax_wall, stats = run_jax_spice(
-            config, num_steps, args.use_scan, use_sparse, profile_config
+            config, num_steps, args.use_scan, use_sparse, profile_config,
+            profile_full=args.profile_full
         )
         print(f"done")
         print(f"  JAX-SPICE: {jax_ms:.3f} ms/step ({jax_wall:.3f}s total)")
