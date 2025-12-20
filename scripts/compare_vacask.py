@@ -105,6 +105,20 @@ BENCHMARKS = {
     ),
 }
 
+# Published VACASK benchmark times (ms/step) from vendor/VACASK/benchmark/README.md
+# Run on AMD Threadripper 7970, single-threaded, KLU solver
+# These serve as reference when VACASK binary is not available (e.g., GPU-only CI)
+VACASK_REFERENCE_TIMES = {
+    # rc: 0.94s / 1005006 steps = 0.935µs/step
+    'rc': 0.94 / 1005006 * 1000,  # 0.000935 ms/step
+    # graetz: 1.89s / 1000003 steps = 1.89µs/step
+    'graetz': 1.89 / 1000003 * 1000,  # 0.00189 ms/step
+    # ring: 1.18s / 26066 steps = 45.3µs/step
+    'ring': 1.18 / 26066 * 1000,  # 0.0453 ms/step
+    # c6288: 57.98s / 1021 steps = 56.8ms/step
+    'c6288': 57.98 / 1021 * 1000,  # 56.8 ms/step
+}
+
 
 def find_vacask_binary() -> Optional[Path]:
     """Find the VACASK binary (returns absolute path)."""
@@ -463,20 +477,30 @@ def main():
         print(f"done")
         print(f"  JAX-SPICE: {jax_ms:.3f} ms/step ({jax_wall:.3f}s total)")
 
-        # Run VACASK
+        # Run VACASK or use reference times
         vacask_ms = None
         vacask_wall = None
+        vacask_source = None  # 'run' or 'reference'
         if vacask_bin:
             print("  VACASK...", end=" ", flush=True)
             vacask_result = run_vacask(config, num_steps)
             if vacask_result is not None:
                 vacask_ms, vacask_wall = vacask_result
+                vacask_source = 'run'
                 print(f"done")
                 print(f"  VACASK: {vacask_ms:.3f} ms/step ({vacask_wall:.3f}s total)")
                 ratio = jax_ms / vacask_ms
                 print(f"  Ratio: {ratio:.2f}x {'slower' if ratio > 1 else 'faster'}")
             else:
                 print("failed")
+        elif name in VACASK_REFERENCE_TIMES:
+            # Use published reference times when VACASK binary isn't available
+            vacask_ms = VACASK_REFERENCE_TIMES[name]
+            vacask_wall = vacask_ms * num_steps / 1000  # Convert to seconds
+            vacask_source = 'reference'
+            print(f"  VACASK (reference): {vacask_ms:.3f} ms/step (AMD Threadripper 7970)")
+            ratio = jax_ms / vacask_ms
+            print(f"  Ratio: {ratio:.2f}x {'slower' if ratio > 1 else 'faster'}")
 
         results.append({
             'name': name,
@@ -485,10 +509,12 @@ def main():
             'jax_wall': jax_wall,
             'vacask_ms': vacask_ms,
             'vacask_wall': vacask_wall,
+            'vacask_source': vacask_source,
         })
         print()
 
     # Summary table
+    has_reference = any(r.get('vacask_source') == 'reference' for r in results)
     print("=" * 70)
     print("Summary (per-step timing)")
     print("=" * 70)
@@ -496,11 +522,14 @@ def main():
     print("| Benchmark | Steps | JAX-SPICE (ms) | VACASK (ms) | Ratio |")
     print("|-----------|-------|----------------|-------------|-------|")
     for r in results:
-        vacask_str = f"{r['vacask_ms']:.3f}" if r['vacask_ms'] else "N/A"
         if r['vacask_ms']:
+            # Add asterisk for reference times
+            ref_marker = "*" if r.get('vacask_source') == 'reference' else ""
+            vacask_str = f"{r['vacask_ms']:.3f}{ref_marker}"
             ratio = r['jax_ms'] / r['vacask_ms']
             ratio_str = f"{ratio:.2f}x"
         else:
+            vacask_str = "N/A"
             ratio_str = "N/A"
         print(f"| {r['name']:9} | {r['steps']:5} | {r['jax_ms']:14.3f} | {vacask_str:11} | {ratio_str:5} |")
 
@@ -514,14 +543,20 @@ def main():
     for r in results:
         # Convert wall time from seconds to milliseconds for better precision
         jax_wall_ms = r['jax_wall'] * 1000
-        vacask_wall_ms = r['vacask_wall'] * 1000 if r['vacask_wall'] else None
-        vacask_str = f"{vacask_wall_ms:.1f}" if vacask_wall_ms else "N/A"
         if r['vacask_wall']:
+            vacask_wall_ms = r['vacask_wall'] * 1000
+            ref_marker = "*" if r.get('vacask_source') == 'reference' else ""
+            vacask_str = f"{vacask_wall_ms:.1f}{ref_marker}"
             ratio = r['jax_wall'] / r['vacask_wall']
             ratio_str = f"{ratio:.2f}x"
         else:
+            vacask_str = "N/A"
             ratio_str = "N/A"
         print(f"| {r['name']:9} | {r['steps']:5} | {jax_wall_ms:14.1f} | {vacask_str:11} | {ratio_str:5} |")
+
+    if has_reference:
+        print()
+        print("* VACASK reference times from AMD Threadripper 7970 (single-threaded)")
 
     print()
 
