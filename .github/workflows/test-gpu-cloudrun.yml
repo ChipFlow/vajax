@@ -126,7 +126,7 @@ jobs:
               --gpu-type=nvidia-l4 \
               --no-gpu-zonal-redundancy \
               --cpu=4 \
-              --memory=24Gi \
+              --memory=16Gi \
               --max-retries=2 \
               --task-timeout=45m \
               --set-env-vars=GITHUB_REPOSITORY=${{ github.repository }} \
