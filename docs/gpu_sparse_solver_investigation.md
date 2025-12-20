@@ -174,11 +174,23 @@ else:
 
 3. **Build complexity** - Spineax uses scikit-build-core + nanobind. May have build issues on some systems.
 
+4. **JAX version compatibility** - Spineax uses XLA FFI headers which can have breaking changes between JAX versions. We encountered build failures on Cloud Run with jaxlib warnings being treated as errors in the XLA FFI API headers.
+
+### Build Failure (2025-12-20)
+
+Spineax failed to build on Cloud Run GPU with errors in XLA FFI headers:
+```
+/jaxlib/include/xla/ffi/api/api.h:193:1: warning: control reaches end of non-void function
+ninja: build stopped: subcommand failed.
+```
+
+This suggests Spineax needs to be updated for compatibility with the latest jaxlib, or we need to pin to a known-working version.
+
 ## Next Steps
 
-1. **Immediate:** Wait for Cloud Run job to complete, analyze results
-2. **If successful:** Document performance improvement, consider upstreaming
-3. **If fails:** Debug Spineax integration, consider GMRES fallback
+1. **Immediate:** Report Spineax build issue to maintainer, try pinning jaxlib version
+2. **Short-term:** Implement GMRES + block-Jacobi fallback as agnostic solution
+3. **Medium-term:** Work with Spineax maintainer on JAX compatibility
 4. **Long-term:** Investigate contributing sparse solver improvements to JAX
 
 ## References
