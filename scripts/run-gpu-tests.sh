@@ -82,7 +82,6 @@ uv run python scripts/compare_vacask.py \
   --max-steps 50 \
   --use-scan \
   --profile-mode jax \
-  --profile-full \
   --profile-dir /tmp/jax-spice-traces
 
 # Upload traces to GCS for artifact download
