@@ -14,10 +14,15 @@ Usage:
     # Enable for performance tracing (e.g., Cloud Run)
     enable_performance_logging()
     logger.info("Now this shows with memory stats and flushes immediately")
+
+    # Enable with perf_counter timestamps (for correlating with Perfetto traces)
+    enable_performance_logging(with_perf_counter=True)
+    logger.info("Now shows: [1234.567890] message")
 """
 
 import logging
 import sys
+import time
 import tracemalloc
 
 import jax
@@ -80,7 +85,20 @@ class MemoryLoggingHandler(logging.StreamHandler):
         self.flush()
 
 
-def enable_performance_logging(with_memory: bool = True):
+class PerfCounterHandler(logging.StreamHandler):
+    """StreamHandler that prepends time.perf_counter() and flushes after every emit.
+
+    Useful for correlating log messages with Perfetto trace timestamps.
+    """
+
+    def emit(self, record):
+        # Prepend perf_counter timestamp
+        record.msg = f"[{time.perf_counter():.6f}] {record.msg}"
+        super().emit(record)
+        self.flush()
+
+
+def enable_performance_logging(with_memory: bool = True, with_perf_counter: bool = False):
     """Enable DEBUG level logging with immediate flush for performance tracing.
 
     Use this when running on Cloud Run or when you need to see logs
@@ -88,6 +106,8 @@ def enable_performance_logging(with_memory: bool = True):
 
     Args:
         with_memory: If True, prepend CPU/GPU memory stats to each log line.
+        with_perf_counter: If True, prepend time.perf_counter() timestamps.
+            Useful for correlating log messages with Perfetto trace timestamps.
     """
     logger.setLevel(logging.DEBUG)
 
@@ -100,7 +120,9 @@ def enable_performance_logging(with_memory: bool = True):
         tracemalloc.start()
 
     # Add appropriate handler
-    if with_memory:
+    if with_perf_counter:
+        handler = PerfCounterHandler(sys.stdout)
+    elif with_memory:
         handler = MemoryLoggingHandler(sys.stdout)
     else:
         handler = FlushingHandler(sys.stdout)

@@ -29,9 +29,10 @@ import argparse
 import os
 import subprocess
 
-# Enable jax_spice performance logging to see solver selection info
+# Enable jax_spice performance logging with perf_counter timestamps
+# This helps correlate log messages with Perfetto trace timestamps
 from jax_spice.logging import enable_performance_logging
-enable_performance_logging(with_memory=False)
+enable_performance_logging(with_memory=False, with_perf_counter=True)
 import sys
 import time
 import re
@@ -252,8 +253,9 @@ def run_jax_spice(config: BenchmarkConfig, num_steps: int, use_scan: bool,
             use_while_loop=use_scan
         )
 
-        # Timed run
+        # Timed run - print perf_counter for correlation with Perfetto traces
         start = time.perf_counter()
+        print(f"TIMED_RUN_START: {start:.6f}")
         times, voltages, stats = runner.run_transient(
             t_stop=t_stop, dt=config.dt,
             max_steps=num_steps, use_sparse=use_sparse,
@@ -262,7 +264,9 @@ def run_jax_spice(config: BenchmarkConfig, num_steps: int, use_scan: bool,
         )
         # Force completion of async JAX operations
         _ = float(voltages[0][0])
-        elapsed = time.perf_counter() - start
+        end = time.perf_counter()
+        elapsed = end - start
+        print(f"TIMED_RUN_END: {end:.6f} (elapsed: {elapsed:.6f}s)")
 
         actual_steps = len(times) - 1  # Exclude t=0 initial condition
         time_per_step = elapsed / actual_steps * 1000
