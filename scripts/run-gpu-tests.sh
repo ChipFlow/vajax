@@ -40,6 +40,12 @@ echo "Installing workspace packages..."
 # Install the workspace in the pre-existing venv
 uv sync --locked --extra cuda12 --extra dev
 
+# Set up LD_LIBRARY_PATH for NVIDIA pip packages
+# JAX's pip packages install CUDA libraries to site-packages/nvidia/*/lib
+NVIDIA_BASE=".venv/lib/python3.13/site-packages/nvidia"
+export LD_LIBRARY_PATH="${NVIDIA_BASE}/cuda_runtime/lib:${NVIDIA_BASE}/cublas/lib:${NVIDIA_BASE}/cusparse/lib:${NVIDIA_BASE}/cudnn/lib:${NVIDIA_BASE}/cufft/lib:${NVIDIA_BASE}/cusolver/lib:${NVIDIA_BASE}/nvjitlink/lib:${NVIDIA_BASE}/nccl/lib:${NVIDIA_BASE}/cu12/lib:${LD_LIBRARY_PATH:-}"
+echo "LD_LIBRARY_PATH set for NVIDIA packages"
+
 echo "=== sccache diagnostics (after build) ==="
 sccache --show-stats || echo "sccache stats not available"
 
