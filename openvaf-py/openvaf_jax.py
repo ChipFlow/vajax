@@ -428,28 +428,37 @@ class OpenVAFToJAX:
 
         Init params (like R, $temperature, tnom) need to come from the inputs.
         We find which eval params correspond to each init param.
+
+        Important: We match by BOTH name AND kind to handle cases where the
+        same name appears multiple times (e.g., 'capacitance' appears once
+        with kind='param_given' and once with kind='param').
         """
         mapping = {}
 
-        # Get init param names
+        # Get init param names and kinds
         init_param_names = list(self.module.init_param_names)
+        init_param_kinds = list(self.module.init_param_kinds)
         eval_param_names = list(self.module.param_names)
+        eval_param_kinds = list(self.module.param_kinds)
 
         for i, init_name in enumerate(init_param_names):
-            # Find matching eval param
+            # Find matching eval param by both name AND kind
             init_param_val = self.init_params[i] if i < len(self.init_params) else None
-            if init_param_val:
-                # Look for this param name in eval params
-                try:
-                    eval_idx = eval_param_names.index(init_name)
+            init_kind = init_param_kinds[i] if i < len(init_param_kinds) else None
+            if init_param_val and init_kind:
+                # Look for this param name AND kind in eval params
+                eval_idx = None
+                for j, (eval_name, eval_kind) in enumerate(zip(eval_param_names, eval_param_kinds)):
+                    if eval_name == init_name and eval_kind == init_kind:
+                        eval_idx = j
+                        break
+
+                if eval_idx is not None:
                     # Get the eval param's value name
                     eval_param_val = self.params[eval_idx] if eval_idx < len(self.params) else None
                     if eval_param_val:
                         # Map init value name to eval input index
                         mapping[init_param_val] = eval_idx
-                except ValueError:
-                    # Not found in eval params
-                    pass
 
         return mapping
 

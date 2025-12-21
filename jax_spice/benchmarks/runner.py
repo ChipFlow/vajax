@@ -625,6 +625,9 @@ class VACASKBenchmarkRunner:
             # Get model-specific defaults
             model_defaults = self.MODEL_PARAM_DEFAULTS.get(model_type, {})
 
+            # Build a set of provided parameter names (lowercase) for param_given lookup
+            provided_params = set(k.lower() for k in params.keys())
+
             # Fill input array for this device (static params only, voltages stay 0)
             for param_idx, (name, kind) in enumerate(zip(param_names, param_kinds)):
                 if kind == 'voltage':
@@ -638,6 +641,13 @@ class VACASKBenchmarkRunner:
                     # (it's independent of the MULT model parameter)
                     if name.lower() == 'mfactor':
                         all_inputs[dev_idx, param_idx] = params.get('mfactor', 1.0)
+                elif kind == 'param_given':
+                    # param_given flags indicate whether a parameter was explicitly provided
+                    # Set to 1.0 if the parameter is in the params dict
+                    param_lower = name.lower()
+                    if param_lower in provided_params or name in params:
+                        all_inputs[dev_idx, param_idx] = 1.0
+                    # Otherwise leave at 0.0 (not provided)
                 elif kind == 'param':
                     param_lower = name.lower()
                     if param_lower in params:
@@ -655,7 +665,7 @@ class VACASKBenchmarkRunner:
                         all_inputs[dev_idx, param_idx] = model_defaults[param_lower]
                     else:
                         all_inputs[dev_idx, param_idx] = 1.0
-                # hidden_state, current, param_given stay 0 from np.zeros
+                # hidden_state, current stay 0 from np.zeros
             device_contexts.append({
                 'name': dev['name'],
                 'node_map': node_map,
@@ -884,6 +894,12 @@ class VACASKBenchmarkRunner:
             'A': 'node0', 'C': 'node1', 'CI': 'node2',
         }
 
+        # Simple 2-terminal device mapping (resistor, capacitor, inductor)
+        # Used as fallback when device has fewer terminals than the mapped node
+        simple_2term_map = {
+            'A': 'node0', 'B': 'node1',  # resistor/capacitor/inductor terminals
+        }
+
         match = re.match(r'V\(([^,)]+)(?:,([^)]+))?\)', name)
         if not match:
             return (ground, ground)
@@ -891,18 +907,30 @@ class VACASKBenchmarkRunner:
         node1_name = match.group(1).strip()
         node2_name = match.group(2).strip() if match.group(2) else None
 
-        # Resolve node1
-        if node1_name in internal_name_map:
-            node1_name = internal_name_map[node1_name]
-        node1_idx = node_map.get(node1_name, node_map.get(node1_name.lower(), ground))
+        def resolve_node(name_orig: str) -> int:
+            """Resolve a Verilog-A node name to a circuit node index."""
+            name = name_orig
+            # First try internal_name_map
+            if name in internal_name_map:
+                mapped = internal_name_map[name]
+                # Check if the mapped node exists in node_map
+                if mapped in node_map:
+                    return node_map[mapped]
+                # Fallback to simple 2-terminal mapping
+                if name in simple_2term_map:
+                    simple_mapped = simple_2term_map[name]
+                    if simple_mapped in node_map:
+                        return node_map[simple_mapped]
+            # Try simple 2-terminal map directly
+            elif name in simple_2term_map:
+                mapped = simple_2term_map[name]
+                if mapped in node_map:
+                    return node_map[mapped]
+            # Try direct lookup
+            return node_map.get(name, node_map.get(name.lower(), ground))
 
-        # Resolve node2
-        if node2_name:
-            if node2_name in internal_name_map:
-                node2_name = internal_name_map[node2_name]
-            node2_idx = node_map.get(node2_name, node_map.get(node2_name.lower(), ground))
-        else:
-            node2_idx = ground
+        node1_idx = resolve_node(node1_name)
+        node2_idx = resolve_node(node2_name) if node2_name else ground
 
         return (node1_idx, node2_idx)
 
@@ -2694,7 +2722,7 @@ class VACASKBenchmarkRunner:
         model_types = list(static_inputs_cache.keys())
 
         def build_system(V: jax.Array, vsource_vals: jax.Array, isource_vals: jax.Array,
-                        Q_prev: jax.Array, inv_dt: float
+                        Q_prev: jax.Array, inv_dt: float | jax.Array
                         ) -> Tuple[Any, jax.Array, jax.Array]:
             """Build Jacobian J and residual f from current voltages.
 
@@ -2922,7 +2950,7 @@ class VACASKBenchmarkRunner:
         """
 
         def nr_solve(V_init: jax.Array, vsource_vals: jax.Array, isource_vals: jax.Array,
-                    Q_prev: jax.Array, inv_dt: float):
+                    Q_prev: jax.Array, inv_dt: float | jax.Array):
             # State: (V, iteration, converged, max_f, max_delta, Q)
             # Q is tracked to return the final charges
             # Q has shape (n_unknowns,) = (n_nodes - 1,) since ground is excluded
@@ -2971,9 +2999,13 @@ class VACASKBenchmarkRunner:
                 return (V_new, iteration + 1, converged, max_f, max_delta, Q)
 
             # Run NR loop on GPU
-            V_final, iterations, converged, max_f, max_delta, Q_final = lax.while_loop(
+            V_final, iterations, converged, max_f, max_delta, _ = lax.while_loop(
                 cond_fn, body_fn, init_state
             )
+
+            # Recompute Q from the converged voltage
+            # The Q from body_fn was computed from V before the update, not V_new
+            _, _, Q_final = build_system_jit(V_final, vsource_vals, isource_vals, Q_prev, inv_dt)
 
             return V_final, iterations, converged, max_f, Q_final
 
@@ -3010,7 +3042,7 @@ class VACASKBenchmarkRunner:
         from jax.experimental.sparse.linalg import spsolve
 
         def nr_solve(V_init: jax.Array, vsource_vals: jax.Array, isource_vals: jax.Array,
-                    Q_prev: jax.Array, inv_dt: float):
+                    Q_prev: jax.Array, inv_dt: float | jax.Array):
             # Q has shape (n_unknowns,) = (n_nodes - 1,) since ground is excluded
             init_Q = jnp.zeros(n_nodes - 1, dtype=jnp.float64)
             init_state = (
@@ -3062,9 +3094,13 @@ class VACASKBenchmarkRunner:
 
                 return (V_new, iteration + 1, converged, max_f, max_delta, Q)
 
-            V_final, iterations, converged, max_f, max_delta, Q_final = lax.while_loop(
+            V_final, iterations, converged, max_f, max_delta, _ = lax.while_loop(
                 cond_fn, body_fn, init_state
             )
+
+            # Recompute Q from the converged voltage
+            # The Q from body_fn was computed from V before the update, not V_new
+            _, _, Q_final = build_system_jit(V_final, vsource_vals, isource_vals, Q_prev, inv_dt)
 
             return V_final, iterations, converged, max_f, Q_final
 
