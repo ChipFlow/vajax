@@ -649,12 +649,12 @@ BENCHMARK_SPECS = {
     'graetz': BenchmarkSpec(
         name='graetz',
         dt=1e-6,           # 1µs step
-        t_stop=1e-4,       # 100µs (enough for diode dynamics)
-        max_rel_error=0.10,  # 10% allowed (diode nonlinearity)
-        vacask_nodes=['outp', 'outn', '4', 'v(4)'],
-        jax_nodes=[4, 3, 4, 4],
-        xfail=True,
-        xfail_reason="Diode model not matching VACASK - ~56% error",
+        t_stop=5e-3,       # 5ms (1/4 of 50Hz period, allows capacitor charging)
+        max_rel_error=0.05,  # 5% allowed
+        vacask_nodes=['outp'],  # Compare differential voltage via transform
+        jax_nodes=[4],
+        xfail=False,
+        node_transform=lambda v: v.get('outp', v.get(4, np.zeros(1))) - v.get('outn', v.get(3, np.zeros(1))),
     ),
     'ring': BenchmarkSpec(
         name='ring',

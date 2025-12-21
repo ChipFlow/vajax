@@ -656,13 +656,14 @@ class VACASKBenchmarkRunner:
                         all_inputs[dev_idx, param_idx] = float(params[name])
                     elif 'temperature' in param_lower or name == '$temperature':
                         all_inputs[dev_idx, param_idx] = 300.15
-                    elif param_lower in ('tnom', 'tref', 'tr'):
-                        all_inputs[dev_idx, param_idx] = 300.0
                     elif param_lower == 'mfactor':
                         all_inputs[dev_idx, param_idx] = params.get('mfactor', 1.0)
                     elif param_lower in model_defaults:
-                        # Use model-specific default
+                        # Use model-specific default (handles tnom, etc. correctly)
                         all_inputs[dev_idx, param_idx] = model_defaults[param_lower]
+                    elif param_lower in ('tnom', 'tref', 'tr'):
+                        # Temperature reference in Celsius (most VA models use 27°C)
+                        all_inputs[dev_idx, param_idx] = 27.0
                     else:
                         all_inputs[dev_idx, param_idx] = 1.0
                 # hidden_state, current stay 0 from np.zeros
@@ -982,16 +983,21 @@ class VACASKBenchmarkRunner:
                     inputs.append(voltage_val)
                 elif kind == 'param':
                     param_lower = name.lower()
+                    model_defaults = self.MODEL_PARAM_DEFAULTS.get(model_type, {})
                     if param_lower in params:
                         inputs.append(float(params[param_lower]))
                     elif name in params:
                         inputs.append(float(params[name]))
                     elif 'temperature' in param_lower or name == '$temperature':
                         inputs.append(300.15)
-                    elif param_lower in ('tnom', 'tref', 'tr'):
-                        inputs.append(300.0)
                     elif param_lower == 'mfactor':
                         inputs.append(params.get('mfactor', 1.0))
+                    elif param_lower in model_defaults:
+                        # Use model-specific default (handles tnom, etc. correctly)
+                        inputs.append(model_defaults[param_lower])
+                    elif param_lower in ('tnom', 'tref', 'tr'):
+                        # Temperature reference in Celsius (most VA models use 27°C)
+                        inputs.append(27.0)
                     else:
                         inputs.append(1.0)
                 elif kind == 'hidden_state':
@@ -1354,21 +1360,28 @@ class VACASKBenchmarkRunner:
     # while JAX-SPICE counts ground as node 0 in the total.
     # =========================================================================
 
-    def _should_collapse_all_pairs(self, model_type: str, model_params: Dict[str, float]) -> bool:
-        """Determine if all collapsible pairs should be collapsed for a model.
+    def _get_model_collapse_pairs(self, model_type: str, model_params: Dict[str, float],
+                                     model_nodes: List[str]) -> List[Tuple[int, int]]:
+        """Get collapse pairs based on model definition and parameters.
 
-        Always returns True - we always collapse internal nodes as specified by the
-        model's collapsible_pairs. This reduces system size significantly for models
-        like PSP103 where many internal nodes can be merged.
+        Instead of blindly trusting OpenVAF's collapsible_pairs, we determine
+        which nodes should collapse based on our understanding of the model.
 
         Args:
-            model_type: The model type (e.g., 'psp103')
-            model_params: Model parameters dictionary (unused, kept for API compat)
+            model_type: The model type (e.g., 'psp103', 'diode')
+            model_params: Model parameters dictionary
+            model_nodes: List of node names from the compiled model
 
         Returns:
-            True - always collapse
+            List of (node_idx, collapse_to_idx) pairs
         """
-        return True
+        # Use OpenVAF's collapsible_pairs for all models
+        # This matches VACASK behavior which also uses OpenVAF's collapse information
+        compiled = self._compiled_models.get(model_type)
+        if compiled:
+            return compiled.get('collapsible_pairs', [])
+
+        return []
 
     def _get_model_params_for_collapse(self, model_type: str) -> Dict[str, float]:
         """Get model parameters relevant for collapse decision.
@@ -1436,8 +1449,7 @@ class VACASKBenchmarkRunner:
         next_internal = n_external
         device_internal_nodes = {}
 
-        # Cache collapse decisions and root mappings per model type
-        collapse_decisions: Dict[str, bool] = {}
+        # Cache collapse roots per model type (based on model params)
         collapse_roots_cache: Dict[str, Dict[int, int]] = {}
 
         for dev in self.devices:
@@ -1449,24 +1461,20 @@ class VACASKBenchmarkRunner:
             if not compiled:
                 continue
 
-            # Check if we should collapse nodes for this model type
-            if model_type not in collapse_decisions:
-                model_params = self._get_model_params_for_collapse(model_type)
-                collapse_decisions[model_type] = self._should_collapse_all_pairs(
-                    model_type, model_params
-                )
-
-                # Precompute collapse roots if collapsing
-                if collapse_decisions[model_type]:
-                    collapsible_pairs = compiled.get('collapsible_pairs', [])
-                    n_model_nodes = len(compiled['nodes'])
-                    collapse_roots_cache[model_type] = self._compute_collapse_roots(
-                        collapsible_pairs, n_model_nodes
-                    )
-
-            should_collapse = collapse_decisions[model_type]
             model_nodes = compiled['nodes']
             n_model_nodes = len(model_nodes)
+
+            # Get collapse pairs based on model definition and parameters
+            if model_type not in collapse_roots_cache:
+                model_params = self._get_model_params_for_collapse(model_type)
+                collapse_pairs = self._get_model_collapse_pairs(
+                    model_type, model_params, model_nodes
+                )
+                collapse_roots_cache[model_type] = self._compute_collapse_roots(
+                    collapse_pairs, n_model_nodes
+                )
+
+            collapse_roots = collapse_roots_cache[model_type]
 
             # Determine if last node is a branch current node (skip it if so)
             # Branch current nodes have names like 'br[Branch(BranchId(N))]'
@@ -1481,33 +1489,24 @@ class VACASKBenchmarkRunner:
             for i in range(n_ext_terminals):
                 ext_node_map[i] = ext_nodes[i]
 
-            if should_collapse and model_type in collapse_roots_cache:
-                collapse_roots = collapse_roots_cache[model_type]
+            # Build node mapping using collapse roots
+            # Track which internal root nodes need circuit node allocation
+            internal_root_to_circuit: Dict[int, int] = {}
+            node_mapping: Dict[int, int] = {}
 
-                # Build node mapping using collapse roots
-                # Track which internal root nodes need circuit node allocation
-                internal_root_to_circuit: Dict[int, int] = {}
-                node_mapping: Dict[int, int] = {}
+            # Internal nodes start after external terminals
+            for i in range(n_ext_terminals, n_internal_end):
+                root = collapse_roots.get(i, i)
 
-                # Internal nodes start after external terminals
-                for i in range(n_ext_terminals, n_internal_end):
-                    root = collapse_roots.get(i, i)
-
-                    if root < n_ext_terminals:
-                        # Root is an external node - use its circuit node
-                        node_mapping[i] = ext_node_map[root]
-                    else:
-                        # Root is internal - need to allocate/reuse a circuit node
-                        if root not in internal_root_to_circuit:
-                            internal_root_to_circuit[root] = next_internal
-                            next_internal += 1
-                        node_mapping[i] = internal_root_to_circuit[root]
-            else:
-                # No collapse - allocate internal nodes normally
-                node_mapping = {}
-                for i in range(n_ext_terminals, n_internal_end):
-                    node_mapping[i] = next_internal
-                    next_internal += 1
+                if root < n_ext_terminals:
+                    # Root is an external node - use its circuit node
+                    node_mapping[i] = ext_node_map[root]
+                else:
+                    # Root is internal - need to allocate/reuse a circuit node
+                    if root not in internal_root_to_circuit:
+                        internal_root_to_circuit[root] = next_internal
+                        next_internal += 1
+                    node_mapping[i] = internal_root_to_circuit[root]
 
             # Build internal_map: model node name -> circuit node index
             internal_map = {}
@@ -1519,10 +1518,7 @@ class VACASKBenchmarkRunner:
 
         if device_internal_nodes:
             n_internal = next_internal - n_external
-            n_collapsed = sum(1 for v in collapse_decisions.values() if v)
             logger.info(f"Allocated {n_internal} internal nodes for {len(device_internal_nodes)} OpenVAF devices")
-            if n_collapsed > 0:
-                logger.info(f"  Node collapse applied to {n_collapsed} model type(s)")
 
         return next_internal, device_internal_nodes
 
