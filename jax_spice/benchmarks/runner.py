@@ -1749,6 +1749,30 @@ class VACASKBenchmarkRunner:
             self._cached_solver_key = cache_key
             logger.info(f"Cached {'dense' if use_dense else 'sparse'} NR solver")
 
+        # Compute initial condition based on icmode
+        icmode = self.analysis_params.get('icmode', 'op')
+        if icmode == 'op':
+            V = self._compute_dc_operating_point(
+                n_nodes=n_nodes,
+                n_vsources=n_vsources,
+                n_isources=n_isources,
+                nr_solve=nr_solve,
+                backend=backend,
+                use_dense=use_dense
+            )
+        else:
+            # icmode='uic' - initialize VDD nodes to supply voltage
+            V = jnp.zeros(n_nodes, dtype=jnp.float64)
+            vdd_value = 0.0
+            for dev in self.devices:
+                if dev['model'] == 'vsource':
+                    dc_val = dev['params'].get('dc', 0.0)
+                    if dc_val > vdd_value:
+                        vdd_value = dc_val
+            for name, idx in self.node_names.items():
+                if 'vdd' in name.lower() or 'vcc' in name.lower():
+                    V = V.at[idx].set(vdd_value)
+
         times = []
 
         logger.info(f"initialising voltages: {n_external}")
@@ -1808,6 +1832,124 @@ class VACASKBenchmarkRunner:
             logger.info(f"  Non-converged: {len(non_converged_steps)} steps ({100*(1-stats['convergence_rate']):.1f}%)")
 
         return jnp.array(times), {k: jnp.array(v) for k, v in voltages.items()}, stats
+
+    def _compute_dc_operating_point(self, n_nodes: int, n_vsources: int, n_isources: int,
+                                     nr_solve: Callable, backend: str = "cpu",
+                                     use_dense: bool = True,
+                                     max_iterations: int = 100) -> jax.Array:
+        """Compute DC operating point as initial condition for transient analysis.
+
+        This finds the steady-state solution where all node currents sum to zero,
+        using the same NR solver as transient analysis but with source values at t=0.
+
+        For capacitors, the NR solver includes C/dt terms, but starting from a good
+        initial guess (VDD nodes initialized to supply voltage) and running until
+        convergence will find the DC equilibrium.
+
+        Args:
+            n_nodes: Number of nodes in the system
+            n_vsources: Number of voltage sources
+            n_isources: Number of current sources
+            nr_solve: The cached NR solver function
+            backend: 'gpu' or 'cpu'
+            use_dense: Whether using dense solver
+            max_iterations: Maximum DC NR iterations
+
+        Returns:
+            DC operating point voltages (shape: [n_nodes])
+        """
+        logger.info("Computing DC operating point (icmode='op')...")
+
+        # Find VDD value from voltage sources
+        vdd_value = 0.0
+        for dev in self.devices:
+            if dev['model'] == 'vsource':
+                params = dev['params']
+                dc_val = params.get('dc', 0.0)
+                if dc_val > vdd_value:
+                    vdd_value = dc_val
+
+        # Initialize V with a better starting point for convergence:
+        # - Ground (node 0) = 0V
+        # - VDD nodes = vdd_value
+        # - Other signal nodes = VDD/2 (mid-rail for CMOS)
+        # This helps avoid the degenerate solution where all MOSFETs are in cutoff
+        mid_rail = vdd_value / 2.0
+        V = jnp.full(n_nodes, mid_rail, dtype=jnp.float64)
+        V = V.at[0].set(0.0)  # Ground is always 0
+
+        # Set VDD nodes to full supply voltage
+        for name, idx in self.node_names.items():
+            name_lower = name.lower()
+            if 'vdd' in name_lower or 'vcc' in name_lower:
+                V = V.at[idx].set(vdd_value)
+                logger.debug(f"  Initialized VDD node '{name}' (idx {idx}) to {vdd_value}V")
+            elif name_lower in ('gnd', 'vss', '0'):
+                V = V.at[idx].set(0.0)
+                logger.debug(f"  Initialized ground node '{name}' (idx {idx}) to 0V")
+
+        logger.debug(f"  Initial V: ground=0V, VDD={vdd_value}V, others={mid_rail}V")
+
+        # Get DC source values (at t=0)
+        # - Voltage sources: use their DC value
+        # - Current sources: use val0 (before pulse starts) or DC value
+        vsource_vals = jnp.zeros(n_vsources, dtype=jnp.float64)
+        isource_vals = jnp.zeros(n_isources, dtype=jnp.float64)
+
+        # Build source values at t=0
+        vsource_idx = 0
+        isource_idx = 0
+        for dev in self.devices:
+            if dev['model'] == 'vsource':
+                params = dev['params']
+                dc_val = params.get('dc', 0.0)
+                vsource_vals = vsource_vals.at[vsource_idx].set(float(dc_val))
+                vsource_idx += 1
+            elif dev['model'] == 'isource':
+                params = dev['params']
+                source_type = str(params.get('type', 'dc')).lower()
+                if source_type == 'pulse':
+                    # At t=0 (before delay), pulse is at val0
+                    dc_val = params.get('val0', 0.0)
+                else:
+                    dc_val = params.get('dc', 0.0)
+                isource_vals = isource_vals.at[isource_idx].set(float(dc_val))
+                isource_idx += 1
+
+        # Run NR iterations until convergence
+        converged = False
+        for iteration in range(max_iterations):
+            V_new, nr_iters, is_converged, max_f = nr_solve(V, vsource_vals, isource_vals)
+
+            if bool(is_converged):
+                converged = True
+                V = V_new
+                logger.info(f"  DC operating point converged in {iteration + 1} outer iterations "
+                           f"({int(nr_iters)} NR iters, residual={float(max_f):.2e})")
+                break
+
+            # Check if we're making progress
+            delta = jnp.max(jnp.abs(V_new - V))
+            V = V_new
+
+            if float(delta) < 1e-9:
+                converged = True
+                logger.info(f"  DC operating point converged (delta < 1e-9) in {iteration + 1} iterations")
+                break
+
+        if not converged:
+            logger.warning(f"  DC operating point did not fully converge after {max_iterations} iterations "
+                          f"(max_f={float(max_f):.2e})")
+
+        # Log some key node voltages
+        n_external = self.num_nodes
+        logger.info(f"  DC solution: {min(n_external, 5)} node voltages:")
+        for i in range(min(n_external, 5)):
+            # Find node name for index
+            name = next((n for n, idx in self.node_names.items() if idx == i), str(i))
+            logger.info(f"    Node {name} (idx {i}): {float(V[i]):.6f}V")
+
+        return V
 
     def _run_transient_while_loop(self, t_stop: float, dt: float,
                                    backend: str = "cpu",
@@ -1925,8 +2067,30 @@ class VACASKBenchmarkRunner:
 
         logger.info(f"Source pre-computation: {time_module.perf_counter() - t_precompute:.3f}s")
 
-        # Initial state
-        V0 = jnp.zeros(n_nodes, dtype=jnp.float64)
+        # Initial state - compute DC operating point if icmode='op'
+        icmode = self.analysis_params.get('icmode', 'op')
+        if icmode == 'op':
+            V0 = self._compute_dc_operating_point(
+                n_nodes=n_nodes,
+                n_vsources=n_vsources,
+                n_isources=n_isources,
+                nr_solve=nr_solve,
+                backend=backend,
+                use_dense=use_dense
+            )
+        else:
+            # icmode='uic' - use zeros with VDD nodes initialized
+            V0 = jnp.zeros(n_nodes, dtype=jnp.float64)
+            # Initialize VDD nodes to supply voltage
+            vdd_value = 0.0
+            for dev in self.devices:
+                if dev['model'] == 'vsource':
+                    dc_val = dev['params'].get('dc', 0.0)
+                    if dc_val > vdd_value:
+                        vdd_value = dc_val
+            for name, idx in self.node_names.items():
+                if 'vdd' in name.lower() or 'vcc' in name.lower():
+                    V0 = V0.at[idx].set(vdd_value)
 
         # Cache key for the scan function
         # Note: Does NOT include num_timesteps - lax.scan handles variable-length inputs
@@ -2104,8 +2268,30 @@ class VACASKBenchmarkRunner:
             self._run_transient_hybrid(t_stop=dt, dt=dt, backend=backend, use_dense=use_dense)
             nr_solve = self._cached_nr_solve
 
-        # Initial condition (DC operating point = 0 for now)
-        V0 = jnp.zeros(n_nodes, dtype=jnp.float64)
+        # Initial condition - compute DC operating point if icmode='op'
+        icmode = self.analysis_params.get('icmode', 'op')
+        if icmode == 'op':
+            V0 = self._compute_dc_operating_point(
+                n_nodes=n_nodes,
+                n_vsources=n_vsources,
+                n_isources=n_isources,
+                nr_solve=nr_solve,
+                backend=backend,
+                use_dense=use_dense
+            )
+        else:
+            # icmode='uic' - use zeros with VDD nodes initialized
+            V0 = jnp.zeros(n_nodes, dtype=jnp.float64)
+            # Initialize VDD nodes to supply voltage
+            vdd_value = 0.0
+            for dev in self.devices:
+                if dev['model'] == 'vsource':
+                    dc_val = dev['params'].get('dc', 0.0)
+                    if dc_val > vdd_value:
+                        vdd_value = dc_val
+            for name, idx in self.node_names.items():
+                if 'vdd' in name.lower() or 'vcc' in name.lower():
+                    V0 = V0.at[idx].set(vdd_value)
 
         # Create the scan function
         def step_fn(V_prev, source_inputs):
@@ -2374,8 +2560,9 @@ class VACASKBenchmarkRunner:
         if 'isource' in device_data and isource_vals.size > 0:
             d = device_data['isource']
             # isource_vals is pre-built JAX array - no Python loop here
-            # Residual: -I at p, +I at n (note sign convention)
-            f_vals = isource_vals[:, None] * jnp.array([-1.0, 1.0])[None, :]  # (n, 2)
+            # Residual: +I at p (current leaves), -I at n (current enters)
+            # For KCL: f[i] = sum of currents LEAVING node i
+            f_vals = isource_vals[:, None] * jnp.array([1.0, -1.0])[None, :]  # (n, 2)
             f_idx = d['f_indices'].ravel()
             f_val = f_vals.ravel()
             f_valid = f_idx >= 0
@@ -2496,9 +2683,10 @@ class VACASKBenchmarkRunner:
                 ))
 
             # Current sources (residual only)
+            # Residual: +I at p (current leaves), -I at n (current enters)
             if 'isource' in source_device_data and isource_vals.size > 0:
                 d = source_device_data['isource']
-                f_vals = isource_vals[:, None] * jnp.array([-1.0, 1.0])[None, :]
+                f_vals = isource_vals[:, None] * jnp.array([1.0, -1.0])[None, :]
                 f_idx = d['f_indices'].ravel()
                 f_val = f_vals.ravel()
                 f_valid = f_idx >= 0
