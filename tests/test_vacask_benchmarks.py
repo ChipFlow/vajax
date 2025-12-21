@@ -380,8 +380,14 @@ class TestNodeCountComparison:
         return None
 
     @staticmethod
-    def get_vacask_node_count(vacask_bin: Path, benchmark: str) -> int:
-        """Run VACASK on benchmark and extract node count from 'print stats'."""
+    def get_vacask_node_count(vacask_bin: Path, benchmark: str, timeout: int = 600) -> int:
+        """Run VACASK on benchmark and extract node count from 'print stats'.
+
+        Args:
+            vacask_bin: Path to VACASK binary
+            benchmark: Benchmark name
+            timeout: Subprocess timeout in seconds (default 600s = 10min for large circuits)
+        """
         import subprocess
         import re
 
@@ -394,7 +400,7 @@ class TestNodeCountComparison:
             capture_output=True,
             text=True,
             cwd=sim_file.parent,
-            timeout=120
+            timeout=timeout
         )
 
         # Parse both "Number of nodes:" and "Number of unknonws:" from output
@@ -468,7 +474,6 @@ class TestNodeCountComparison:
         assert diff_total <= 1, \
             f"{benchmark}: total nodes differ: JAX-SPICE={n_total}, VACASK unknowns+1={vacask_unknowns+1}"
 
-    @pytest.mark.xfail(reason="c6288 VACASK simulation times out in CI - run locally")
     def test_c6288_node_count(self, vacask_bin):
         """Test c6288 node count - this is the main target for node collapse fix.
 
