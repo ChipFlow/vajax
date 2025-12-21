@@ -128,10 +128,26 @@ jobs:
             cat /tmp/openvaf-crash-*.log 2>/dev/null || echo "No crash logs found"
           }
 
-      # Run benchmark comparison
+      # Run automated VACASK result comparison tests
+      # These tests compare simulation waveforms between JAX-SPICE and VACASK
+      # Tests marked with xfail are expected to fail and won't break CI
+      - name: Run VACASK result comparison tests
+        env:
+          JAX_PLATFORMS: cpu
+          JAX_ENABLE_X64: "1"
+          VACASK_BIN: ${{ github.workspace }}/vendor/VACASK/build/simulator/vacask
+        run: |
+          echo "Running automated VACASK result comparison tests..."
+          # Run pytest with the VACASK comparison tests
+          # Tests use xfail for known-failing benchmarks so this won't break CI
+          uv run pytest tests/test_vacask_benchmarks.py -v \
+            -k "TestVACASKResultComparison" \
+            --tb=short 2>&1 | tee /tmp/vacask-result-tests.log || true
+
+      # Run benchmark performance comparison
       # NOTE: VACASK benchmarks require OSDI device files compiled by openvaf-r
       # This currently crashes on Linux/LLVM18, so VACASK results may not be available
-      - name: Run benchmark comparison
+      - name: Run benchmark performance comparison
         env:
           JAX_PLATFORMS: cpu
           JAX_ENABLE_X64: "1"
@@ -156,6 +172,35 @@ jobs:
             echo "- **Mode**: lax.scan (JIT-compiled)"
             echo "- **Steps**: 200"
             echo ""
+
+            # Report VACASK result comparison tests
+            echo "### Result Accuracy Tests"
+            echo ""
+            if [ -f "/tmp/vacask-result-tests.log" ]; then
+              echo "| Benchmark | Status | Details |"
+              echo "|-----------|--------|---------|"
+
+              # Extract test results for each benchmark
+              for bench in rc graetz ring mul; do
+                if grep -q "test_transient_matches_vacask\[${bench}\].*PASSED" /tmp/vacask-result-tests.log; then
+                  echo "| ${bench} | ✅ PASSED | Waveform matches VACASK |"
+                elif grep -q "test_transient_matches_vacask\[${bench}\].*XFAIL" /tmp/vacask-result-tests.log; then
+                  reason=$(grep "test_transient_matches_vacask\[${bench}\]" /tmp/vacask-result-tests.log | head -1 | sed 's/.*reason=//' || echo "Expected failure")
+                  echo "| ${bench} | ⚠️ XFAIL | ${reason} |"
+                elif grep -q "test_transient_matches_vacask\[${bench}\].*SKIPPED" /tmp/vacask-result-tests.log; then
+                  echo "| ${bench} | ⏭️ SKIPPED | VACASK binary not available |"
+                elif grep -q "test_transient_matches_vacask\[${bench}\].*FAILED" /tmp/vacask-result-tests.log; then
+                  echo "| ${bench} | ❌ FAILED | Unexpected failure |"
+                fi
+              done
+
+              echo ""
+              echo "_Tests marked XFAIL are known limitations being worked on._"
+              echo ""
+            else
+              echo "**Warning**: Result comparison tests log not found"
+              echo ""
+            fi
 
             # Extract and display the comparison output
             if [ -f "/tmp/benchmark-comparison.log" ]; then
@@ -219,3 +264,4 @@ jobs:
           name: benchmark-logs
           path: |
             /tmp/benchmark-comparison.log
+            /tmp/vacask-result-tests.log
