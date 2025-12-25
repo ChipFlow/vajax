@@ -664,6 +664,13 @@ class VACASKBenchmarkRunner:
                     elif param_lower in ('tnom', 'tref', 'tr'):
                         # Temperature reference in Celsius (most VA models use 27°C)
                         all_inputs[dev_idx, param_idx] = 27.0
+                    elif param_lower == 'cox':
+                        # COX = gate oxide capacitance per unit area = eps_r * eps_0 / t_ox
+                        # Must be computed from TOXO and EPSROXO if not provided directly
+                        toxo = float(params.get('toxo', params.get('TOXO', 2e-9)))
+                        epsroxo = float(params.get('epsroxo', params.get('EPSROXO', 3.9)))
+                        eps0 = 8.854187817e-12  # vacuum permittivity F/m
+                        all_inputs[dev_idx, param_idx] = epsroxo * eps0 / toxo
                     else:
                         all_inputs[dev_idx, param_idx] = 1.0
                 # hidden_state, current stay 0 from np.zeros
@@ -689,6 +696,12 @@ class VACASKBenchmarkRunner:
                         elif name_lower == 'chnl_type':
                             type_val = params.get('type', params.get('TYPE', 1))
                             all_inputs[dev_idx, param_idx] = 1 if float(type_val) > 0 else -1
+
+                        # Computed geometry-dependent values
+                        # lcinv2 = 1/L^2 (inverse length squared, used in channel current)
+                        elif name_lower == 'lcinv2':
+                            l_val = max(float(params.get('l', params.get('L', 1e-6))), 1e-9)
+                            all_inputs[dev_idx, param_idx] = 1.0 / (l_val * l_val)
 
                         # Switch parameters (pass through)
                         elif name_lower == 'swgeo_i':

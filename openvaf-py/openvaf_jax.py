@@ -316,15 +316,15 @@ class OpenVAFToJAX:
         lines.append("")
 
         # Map hidden_state values from init to eval params
-        # NOTE: Disabled because the init computation produces wrong values for some params,
-        # causing Jacobian explosion. The Python fallbacks in runner.py work better.
         # Uses value-number matching: if eval vN has init_vN computed, assign vN = init_vN
-        lines.append("    # Hidden state values from init -> eval (DISABLED)")
-        # hidden_state_assignments = self._build_hidden_state_assignments(init_defined)
-        # for eval_var, init_var in hidden_state_assignments:
-        #     lines.append(f"    {eval_var} = {init_var}")
-        # if hidden_state_assignments:
-        #     logger.info(f"      _generate_core_code: {len(hidden_state_assignments)} hidden_state assignments")
+        # Note: The 1e40 "Jacobian explosion" from NOI nodes is now handled separately
+        # by masking in runner.py (huge Jacobian entries are clamped)
+        lines.append("    # Hidden state values from init -> eval")
+        hidden_state_assignments = self._build_hidden_state_assignments(init_defined)
+        for eval_var, init_var in hidden_state_assignments:
+            lines.append(f"    {eval_var} = {init_var}")
+        if hidden_state_assignments:
+            logger.info(f"      _generate_core_code: {len(hidden_state_assignments)} hidden_state assignments")
 
         lines.append("")
 
