@@ -4331,24 +4331,6 @@ class VACASKBenchmarkRunner:
                     n_devs = len(openvaf_by_type[model_type])
                     logger.info(f"Prepared {model_type}: {n_devs} devices, stamp indices cached")
 
-            # === JIT WARMUP: Pre-compile vmapped_fn for each model type ===
-            # The first call to vmapped_fn triggers JIT compilation (25s for psp103).
-            # Do this explicitly here to make the timing predictable.
-            for model_type in static_inputs_cache:
-                static_inputs, voltage_indices, _, voltage_node1, voltage_node2 = \
-                    static_inputs_cache[model_type]
-                vmapped_fn = vmapped_fns[model_type]
-                n_devs = static_inputs.shape[0]
-
-                if n_devs > 0:
-                    # Warmup call with zeros triggers JIT compilation
-                    V_zeros = jnp.zeros(n_total, dtype=jnp.float64)
-                    voltage_updates = V_zeros[voltage_node1] - V_zeros[voltage_node2]
-                    batch_inputs = static_inputs.at[:, jnp.array(voltage_indices)].set(voltage_updates)
-                    result = vmapped_fn(batch_inputs)
-                    result[0].block_until_ready()  # Force sync to complete JIT
-                    logger.info(f"JIT warmup {model_type} ({n_devs} devices) complete")
-
             # Pre-compute source device stamp indices
             source_device_data = self._prepare_source_devices_coo(source_devices, ground, n_unknowns)
 
@@ -4499,21 +4481,15 @@ class VACASKBenchmarkRunner:
             self._cached_build_system = build_system_jit
             logger.info(f"Cached {'dense' if use_dense else 'sparse'} NR solver")
 
-            # === JIT WARMUP: Compile nr_solve and build_system_jit ===
-            # First run triggers JIT compilation (~90s for c6288). Doing it here
-            # makes timing predictable and keeps all compilation in setup phase.
-            V_init = jnp.zeros(n_nodes, dtype=jnp.float64)
-            vsource_init = jnp.zeros(n_vsources, dtype=jnp.float64)
-            isource_init = jnp.zeros(n_isources, dtype=jnp.float64)
-            Q_init = jnp.zeros(n_unknowns, dtype=jnp.float64)
-            # Warmup nr_solve (includes build_system_jit internally)
-            warmup_result = nr_solve(V_init, vsource_init, isource_init, Q_init, 1.0)
-            warmup_result[0].block_until_ready()
-            logger.info("JIT warmup nr_solve complete")
-            # Also warmup build_system_jit directly (used in Q_prev init)
-            _, _, _q_warmup = build_system_jit(V_init, vsource_init, isource_init, Q_init, 0.0)
-            _q_warmup.block_until_ready()
-            logger.info("JIT warmup build_system_jit complete")
+            # JIT warmup: run one throwaway iteration to trigger all compilation
+            # This compiles vmapped_fn, build_system_jit, and nr_solve in one pass
+            V_warmup = jnp.zeros(n_nodes, dtype=jnp.float64)
+            vsource_warmup = jnp.zeros(n_vsources, dtype=jnp.float64)
+            isource_warmup = jnp.zeros(n_isources, dtype=jnp.float64)
+            Q_warmup = jnp.zeros(n_unknowns, dtype=jnp.float64)
+            _warmup_result = nr_solve(V_warmup, vsource_warmup, isource_warmup, Q_warmup, 1.0)
+            _warmup_result[0].block_until_ready()
+            logger.info("JIT warmup complete")
 
         # Compute initial condition based on icmode
         icmode = self.analysis_params.get('icmode', 'op')
