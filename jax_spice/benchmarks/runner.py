@@ -5369,9 +5369,7 @@ class VACASKBenchmarkRunner:
 
             # === OpenVAF devices contribution (unrolled at trace time) ===
             # Devices return 4 arrays: (res_resist, res_react, jac_resist, jac_react)
-            import time as _dbg_t
             for model_type in model_types:
-                _dbg_t0 = _dbg_t.time()
                 static_inputs, voltage_indices, stamp_indices, voltage_node1, voltage_node2 = \
                     static_inputs_cache[model_type]
                 vmapped_fn = vmapped_fns[model_type]
@@ -5379,12 +5377,9 @@ class VACASKBenchmarkRunner:
                 # Vectorized voltage update
                 voltage_updates = V[voltage_node1] - V[voltage_node2]
                 batch_inputs = static_inputs.at[:, jnp.array(voltage_indices)].set(voltage_updates)
-                print(f"    [build_system] {model_type} voltage update: {_dbg_t.time()-_dbg_t0:.2f}s")
 
-                # Batched device evaluation - now returns 4 arrays
-                _dbg_t1 = _dbg_t.time()
+                # Batched device evaluation - returns 4 arrays
                 batch_res_resist, batch_res_react, batch_jac_resist, batch_jac_react = vmapped_fn(batch_inputs)
-                print(f"    [build_system] {model_type} vmapped_fn: {_dbg_t.time()-_dbg_t1:.2f}s")
 
                 # Mask out huge residuals from internal nodes with 1e40 conductance
                 # These arise from numerical noise × 1e40 = 1e20+ residuals
