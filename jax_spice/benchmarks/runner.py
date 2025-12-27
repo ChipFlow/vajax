@@ -5381,18 +5381,9 @@ class VACASKBenchmarkRunner:
                 # Batched device evaluation - returns 4 arrays
                 batch_res_resist, batch_res_react, batch_jac_resist, batch_jac_react = vmapped_fn(batch_inputs)
 
-                # Mask out huge residuals from internal nodes with 1e40 conductance
-                # These arise from numerical noise × 1e40 = 1e20+ residuals
-                # PSP103 NOI and related internal nodes can produce such values
-                huge_res_mask = jnp.abs(batch_res_resist) > 1e20
-                batch_res_resist = jnp.where(huge_res_mask, 0.0, batch_res_resist)
-                batch_res_react = jnp.where(huge_res_mask, 0.0, batch_res_react)
-
-                # Also mask huge Jacobian entries (> 1e20) from NOI and similar internal nodes
-                # These 1e40 conductance values pollute the circuit Jacobian and cause instability
-                huge_jac_mask = jnp.abs(batch_jac_resist) > 1e20
-                batch_jac_resist = jnp.where(huge_jac_mask, 0.0, batch_jac_resist)
-                batch_jac_react = jnp.where(huge_jac_mask, 0.0, batch_jac_react)
+                # NOTE: Huge value masking removed - NOI constraint enforcement in NR solver
+                # (lines 5601-5606) now handles 1e40 conductance by zeroing NOI rows/cols in J and f.
+                # The value masking was causing 4 extra jnp.where ops per NR iteration.
 
                 # Collect COO triplets using pre-computed indices
                 res_idx = stamp_indices['res_indices']
