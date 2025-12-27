@@ -29,6 +29,10 @@ from jax_spice.netlist.parser import VACASKParser
 from jax_spice.netlist.circuit import Instance
 from jax_spice.analysis.mna import MNASystem, DeviceInfo
 from jax_spice.analysis.transient import transient_analysis_jit
+from jax_spice.analysis.homotopy import (
+    HomotopyConfig, HomotopyResult, run_homotopy_chain, gmin_stepping, source_stepping
+)
+from jax_spice.analysis.solver import NRConfig, newton_solve
 from jax_spice.logging import logger
 from jax_spice.profiling import profile, profile_section, ProfileConfig
 
@@ -566,6 +570,8 @@ class VACASKBenchmarkRunner:
                 'vmapped_eval_with_cache': vmapped_eval_with_cache,
                 'eval_cache_meta': eval_cache_meta,
                 'init_to_eval_indices': init_to_eval_indices,
+                # Device-level GMIN via $simparam("gmin")
+                'uses_simparam_gmin': eval_cache_meta.get('uses_simparam_gmin', False),
             }
 
             # Store in both instance and module-level cache
@@ -3321,6 +3327,16 @@ class VACASKBenchmarkRunner:
                 'voltage_node_pairs': voltage_node_pairs,
             })
 
+        # Append gmin column if this model uses $simparam("gmin")
+        # The gmin column is accessed as inputs[-1] in the generated JAX code
+        uses_simparam_gmin = compiled.get('uses_simparam_gmin', False)
+        if uses_simparam_gmin and n_devices > 0:
+            # Default gmin value - will be updated during homotopy
+            default_gmin = 1e-12
+            gmin_column = np.full((n_devices, 1), default_gmin, dtype=np.float64)
+            all_inputs = np.concatenate([all_inputs, gmin_column], axis=1)
+            logger.debug(f"{model_type}: appended gmin column (uses_simparam_gmin=True)")
+
         # Compute cache by calling init function
         # Extract init inputs from all_inputs using init_to_eval mapping
         static_inputs = jnp.asarray(all_inputs)
@@ -4529,7 +4545,10 @@ class VACASKBenchmarkRunner:
                 nr_solve=nr_solve,
                 backend=backend,
                 use_dense=use_dense,
-                device_internal_nodes=device_internal_nodes
+                device_internal_nodes=device_internal_nodes,
+                source_device_data=source_device_data,
+                vmapped_fns=vmapped_fns,
+                static_inputs_cache=static_inputs_cache,
             )
         else:
             # icmode='uic' - initialize VDD nodes to supply voltage
@@ -4633,30 +4652,33 @@ class VACASKBenchmarkRunner:
                                      nr_solve: Callable, backend: str = "cpu",
                                      use_dense: bool = True,
                                      max_iterations: int = 100,
-                                     device_internal_nodes: Optional[Dict[str, Dict[str, int]]] = None) -> jax.Array:
-        """Compute DC operating point as initial condition for transient analysis.
+                                     device_internal_nodes: Optional[Dict[str, Dict[str, int]]] = None,
+                                     source_device_data: Optional[Dict[str, Any]] = None,
+                                     vmapped_fns: Optional[Dict[str, Callable]] = None,
+                                     static_inputs_cache: Optional[Dict[str, Tuple]] = None) -> jax.Array:
+        """Compute DC operating point using VACASK-style homotopy chain.
 
-        This finds the steady-state solution where all node currents sum to zero,
-        using the same NR solver as transient analysis but with source values at t=0.
-
-        For capacitors, the NR solver includes C/dt terms, but starting from a good
-        initial guess (VDD nodes initialized to supply voltage) and running until
-        convergence will find the DC equilibrium.
+        Uses the homotopy chain (gdev -> gshunt -> src) to find the DC operating
+        point even for difficult circuits like ring oscillators where simple
+        Newton-Raphson fails due to near-singular Jacobians.
 
         Args:
             n_nodes: Number of nodes in the system
             n_vsources: Number of voltage sources
             n_isources: Number of current sources
-            nr_solve: The cached NR solver function
+            nr_solve: The cached NR solver function (used for fallback)
             backend: 'gpu' or 'cpu'
             use_dense: Whether using dense solver
-            max_iterations: Maximum DC NR iterations
+            max_iterations: Maximum NR iterations per homotopy step
             device_internal_nodes: Map of device name -> {node_name: circuit_node_idx}
+            source_device_data: Pre-computed source device stamp templates
+            vmapped_fns: Dict of vmapped OpenVAF functions per model type
+            static_inputs_cache: Dict of static inputs per model type
 
         Returns:
             DC operating point voltages (shape: [n_nodes])
         """
-        logger.info("Computing DC operating point (icmode='op')...")
+        logger.info("Computing DC operating point with homotopy chain...")
 
         # Find VDD value from voltage sources
         vdd_value = 0.0
@@ -4667,11 +4689,7 @@ class VACASKBenchmarkRunner:
                 if dc_val > vdd_value:
                     vdd_value = dc_val
 
-        # Initialize V with a better starting point for convergence:
-        # - Ground (node 0) = 0V
-        # - VDD nodes = vdd_value
-        # - Other signal nodes = VDD/2 (mid-rail for CMOS)
-        # This helps avoid the degenerate solution where all MOSFETs are in cutoff
+        # Initialize V with a good starting point for convergence
         mid_rail = vdd_value / 2.0
         V = jnp.full(n_nodes, mid_rail, dtype=jnp.float64)
         V = V.at[0].set(0.0)  # Ground is always 0
@@ -4686,37 +4704,27 @@ class VACASKBenchmarkRunner:
                 V = V.at[idx].set(0.0)
                 logger.debug(f"  Initialized ground node '{name}' (idx {idx}) to 0V")
 
-        # Initialize PSP103 internal nodes properly:
-        # 1. NOI nodes (node4) to 0V - they have extremely high conductance to ground
-        # 2. Body internal nodes (node8-11 = BP/BI/BS/BD) to match external B terminal
-        #    For PMOS with B=VDD, these must be at VDD for proper body-source voltage
+        # Initialize PSP103 internal nodes
+        noi_indices = []
         if device_internal_nodes:
             noi_nodes_initialized = 0
             body_nodes_initialized = 0
-
-            # Build map from device name to external nodes
-            device_external_nodes = {}
-            for dev in self.devices:
-                device_external_nodes[dev['name']] = dev.get('nodes', [])
+            device_external_nodes = {dev['name']: dev.get('nodes', []) for dev in self.devices}
 
             for dev_name, internal_nodes in device_internal_nodes.items():
-                # NOI node initialization (node4) - must be 0V (has 1e40 conductance to ground)
                 if 'node4' in internal_nodes:
                     noi_idx = internal_nodes['node4']
                     V = V.at[noi_idx].set(0.0)
+                    noi_indices.append(noi_idx)
                     noi_nodes_initialized += 1
 
-                # Body internal nodes initialization (node8-11 = BP/BI/BS/BD)
-                # These should match the external B terminal voltage
                 ext_nodes = device_external_nodes.get(dev_name, [])
-                if len(ext_nodes) >= 4:  # PSP103 has [D, G, S, B]
-                    b_circuit_node = ext_nodes[3]  # External B terminal
-                    b_voltage = float(V[b_circuit_node])  # Get B voltage (VDD for PMOS)
-
+                if len(ext_nodes) >= 4:
+                    b_circuit_node = ext_nodes[3]
+                    b_voltage = float(V[b_circuit_node])
                     for body_node_name in ['node8', 'node9', 'node10', 'node11']:
                         if body_node_name in internal_nodes:
                             body_idx = internal_nodes[body_node_name]
-                            # Only update if not already set (avoid overwriting ground or VDD)
                             if body_idx > 0 and abs(V[body_idx] - mid_rail) < 0.01:
                                 V = V.at[body_idx].set(b_voltage)
                                 body_nodes_initialized += 1
@@ -4724,80 +4732,120 @@ class VACASKBenchmarkRunner:
             if noi_nodes_initialized > 0:
                 logger.debug(f"  Initialized {noi_nodes_initialized} NOI nodes to 0V")
             if body_nodes_initialized > 0:
-                logger.debug(f"  Initialized {body_nodes_initialized} body internal nodes to match B terminal")
+                logger.debug(f"  Initialized {body_nodes_initialized} body internal nodes")
 
+        noi_indices = jnp.array(noi_indices, dtype=jnp.int32) if noi_indices else None
         logger.debug(f"  Initial V: ground=0V, VDD={vdd_value}V, others={mid_rail}V")
 
-        # Get DC source values (at t=0)
-        # - Voltage sources: use their DC value
-        # - Current sources: use val0 (before pulse starts) or DC value
-        vsource_vals = jnp.zeros(n_vsources, dtype=jnp.float64)
-        isource_vals = jnp.zeros(n_isources, dtype=jnp.float64)
+        # Get DC source values
+        vsource_dc_vals = jnp.zeros(n_vsources, dtype=jnp.float64)
+        isource_dc_vals = jnp.zeros(n_isources, dtype=jnp.float64)
 
-        # Build source values at t=0
         vsource_idx = 0
         isource_idx = 0
         for dev in self.devices:
             if dev['model'] == 'vsource':
-                params = dev['params']
-                dc_val = params.get('dc', 0.0)
-                vsource_vals = vsource_vals.at[vsource_idx].set(float(dc_val))
+                dc_val = dev['params'].get('dc', 0.0)
+                vsource_dc_vals = vsource_dc_vals.at[vsource_idx].set(float(dc_val))
                 vsource_idx += 1
             elif dev['model'] == 'isource':
-                params = dev['params']
-                source_type = str(params.get('type', 'dc')).lower()
-                if source_type == 'pulse':
-                    # At t=0 (before delay), pulse is at val0
-                    dc_val = params.get('val0', 0.0)
-                else:
-                    dc_val = params.get('dc', 0.0)
-                isource_vals = isource_vals.at[isource_idx].set(float(dc_val))
+                source_type = str(dev['params'].get('type', 'dc')).lower()
+                dc_val = dev['params'].get('val0' if source_type == 'pulse' else 'dc', 0.0)
+                isource_dc_vals = isource_dc_vals.at[isource_idx].set(float(dc_val))
                 isource_idx += 1
 
-        # Run NR iterations until convergence
-        # For DC: inv_dt=0 means no reactive terms (dQ/dt = 0 at steady state)
-        # Q_prev doesn't matter when inv_dt=0, but needs correct shape (n_unknowns,)
         n_unknowns = n_nodes - 1
-        Q_prev = jnp.zeros(n_unknowns, dtype=jnp.float64)
-        inv_dt = 0.0  # DC analysis - no time derivative terms
 
-        converged = False
-        for iteration in range(max_iterations):
-            V_new, nr_iters, is_converged, max_f, _ = nr_solve(V, vsource_vals, isource_vals, Q_prev, inv_dt)
+        # Check if we have the data needed for homotopy
+        if source_device_data is not None and vmapped_fns is not None and static_inputs_cache is not None:
+            # Use homotopy chain
+            build_residual_fn, build_jacobian_fn = self._make_dc_homotopy_builders(
+                source_device_data, vmapped_fns, static_inputs_cache,
+                n_unknowns, vsource_dc_vals, isource_dc_vals, noi_indices
+            )
 
-            if bool(is_converged):
-                converged = True
+            # Configure homotopy with conservative settings
+            # Note: Ring oscillator circuits may still not converge due to
+            # metastable DC operating point - this is a known limitation
+            homotopy_config = HomotopyConfig(
+                gmin=1e-12,
+                gdev_start=1e-3,   # Start from moderate GMIN
+                gdev_target=1e-13,
+                gmin_factor=3.0,   # Conservative stepping factor
+                gmin_factor_min=1.1,
+                gmin_factor_max=10.0,
+                gmin_max=1.0,
+                gmin_max_steps=100,
+                source_step=0.1,
+                source_step_min=0.001,
+                source_max_steps=100,
+                chain=("gdev", "gshunt", "src"),
+                debug=0,  # Disable debug output for normal runs
+            )
+            nr_config = NRConfig(
+                max_iterations=max_iterations,
+                abstol=1e-9,
+                reltol=1e-6,
+                damping=1.0,
+                max_step=2.0,
+            )
+
+            # First try direct NR without homotopy (works for well-initialized circuits)
+            logger.info("  Trying direct NR solver first...")
+            residual_fn = build_residual_fn(1.0, 1e-12, 0.0)  # source_scale=1, gmin=base, no gshunt
+            jacobian_fn = build_jacobian_fn(1.0, 1e-12, 0.0)
+            direct_result = newton_solve(residual_fn, jacobian_fn, V, nr_config)
+
+            if direct_result.converged:
+                V = direct_result.V
+                logger.info(f"  DC operating point converged via direct NR "
+                           f"({direct_result.iterations} iters, residual={direct_result.residual_norm:.2e})")
+            else:
+                # Fall back to homotopy chain
+                logger.info("  Direct NR failed, trying homotopy chain...")
+                result = run_homotopy_chain(
+                    build_residual_fn, build_jacobian_fn, V, homotopy_config, nr_config
+                )
+
+                if result.converged:
+                    V = result.V
+                    logger.info(f"  DC operating point converged via {result.method} "
+                               f"({result.iterations} total iters, {result.homotopy_steps} homotopy steps)")
+                else:
+                    logger.warning(f"  Homotopy chain did not converge (method={result.method})")
+                    # For oscillator circuits, accept the best solution we have
+                    # The DC operating point might be metastable anyway
+                    V = result.V
+                    logger.info("  Using best available solution for metastable circuit")
+        else:
+            # Fallback: use simple NR with the cached solver
+            logger.info("  Using simple NR (no homotopy data available)")
+            Q_prev = jnp.zeros(n_unknowns, dtype=jnp.float64)
+            inv_dt = 0.0
+
+            converged = False
+            for iteration in range(max_iterations):
+                V_new, nr_iters, is_converged, max_f, _ = nr_solve(V, vsource_dc_vals, isource_dc_vals, Q_prev, inv_dt)
+                if bool(is_converged):
+                    converged = True
+                    V = V_new
+                    logger.info(f"  DC converged in {iteration + 1} iterations")
+                    break
+                delta = jnp.max(jnp.abs(V_new - V))
                 V = V_new
-                logger.info(f"  DC operating point converged in {iteration + 1} outer iterations "
-                           f"({int(nr_iters)} NR iters, residual={float(max_f):.2e})")
-                break
+                if noi_indices is not None:
+                    V = V.at[noi_indices].set(0.0)
+                if float(delta) < 1e-9:
+                    converged = True
+                    break
 
-            # Check if we're making progress
-            delta = jnp.max(jnp.abs(V_new - V))
-            V = V_new
+            if not converged:
+                logger.warning(f"  DC did not converge after {max_iterations} iterations")
 
-            # Clamp NOI nodes to 0V - they have 1e40 conductance to ground
-            # which causes numerical issues if they drift from 0V
-            if device_internal_nodes:
-                for dev_name, internal_nodes in device_internal_nodes.items():
-                    if 'node4' in internal_nodes:  # NOI is node4 in PSP103
-                        noi_idx = internal_nodes['node4']
-                        V = V.at[noi_idx].set(0.0)
-
-            if float(delta) < 1e-9:
-                converged = True
-                logger.info(f"  DC operating point converged (delta < 1e-9) in {iteration + 1} iterations")
-                break
-
-        if not converged:
-            logger.warning(f"  DC operating point did not fully converge after {max_iterations} iterations "
-                          f"(max_f={float(max_f):.2e})")
-
-        # Log some key node voltages
+        # Log key node voltages
         n_external = self.num_nodes
         logger.info(f"  DC solution: {min(n_external, 5)} node voltages:")
         for i in range(min(n_external, 5)):
-            # Find node name for index
             name = next((n for n, idx in self.node_names.items() if idx == i), str(i))
             logger.info(f"    Node {name} (idx {i}): {float(V[i]):.6f}V")
 
@@ -4832,6 +4880,8 @@ class VACASKBenchmarkRunner:
         n_unknowns = setup['n_unknowns']
         source_device_data = setup['source_device_data']
         device_internal_nodes = setup['device_internal_nodes']
+        vmapped_fns = setup.get('vmapped_fns', {})
+        static_inputs_cache = setup.get('static_inputs_cache', {})
 
         n_external = self.num_nodes
         n_nodes = n_unknowns + 1
@@ -4930,7 +4980,10 @@ class VACASKBenchmarkRunner:
                 nr_solve=nr_solve,
                 backend=backend,
                 use_dense=use_dense,
-                device_internal_nodes=device_internal_nodes
+                device_internal_nodes=device_internal_nodes,
+                source_device_data=source_device_data,
+                vmapped_fns=vmapped_fns,
+                static_inputs_cache=static_inputs_cache,
             )
         else:
             # icmode='uic' - use zeros with VDD nodes initialized
@@ -5538,6 +5591,140 @@ class VACASKBenchmarkRunner:
             return J, f, Q
 
         return build_system
+
+    def _make_dc_homotopy_builders(
+        self,
+        source_device_data: Dict[str, Any],
+        vmapped_fns: Dict[str, Callable],
+        static_inputs_cache: Dict[str, Tuple],
+        n_unknowns: int,
+        vsource_dc_vals: jax.Array,
+        isource_dc_vals: jax.Array,
+        noi_indices: Optional[jax.Array] = None,
+    ) -> Tuple[Callable, Callable]:
+        """Create residual and jacobian builder functions for DC homotopy.
+
+        Returns functions compatible with the homotopy module interface:
+        - build_residual_fn(source_scale, gmin, gshunt) -> residual_fn(V)
+        - build_jacobian_fn(source_scale, gmin, gshunt) -> jacobian_fn(V)
+
+        Args:
+            source_device_data: Pre-computed source device stamp templates
+            vmapped_fns: Dict of vmapped OpenVAF functions per model type
+            static_inputs_cache: Dict of static inputs per model type
+            n_unknowns: Number of unknowns (n_nodes - 1)
+            vsource_dc_vals: DC voltage source values
+            isource_dc_vals: DC current source values
+            noi_indices: Optional array of NOI node indices
+
+        Returns:
+            Tuple of (build_residual_fn, build_jacobian_fn)
+        """
+        model_types = list(static_inputs_cache.keys())
+
+        # Pre-compute residual mask for NOI nodes
+        if noi_indices is not None and len(noi_indices) > 0:
+            noi_res_idx = noi_indices - 1  # Convert to residual indices
+        else:
+            noi_res_idx = None
+
+        def build_residual_fn(source_scale: float, gmin: float, gshunt: float):
+            """Build residual function with homotopy parameters."""
+
+            def residual_fn(V: jax.Array) -> jax.Array:
+                """Compute residual f(V) for DC analysis with homotopy aids."""
+                f_parts = []
+
+                # === Source devices contribution ===
+                # Scale voltage source values by source_scale
+                if 'vsource' in source_device_data and vsource_dc_vals.size > 0:
+                    d = source_device_data['vsource']
+                    G = 1e12
+                    Vp, Vn = V[d['node_p']], V[d['node_n']]
+                    scaled_vsource = vsource_dc_vals * source_scale
+                    I = G * (Vp - Vn - scaled_vsource)
+
+                    f_vals = I[:, None] * d['f_signs'][None, :]
+                    f_idx = d['f_indices'].ravel()
+                    f_val = f_vals.ravel()
+                    f_valid = f_idx >= 0
+                    f_parts.append((jnp.where(f_valid, f_idx, 0), jnp.where(f_valid, f_val, 0.0)))
+
+                # Current sources (also scaled)
+                if 'isource' in source_device_data and isource_dc_vals.size > 0:
+                    d = source_device_data['isource']
+                    scaled_isource = isource_dc_vals * source_scale
+                    f_vals = scaled_isource[:, None] * jnp.array([1.0, -1.0])[None, :]
+                    f_idx = d['f_indices'].ravel()
+                    f_val = f_vals.ravel()
+                    f_valid = f_idx >= 0
+                    f_parts.append((jnp.where(f_valid, f_idx, 0), jnp.where(f_valid, f_val, 0.0)))
+
+                # === OpenVAF devices contribution ===
+                for model_type in model_types:
+                    static_inputs, voltage_indices, stamp_indices, voltage_node1, voltage_node2, cache = \
+                        static_inputs_cache[model_type]
+                    vmapped_fn = vmapped_fns[model_type]
+
+                    voltage_updates = V[voltage_node1] - V[voltage_node2]
+                    batch_inputs = static_inputs.at[:, jnp.array(voltage_indices)].set(voltage_updates)
+
+                    # Update device-level gmin if this model uses $simparam("gmin")
+                    uses_simparam_gmin = self._compiled_models.get(model_type, {}).get('uses_simparam_gmin', False)
+                    if uses_simparam_gmin:
+                        # gmin is passed as the LAST element in inputs array
+                        # Update all devices' gmin with the current homotopy gmin value
+                        batch_inputs = batch_inputs.at[:, -1].set(gmin)
+
+                    vmapped_eval_with_cache = self._compiled_models.get(model_type, {}).get('vmapped_eval_with_cache')
+                    if vmapped_eval_with_cache is not None and cache.size > 0:
+                        batch_res_resist, batch_res_react, _, _ = vmapped_eval_with_cache(batch_inputs, cache)
+                    else:
+                        batch_res_resist, batch_res_react, _, _ = vmapped_fn(batch_inputs)
+
+                    # Resistive residuals only (DC analysis)
+                    res_idx = stamp_indices['res_indices']
+                    flat_res_idx = res_idx.ravel()
+                    flat_res_val = batch_res_resist.ravel()
+                    valid_res = flat_res_idx >= 0
+                    flat_res_idx_masked = jnp.where(valid_res, flat_res_idx, 0)
+                    flat_res_masked = jnp.where(valid_res, flat_res_val, 0.0)
+                    flat_res_masked = jnp.where(jnp.isnan(flat_res_masked), 0.0, flat_res_masked)
+                    f_parts.append((flat_res_idx_masked, flat_res_masked))
+
+                # === Assemble residual vector ===
+                if f_parts:
+                    all_f_idx = jnp.concatenate([p[0] for p in f_parts])
+                    all_f_val = jnp.concatenate([p[1] for p in f_parts])
+                    f = jax.ops.segment_sum(all_f_val, all_f_idx, num_segments=n_unknowns)
+                else:
+                    f = jnp.zeros(n_unknowns, dtype=jnp.float64)
+
+                # === Add GMIN contribution (to all nodes) ===
+                # GMIN adds current gmin * V[i] to each non-ground node
+                # V[1:] are the non-ground node voltages
+                V_nonground = V[1:]
+                f = f + gmin * V_nonground
+
+                # === Add GSHUNT contribution ===
+                # GSHUNT is a shunt conductance to ground: I = gshunt * V
+                if gshunt > 0:
+                    f = f + gshunt * V_nonground
+
+                # Mask NOI residuals (they have 1e40 conductance)
+                if noi_res_idx is not None:
+                    f = f.at[noi_res_idx].set(0.0)
+
+                return f
+
+            return residual_fn
+
+        def build_jacobian_fn(source_scale: float, gmin: float, gshunt: float):
+            """Build jacobian function using autodiff."""
+            residual_fn = build_residual_fn(source_scale, gmin, gshunt)
+            return jax.jacfwd(residual_fn)
+
+        return build_residual_fn, build_jacobian_fn
 
     def _make_jit_compiled_solver(
         self,

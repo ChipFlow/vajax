@@ -139,6 +139,10 @@ struct VaModule {
     /// Only includes parameters with literal default values
     param_defaults: HashMap<String, f64>,
 
+    // String constant values (resolved from Spur keys)
+    /// Maps operand name (e.g., "v123") to actual string value (e.g., "gmin")
+    str_constant_values: HashMap<String, String>,
+
     // OSDI descriptor metadata
     /// Number of terminal nodes (ports)
     #[pyo3(get)]
@@ -215,6 +219,12 @@ impl VaModule {
     /// Only includes parameters with literal (constant) default values
     fn get_param_defaults(&self) -> HashMap<String, f64> {
         self.param_defaults.clone()
+    }
+
+    /// Get resolved string constant values
+    /// Returns a dict mapping operand name (e.g., "v123") to actual string (e.g., "gmin")
+    fn get_str_constants(&self) -> HashMap<String, String> {
+        self.str_constant_values.clone()
     }
 
     /// Get OSDI-compatible descriptor metadata
@@ -1319,6 +1329,17 @@ fn compile_va(path: &str, allow_analog_in_cond: bool, allow_builtin_primitives: 
         // Number of limiting states
         let num_states = compiled.intern.lim_state.len();
 
+        // Extract and resolve string constants from eval function
+        let mut str_constant_values: HashMap<String, String> = HashMap::new();
+        for val in compiled.eval.dfg.values.iter() {
+            if let mir::ValueDef::Const(mir::Const::Str(spur)) = compiled.eval.dfg.value_def(val) {
+                let operand_name = format!("v{}", u32::from(val));
+                // Resolve the Spur key to actual string using the literals interner
+                let resolved_str = literals.resolve(&spur).to_owned();
+                str_constant_values.insert(operand_name, resolved_str);
+            }
+        }
+
         result.push(VaModule {
             name: module_info.module.name(&db).to_string(),
             param_names,
@@ -1349,6 +1370,8 @@ fn compile_va(path: &str, allow_analog_in_cond: bool, allow_builtin_primitives: 
             num_collapsible,
             // Parameter defaults support
             param_defaults,
+            // String constant values
+            str_constant_values,
             // OSDI metadata
             num_terminals,
             osdi_params,

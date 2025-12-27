@@ -63,6 +63,13 @@ class OpenVAFToJAX:
         self.int_constants = dict(self.mir_data.get('int_constants', {}))
         self.params = list(self.mir_data['params'])
 
+        # String constants (resolved from Spur keys to actual strings)
+        # Maps operand name (e.g., "v123") to actual string (e.g., "gmin")
+        self.str_constants = dict(module.get_str_constants())
+
+        # Track if this model uses $simparam("gmin")
+        self.uses_simparam_gmin = False
+
         # Init function data
         self.init_constants = dict(self.init_mir_data['constants'])
         self.init_bool_constants = dict(self.init_mir_data.get('bool_constants', {}))
@@ -170,6 +177,7 @@ class OpenVAFToJAX:
         metadata = {
             'node_names': node_names,
             'jacobian_keys': jacobian_keys,
+            'uses_simparam_gmin': self.uses_simparam_gmin,
         }
 
         return local_ns['device_eval_array'], metadata
@@ -270,6 +278,7 @@ class OpenVAFToJAX:
             'node_names': node_names,
             'jacobian_keys': jacobian_keys,
             'cache_to_param_mapping': cache_to_param,
+            'uses_simparam_gmin': self.uses_simparam_gmin,
         }
 
         return local_ns['eval_fn_with_cache'], metadata
@@ -2248,10 +2257,24 @@ class OpenVAFToJAX:
                 fn_name = func_decls[func_ref].get('name', '')
 
                 if 'simparam' in fn_name.lower():
-                    # $simparam("name", default) - return the default value
-                    if len(operands) >= 2:
-                        return get_operand(operands[1])
-                    return '1e-12'  # gmin default
+                    # $simparam("name", default)
+                    # Get the parameter name from first operand (string constant)
+                    param_name = None
+                    if len(operands) >= 1:
+                        first_operand = operands[0]
+                        # Look up the actual string value from str_constants
+                        param_name = self.str_constants.get(first_operand, None)
+
+                    if param_name == "gmin":
+                        # gmin is passed as the LAST element in inputs array
+                        # Mark that this model uses $simparam("gmin")
+                        self.uses_simparam_gmin = True
+                        return 'inputs[-1]'
+                    else:
+                        # Other simparams: return the default value
+                        if len(operands) >= 2:
+                            return get_operand(operands[1])
+                        return '0.0'  # Default for unknown simparams
 
                 elif 'ddt' in fn_name.lower() or 'TimeDerivative' in fn_name:
                     # Time derivative - for DC analysis, return 0

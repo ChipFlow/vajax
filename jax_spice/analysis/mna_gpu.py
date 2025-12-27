@@ -211,6 +211,85 @@ def stamp_gmin_residual_gpu(
     return residual
 
 
+def stamp_gshunt_residual_gpu(
+    residual: Array,
+    V: Array,
+    gshunt: float,
+    ground_node: int,
+) -> Array:
+    """Add GSHUNT contribution to residual for all voltage nodes.
+
+    GSHUNT is a conductance to ground that provides a DC path when
+    transistors are off, improving convergence for difficult circuits.
+
+    Unlike GMIN (which is applied to device diagonals), GSHUNT creates
+    a shunt path from every voltage node to ground: I = gshunt * V
+
+    For each non-ground node i:
+      f[i] += gshunt * V[i]
+
+    This function only stamps the residual. Use stamp_gshunt_jacobian_gpu
+    to also stamp the Jacobian diagonal.
+
+    Args:
+        residual: Residual vector (num_nodes-1,) excluding ground
+        V: Node voltage vector (num_nodes,)
+        gshunt: GSHUNT conductance value
+        ground_node: Index of ground node
+
+    Returns:
+        Updated residual vector
+    """
+    if gshunt == 0.0:
+        return residual
+
+    # For standard ground_node=0 case: residual[i] += gshunt * V[i+1]
+    num_nodes = V.shape[0]
+
+    if ground_node == 0:
+        V_nonground = V[1:]
+    else:
+        V_nonground = jnp.concatenate([
+            V[1:ground_node] if ground_node > 1 else jnp.array([]),
+            V[ground_node+1:] if ground_node < num_nodes - 1 else jnp.array([])
+        ])
+
+    residual = residual + gshunt * V_nonground
+    return residual
+
+
+def stamp_gshunt_jacobian_gpu(
+    jacobian: Array,
+    gshunt: float,
+    num_nodes: int,
+    ground_node: int,
+) -> Array:
+    """Add GSHUNT contribution to Jacobian diagonals.
+
+    GSHUNT is a conductance to ground, so dI/dV = gshunt on diagonals.
+
+    For each non-ground node i:
+      J[i,i] += gshunt
+
+    Args:
+        jacobian: Jacobian matrix (num_nodes-1, num_nodes-1) excluding ground
+        gshunt: GSHUNT conductance value
+        num_nodes: Total number of nodes including ground
+        ground_node: Index of ground node
+
+    Returns:
+        Updated Jacobian matrix
+    """
+    if gshunt == 0.0:
+        return jacobian
+
+    # Add gshunt to all diagonal entries
+    n_residuals = num_nodes - 1
+    diag_indices = jnp.arange(n_residuals)
+    jacobian = jacobian.at[diag_indices, diag_indices].add(gshunt)
+    return jacobian
+
+
 def build_mosfet_params_from_group(
     group,
     temperature: float = 300.0,
