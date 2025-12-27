@@ -4,15 +4,62 @@ use pyo3::prelude::*;
 use pyo3::exceptions::PyValueError;
 
 use basedb::diagnostics::ConsoleSink;
-use hir::{CompilationDB, CompilationOpts, Expr, Literal};
-use hir_lower::{CurrentKind, ParamKind};
+use hir::{CompilationDB, CompilationOpts, Expr, Literal, Type};
+use hir_lower::{CurrentKind, ParamKind, PlaceKind};
 use syntax::ast::UnaryOp;
 use lasso::Rodeo;
-use mir::{FuncRef, Function, Param, Value};
+use mir::{FuncRef, Function, Param, Value, F_ZERO, ValueDef};
 use mir_interpret::{Interpreter, InterpreterState, Data};
 use paths::AbsPathBuf;
 use sim_back::{collect_modules, CompiledModule};
 use typed_index_collections::{TiSlice, TiVec};
+
+// OSDI flag constants (matching osdi_0_4.rs)
+const PARA_TY_REAL: u32 = 0;
+const PARA_TY_INT: u32 = 1;
+const PARA_TY_STR: u32 = 2;
+const PARA_KIND_MODEL: u32 = 0 << 30;
+const PARA_KIND_INST: u32 = 1 << 30;
+const JACOBIAN_ENTRY_RESIST_CONST: u32 = 1;
+const JACOBIAN_ENTRY_REACT_CONST: u32 = 2;
+const JACOBIAN_ENTRY_RESIST: u32 = 4;
+const JACOBIAN_ENTRY_REACT: u32 = 8;
+
+/// Parameter metadata matching OSDI descriptor
+#[derive(Clone)]
+struct OsdiParamInfo {
+    name: String,
+    aliases: Vec<String>,
+    units: String,
+    description: String,
+    flags: u32,
+    is_instance: bool,
+}
+
+/// Node metadata matching OSDI descriptor
+#[derive(Clone)]
+struct OsdiNodeInfo {
+    name: String,
+    units: String,
+    residual_units: String,
+    is_internal: bool,
+}
+
+/// Jacobian entry metadata matching OSDI descriptor
+#[derive(Clone)]
+struct OsdiJacobianInfo {
+    row: u32,
+    col: u32,
+    flags: u32,
+}
+
+/// Noise source metadata
+#[derive(Clone)]
+struct OsdiNoiseInfo {
+    name: String,
+    node1: u32,
+    node2: u32,  // u32::MAX for ground
+}
 
 /// Python wrapper for a compiled Verilog-A module
 #[pyclass]
@@ -91,6 +138,25 @@ struct VaModule {
     /// Default values for parameters (extracted from Verilog-A source)
     /// Only includes parameters with literal default values
     param_defaults: HashMap<String, f64>,
+
+    // OSDI descriptor metadata
+    /// Number of terminal nodes (ports)
+    #[pyo3(get)]
+    num_terminals: usize,
+    /// OSDI parameter metadata
+    osdi_params: Vec<OsdiParamInfo>,
+    /// OSDI node metadata
+    osdi_nodes: Vec<OsdiNodeInfo>,
+    /// OSDI Jacobian entry metadata with flags
+    osdi_jacobian: Vec<OsdiJacobianInfo>,
+    /// Noise sources
+    osdi_noise_sources: Vec<OsdiNoiseInfo>,
+    /// Number of limiting states
+    #[pyo3(get)]
+    num_states: usize,
+    /// Whether module has bound_step
+    #[pyo3(get)]
+    has_bound_step: bool,
 }
 
 #[pymethods]
@@ -149,6 +215,111 @@ impl VaModule {
     /// Only includes parameters with literal (constant) default values
     fn get_param_defaults(&self) -> HashMap<String, f64> {
         self.param_defaults.clone()
+    }
+
+    /// Get OSDI-compatible descriptor metadata
+    /// Returns a dict matching the OSDI descriptor format with:
+    ///   - 'params': list of parameter metadata dicts
+    ///   - 'nodes': list of node metadata dicts
+    ///   - 'jacobian': list of Jacobian entry dicts with flags
+    ///   - 'collapsible': list of collapsible node pairs
+    ///   - 'noise_sources': list of noise source dicts
+    ///   - 'num_terminals': number of terminal nodes
+    ///   - 'num_states': number of limiting states
+    ///   - 'has_bound_step': whether module has bound_step
+    fn get_osdi_descriptor(&self) -> std::collections::HashMap<String, pyo3::PyObject> {
+        use pyo3::types::{PyDict, PyList};
+
+        Python::with_gil(|py| {
+            let mut result = std::collections::HashMap::new();
+
+            // Parameters
+            let params = PyList::empty(py);
+            for param in &self.osdi_params {
+                let d = PyDict::new(py);
+                d.set_item("name", &param.name).unwrap();
+                d.set_item("aliases", &param.aliases).unwrap();
+                d.set_item("units", &param.units).unwrap();
+                d.set_item("description", &param.description).unwrap();
+                d.set_item("flags", param.flags).unwrap();
+                d.set_item("is_instance", param.is_instance).unwrap();
+                // Decode flags for convenience
+                let is_model = (param.flags & PARA_KIND_INST) == 0;
+                d.set_item("is_model_param", is_model).unwrap();
+                params.append(d).unwrap();
+            }
+            result.insert("params".to_string(), params.into());
+
+            // Nodes
+            let nodes = PyList::empty(py);
+            for node in &self.osdi_nodes {
+                let d = PyDict::new(py);
+                d.set_item("name", &node.name).unwrap();
+                d.set_item("units", &node.units).unwrap();
+                d.set_item("residual_units", &node.residual_units).unwrap();
+                d.set_item("is_internal", node.is_internal).unwrap();
+                nodes.append(d).unwrap();
+            }
+            result.insert("nodes".to_string(), nodes.into());
+
+            // Jacobian entries with flags
+            let jacobian = PyList::empty(py);
+            for entry in &self.osdi_jacobian {
+                let d = PyDict::new(py);
+                d.set_item("row", entry.row).unwrap();
+                d.set_item("col", entry.col).unwrap();
+                d.set_item("flags", entry.flags).unwrap();
+                // Decode flags for convenience
+                d.set_item("has_resist", (entry.flags & JACOBIAN_ENTRY_RESIST) != 0).unwrap();
+                d.set_item("has_react", (entry.flags & JACOBIAN_ENTRY_REACT) != 0).unwrap();
+                d.set_item("resist_const", (entry.flags & JACOBIAN_ENTRY_RESIST_CONST) != 0).unwrap();
+                d.set_item("react_const", (entry.flags & JACOBIAN_ENTRY_REACT_CONST) != 0).unwrap();
+                jacobian.append(d).unwrap();
+            }
+            result.insert("jacobian".to_string(), jacobian.into());
+
+            // Collapsible pairs
+            let collapsible = PyList::empty(py);
+            for (n1, n2) in &self.collapsible_pairs {
+                let pair = PyList::empty(py);
+                pair.append(*n1).unwrap();
+                // n2 = u32::MAX means collapse to ground
+                if *n2 == u32::MAX {
+                    pair.append("gnd").unwrap();
+                } else {
+                    pair.append(*n2).unwrap();
+                }
+                collapsible.append(pair).unwrap();
+            }
+            result.insert("collapsible".to_string(), collapsible.into());
+
+            // Noise sources
+            let noise = PyList::empty(py);
+            for src in &self.osdi_noise_sources {
+                let d = PyDict::new(py);
+                d.set_item("name", &src.name).unwrap();
+                d.set_item("node1", src.node1).unwrap();
+                if src.node2 == u32::MAX {
+                    d.set_item("node2", "gnd").unwrap();
+                } else {
+                    d.set_item("node2", src.node2).unwrap();
+                }
+                noise.append(d).unwrap();
+            }
+            result.insert("noise_sources".to_string(), noise.into());
+
+            // Scalar values
+            result.insert("num_terminals".to_string(), self.num_terminals.into_py(py));
+            result.insert("num_states".to_string(), self.num_states.into_py(py));
+            result.insert("has_bound_step".to_string(), self.has_bound_step.into_py(py));
+            result.insert("num_nodes".to_string(), self.osdi_nodes.len().into_py(py));
+            result.insert("num_params".to_string(), self.osdi_params.len().into_py(py));
+            result.insert("num_jacobian_entries".to_string(), self.osdi_jacobian.len().into_py(py));
+            result.insert("num_collapsible".to_string(), self.collapsible_pairs.len().into_py(py));
+            result.insert("num_noise_sources".to_string(), self.osdi_noise_sources.len().into_py(py));
+
+            result
+        })
     }
 
     /// Export MIR instructions for JAX translation
@@ -1030,6 +1201,124 @@ fn compile_va(path: &str, allow_analog_in_cond: bool, allow_builtin_primitives: 
             }
         }
 
+        // === OSDI Metadata Extraction ===
+
+        // Extract OSDI-compatible parameter metadata from module_info
+        let mut osdi_params: Vec<OsdiParamInfo> = Vec::new();
+        for (param, param_info) in module_info.params.iter() {
+            let ty = param.ty(&db);
+            let type_flag = match ty.base_type() {
+                Type::Real => PARA_TY_REAL,
+                Type::Integer => PARA_TY_INT,
+                Type::String => PARA_TY_STR,
+                _ => PARA_TY_REAL,
+            };
+            let kind_flag = if param_info.is_instance { PARA_KIND_INST } else { PARA_KIND_MODEL };
+
+            osdi_params.push(OsdiParamInfo {
+                name: param_info.name.to_string(),
+                aliases: param_info.alias.iter().map(|s| s.to_string()).collect(),
+                units: param_info.unit.clone(),
+                description: param_info.description.clone(),
+                flags: type_flag | kind_flag,
+                is_instance: param_info.is_instance,
+            });
+        }
+
+        // Extract OSDI-compatible node metadata
+        // Determine terminal count from module ports
+        let num_terminals = module_info.module.ports(&db).len();
+
+        let mut osdi_nodes: Vec<OsdiNodeInfo> = Vec::new();
+        for (idx, kind) in compiled.dae_system.unknowns.iter_enumerated() {
+            let is_internal = u32::from(idx) >= num_terminals as u32;
+            let name = format!("{:?}", kind);
+            // Extract node name more cleanly
+            let clean_name = match kind {
+                sim_back::SimUnknownKind::KirchoffLaw(node) => node.name(&db).to_string(),
+                sim_back::SimUnknownKind::Current(ck) => match ck {
+                    CurrentKind::Branch(br) => format!("flow({})", br.name(&db)),
+                    CurrentKind::Unnamed { hi, lo } => {
+                        if let Some(lo) = lo {
+                            format!("flow({},{})", hi.name(&db), lo.name(&db))
+                        } else {
+                            format!("flow({})", hi.name(&db))
+                        }
+                    }
+                    CurrentKind::Port(node) => format!("flow(<{}>)", node.name(&db)),
+                },
+                sim_back::SimUnknownKind::Implicit(eq) => format!("implicit_equation_{}", u32::from(*eq)),
+            };
+            // TODO: Extract units from discipline when available
+            osdi_nodes.push(OsdiNodeInfo {
+                name: clean_name,
+                units: "V".to_string(),  // Default to voltage
+                residual_units: "A".to_string(),  // Default to current
+                is_internal,
+            });
+        }
+
+        // Extract OSDI-compatible Jacobian entry metadata with flags
+        // Helper to check if a Jacobian entry value is constant
+        let is_entry_const = |entry_val: mir::Value, func: &mir::Function| -> bool {
+            match func.dfg.value_def(entry_val) {
+                ValueDef::Const(_) => true,
+                ValueDef::Param(param) => {
+                    // Check if param is operation-dependent
+                    compiled.intern.params.get_index(param)
+                        .map_or(true, |(kind, _)| !kind.op_dependent())
+                }
+                _ => false,
+            }
+        };
+
+        let mut osdi_jacobian: Vec<OsdiJacobianInfo> = Vec::new();
+        for entry in compiled.dae_system.jacobian.iter() {
+            let mut flags: u32 = 0;
+
+            // Check resistive component
+            if entry.resist != F_ZERO {
+                flags |= JACOBIAN_ENTRY_RESIST;
+            }
+            if is_entry_const(entry.resist, &compiled.eval) {
+                flags |= JACOBIAN_ENTRY_RESIST_CONST;
+            }
+
+            // Check reactive component
+            if entry.react != F_ZERO {
+                flags |= JACOBIAN_ENTRY_REACT;
+            }
+            if is_entry_const(entry.react, &compiled.eval) {
+                flags |= JACOBIAN_ENTRY_REACT_CONST;
+            }
+
+            osdi_jacobian.push(OsdiJacobianInfo {
+                row: u32::from(entry.row),
+                col: u32::from(entry.col),
+                flags,
+            });
+        }
+
+        // Extract noise sources
+        let osdi_noise_sources: Vec<OsdiNoiseInfo> = compiled.dae_system.noise_sources
+            .iter()
+            .map(|src| {
+                let name = literals.resolve(&src.name).to_owned();
+                OsdiNoiseInfo {
+                    name,
+                    node1: u32::from(src.hi),
+                    node2: src.lo.map_or(u32::MAX, |lo| u32::from(lo)),
+                }
+            })
+            .collect();
+
+        // Check for bound_step
+        // bound_step is stored in outputs with key PlaceKind::BoundStep
+        let has_bound_step = compiled.intern.outputs.contains_key(&PlaceKind::BoundStep);
+
+        // Number of limiting states
+        let num_states = compiled.intern.lim_state.len();
+
         result.push(VaModule {
             name: module_info.module.name(&db).to_string(),
             param_names,
@@ -1060,6 +1349,14 @@ fn compile_va(path: &str, allow_analog_in_cond: bool, allow_builtin_primitives: 
             num_collapsible,
             // Parameter defaults support
             param_defaults,
+            // OSDI metadata
+            num_terminals,
+            osdi_params,
+            osdi_nodes,
+            osdi_jacobian,
+            osdi_noise_sources,
+            num_states,
+            has_bound_step,
         });
     }
 
