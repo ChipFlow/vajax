@@ -34,6 +34,7 @@ import jax.numpy as jnp
 
 from .base import TransientStrategy
 from jax_spice.logging import logger
+from jax_spice.analysis.gpu_backend import get_default_dtype
 
 
 class ScanStrategy(TransientStrategy):
@@ -121,7 +122,7 @@ class ScanStrategy(TransientStrategy):
                     f"{time_module.perf_counter() - t_precompute:.3f}s")
 
         # Initial state
-        V0 = jnp.zeros(n_nodes, dtype=jnp.float64)
+        V0 = jnp.zeros(n_nodes, dtype=get_default_dtype())
 
         # Get or create the cached scan function
         # Cache key does NOT include num_timesteps - JAX handles variable-length

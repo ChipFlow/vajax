@@ -2,8 +2,16 @@
 
 import jax
 
-# Enable 64-bit precision by default (required for circuit simulation accuracy)
-jax.config.update("jax_enable_x64", True)
+# Import backend detection before enabling x64
+from jax_spice.analysis.gpu_backend import is_metal_backend, _init_default_dtype
+
+# Enable 64-bit precision only on non-Metal backends
+# Metal backends (jax-metal, iree-metal) only support float32
+if not is_metal_backend():
+    jax.config.update("jax_enable_x64", True)
+
+# Initialize the default dtype based on backend
+_init_default_dtype()
 
 __version__ = "0.1.0"
 

@@ -31,6 +31,7 @@ from jax_spice.analysis.mna import MNASystem, DeviceInfo
 from jax_spice.analysis.transient import transient_analysis_jit
 from jax_spice.logging import logger
 from jax_spice.profiling import profile, profile_section, ProfileConfig
+from jax_spice.analysis.gpu_backend import get_default_dtype
 
 # Try to import OpenVAF support
 _openvaf_path = Path(__file__).parent.parent.parent / "openvaf-py"
@@ -606,7 +607,7 @@ class VACASKBenchmarkRunner:
         # Pre-allocate numpy array to avoid 20x memory overhead from jnp.array(nested_list)
         n_devices = len(openvaf_devices)
         n_params = len(param_names)
-        all_inputs = np.zeros((n_devices, n_params), dtype=np.float64)
+        all_inputs = np.zeros((n_devices, n_params), dtype=get_default_dtype())
         device_contexts = []
 
         # === VECTORIZED PARAM FILLING (replaces 26M-iteration inner loop) ===
@@ -3335,7 +3336,7 @@ class VACASKBenchmarkRunner:
             logger.debug(f"Computed cache for {model_type}: shape={cache.shape}")
         else:
             # Fallback for models without init function (e.g., resistor)
-            cache = jnp.empty((n_devices, 0), dtype=jnp.float64)
+            cache = jnp.empty((n_devices, 0), dtype=get_default_dtype())
 
         return static_inputs, voltage_indices, device_contexts, cache
 
@@ -3507,7 +3508,7 @@ class VACASKBenchmarkRunner:
         n_entries = len(merged_rows)
 
         # Build BCOO with dummy values to get structure
-        dummy_vals = np.ones(n_entries, dtype=np.float64)
+        dummy_vals = np.ones(n_entries, dtype=get_default_dtype())
         indices = np.stack([merged_rows, merged_cols], axis=1)
 
         J_bcoo = BCOO((jnp.array(dummy_vals), jnp.array(indices)), shape=(n_unknowns, n_unknowns))
@@ -4351,8 +4352,8 @@ class VACASKBenchmarkRunner:
                             static_inputs = jnp.array(static_inputs, dtype=dtype)
                             cache = jnp.array(cache, dtype=dtype)
                     else:
-                        static_inputs = jnp.array(static_inputs, dtype=jnp.float64)
-                        cache = jnp.array(cache, dtype=jnp.float64)
+                        static_inputs = jnp.array(static_inputs, dtype=get_default_dtype())
+                        cache = jnp.array(cache, dtype=get_default_dtype())
                     static_inputs_cache[model_type] = (
                         static_inputs, voltage_indices, stamp_indices, voltage_node1, voltage_node2, cache
                     )
@@ -4384,8 +4385,8 @@ class VACASKBenchmarkRunner:
         logger.info(f"Using {solver_type} solver")
 
         # Initialize voltages
-        V = jnp.zeros(n_total, dtype=jnp.float64)
-        V_prev = jnp.zeros(n_total, dtype=jnp.float64)
+        V = jnp.zeros(n_total, dtype=get_default_dtype())
+        V_prev = jnp.zeros(n_total, dtype=get_default_dtype())
 
         # Helper to build source value arrays from dict (called once per timestep)
         def build_source_arrays(source_values: Dict) -> Tuple[jax.Array, jax.Array]:
@@ -4457,10 +4458,10 @@ class VACASKBenchmarkRunner:
                 # Sparse solver for large circuits
                 # Pre-compute nse by running build_system once to get sparsity pattern
                 logger.info("Pre-computing sparse matrix nse...")
-                V_init = jnp.zeros(n_nodes, dtype=jnp.float64)
-                vsource_init = jnp.zeros(n_vsources, dtype=jnp.float64)
-                isource_init = jnp.zeros(n_isources, dtype=jnp.float64)
-                Q_init = jnp.zeros(n_unknowns, dtype=jnp.float64)
+                V_init = jnp.zeros(n_nodes, dtype=get_default_dtype())
+                vsource_init = jnp.zeros(n_vsources, dtype=get_default_dtype())
+                isource_init = jnp.zeros(n_isources, dtype=get_default_dtype())
+                Q_init = jnp.zeros(n_unknowns, dtype=get_default_dtype())
                 # Use inv_dt=0 for DC (no reactive terms in probe)
                 J_bcoo_probe, _, _ = build_system_fn(V_init, vsource_init, isource_init, Q_init, 0.0)
 
@@ -4511,10 +4512,10 @@ class VACASKBenchmarkRunner:
 
             # JIT warmup: run one throwaway iteration to trigger all compilation
             # This compiles vmapped_fn, build_system_jit, and nr_solve in one pass
-            V_warmup = jnp.zeros(n_nodes, dtype=jnp.float64)
-            vsource_warmup = jnp.zeros(n_vsources, dtype=jnp.float64)
-            isource_warmup = jnp.zeros(n_isources, dtype=jnp.float64)
-            Q_warmup = jnp.zeros(n_unknowns, dtype=jnp.float64)
+            V_warmup = jnp.zeros(n_nodes, dtype=get_default_dtype())
+            vsource_warmup = jnp.zeros(n_vsources, dtype=get_default_dtype())
+            isource_warmup = jnp.zeros(n_isources, dtype=get_default_dtype())
+            Q_warmup = jnp.zeros(n_unknowns, dtype=get_default_dtype())
             _warmup_result = nr_solve(V_warmup, vsource_warmup, isource_warmup, Q_warmup, 1.0)
             _warmup_result[0].block_until_ready()
             logger.info("JIT warmup complete")
@@ -4533,7 +4534,7 @@ class VACASKBenchmarkRunner:
             )
         else:
             # icmode='uic' - initialize VDD nodes to supply voltage
-            V = jnp.zeros(n_nodes, dtype=jnp.float64)
+            V = jnp.zeros(n_nodes, dtype=get_default_dtype())
             vdd_value = 0.0
             for dev in self.devices:
                 if dev['model'] == 'vsource':
@@ -4567,7 +4568,7 @@ class VACASKBenchmarkRunner:
             _, _, Q_prev = self._cached_build_system(V, vsource_dc, isource_dc, jnp.zeros(n_unknowns), 0.0)
             Q_prev.block_until_ready()
         else:
-            Q_prev = jnp.zeros(n_unknowns, dtype=jnp.float64)
+            Q_prev = jnp.zeros(n_unknowns, dtype=get_default_dtype())
 
         # Use integer-based iteration to avoid floating-point comparison issues
         # This ensures Python loop and lax.scan produce the same number of timesteps
@@ -4673,7 +4674,7 @@ class VACASKBenchmarkRunner:
         # - Other signal nodes = VDD/2 (mid-rail for CMOS)
         # This helps avoid the degenerate solution where all MOSFETs are in cutoff
         mid_rail = vdd_value / 2.0
-        V = jnp.full(n_nodes, mid_rail, dtype=jnp.float64)
+        V = jnp.full(n_nodes, mid_rail, dtype=get_default_dtype())
         V = V.at[0].set(0.0)  # Ground is always 0
 
         # Set VDD nodes to full supply voltage
@@ -4731,8 +4732,8 @@ class VACASKBenchmarkRunner:
         # Get DC source values (at t=0)
         # - Voltage sources: use their DC value
         # - Current sources: use val0 (before pulse starts) or DC value
-        vsource_vals = jnp.zeros(n_vsources, dtype=jnp.float64)
-        isource_vals = jnp.zeros(n_isources, dtype=jnp.float64)
+        vsource_vals = jnp.zeros(n_vsources, dtype=get_default_dtype())
+        isource_vals = jnp.zeros(n_isources, dtype=get_default_dtype())
 
         # Build source values at t=0
         vsource_idx = 0
@@ -4758,7 +4759,7 @@ class VACASKBenchmarkRunner:
         # For DC: inv_dt=0 means no reactive terms (dQ/dt = 0 at steady state)
         # Q_prev doesn't matter when inv_dt=0, but needs correct shape (n_unknowns,)
         n_unknowns = n_nodes - 1
-        Q_prev = jnp.zeros(n_unknowns, dtype=jnp.float64)
+        Q_prev = jnp.zeros(n_unknowns, dtype=get_default_dtype())
         inv_dt = 0.0  # DC analysis - no time derivative terms
 
         converged = False
@@ -4934,7 +4935,7 @@ class VACASKBenchmarkRunner:
             )
         else:
             # icmode='uic' - use zeros with VDD nodes initialized
-            V0 = jnp.zeros(n_nodes, dtype=jnp.float64)
+            V0 = jnp.zeros(n_nodes, dtype=get_default_dtype())
             # Initialize VDD nodes to supply voltage
             vdd_value = 0.0
             for dev in self.devices:
@@ -4998,7 +4999,7 @@ class VACASKBenchmarkRunner:
             _, _, Q0 = self._cached_build_system(V0, vsource_dc, isource_dc, jnp.zeros(n_unknowns), 0.0)
             logger.debug(f"  Initialized Q0 from DC operating point (max|Q0|={float(jnp.max(jnp.abs(Q0))):.2e})")
         else:
-            Q0 = jnp.zeros(n_unknowns, dtype=jnp.float64)
+            Q0 = jnp.zeros(n_unknowns, dtype=get_default_dtype())
 
         # Run the simulation (with optional profiling of just the core loop)
         logger.info("Running lax.scan simulation...")
@@ -5126,7 +5127,7 @@ class VACASKBenchmarkRunner:
             f_idx_n = jnp.where(node_n != ground, node_n - 1, -1)
             # Stack to shape (n, 2): [[p0, n0], [p1, n1], ...]
             f_indices = jnp.stack([f_idx_p, f_idx_n], axis=1)
-            f_signs = jnp.array([1.0, -1.0])  # I at p, -I at n
+            f_signs = jnp.array([1.0, -1.0], dtype=get_default_dtype())  # I at p, -I at n
 
             # Jacobian indices for 4-entry stamp pattern
             # Entries: (p,p), (p,n), (n,n), (n,p)
@@ -5149,7 +5150,7 @@ class VACASKBenchmarkRunner:
             # Stack to shape (n, 4)
             j_rows = jnp.stack([j_row_pp, j_row_pn, j_row_nn, j_row_np], axis=1)
             j_cols = jnp.stack([j_col_pp, j_col_pn, j_col_nn, j_col_np], axis=1)
-            j_signs = jnp.array([1.0, -1.0, 1.0, -1.0])  # +G, -G, +G, -G
+            j_signs = jnp.array([1.0, -1.0, 1.0, -1.0], dtype=get_default_dtype())  # +G, -G, +G, -G
 
             base_data = {
                 'node_p': node_p,
@@ -5163,10 +5164,10 @@ class VACASKBenchmarkRunner:
             }
 
             if model == 'vsource':
-                dc = jnp.array([d['params'].get('dc', 0.0) for d in devs], dtype=jnp.float64)
+                dc = jnp.array([d['params'].get('dc', 0.0) for d in devs], dtype=get_default_dtype())
                 result['vsource'] = {**base_data, 'dc': dc, 'names': names}
             elif model == 'isource':
-                dc = jnp.array([d['params'].get('dc', 0.0) for d in devs], dtype=jnp.float64)
+                dc = jnp.array([d['params'].get('dc', 0.0) for d in devs], dtype=get_default_dtype())
                 # Current sources have no Jacobian contribution
                 result['isource'] = {
                     'node_p': node_p, 'node_n': node_n, 'n': n, 'names': names,
@@ -5246,7 +5247,7 @@ class VACASKBenchmarkRunner:
             # isource_vals is pre-built JAX array - no Python loop here
             # Residual: +I at p (current leaves), -I at n (current enters)
             # For KCL: f[i] = sum of currents LEAVING node i
-            f_vals = isource_vals[:, None] * jnp.array([1.0, -1.0])[None, :]  # (n, 2)
+            f_vals = isource_vals[:, None] * jnp.array([1.0, -1.0], dtype=get_default_dtype())[None, :]  # (n, 2)
             f_idx = d['f_indices'].ravel()
             f_val = f_vals.ravel()
             f_valid = f_idx >= 0
@@ -5389,7 +5390,7 @@ class VACASKBenchmarkRunner:
             # Residual: +I at p (current leaves), -I at n (current enters)
             if 'isource' in source_device_data and isource_vals.size > 0:
                 d = source_device_data['isource']
-                f_vals = isource_vals[:, None] * jnp.array([1.0, -1.0])[None, :]
+                f_vals = isource_vals[:, None] * jnp.array([1.0, -1.0], dtype=get_default_dtype())[None, :]
                 f_idx = d['f_indices'].ravel()
                 f_val = f_vals.ravel()
                 f_valid = f_idx >= 0
@@ -5470,7 +5471,7 @@ class VACASKBenchmarkRunner:
                 all_f_resist_val = jnp.concatenate([p[1] for p in f_resist_parts])
                 f_resist = jax.ops.segment_sum(all_f_resist_val, all_f_resist_idx, num_segments=n_unknowns)
             else:
-                f_resist = jnp.zeros(n_unknowns, dtype=jnp.float64)
+                f_resist = jnp.zeros(n_unknowns, dtype=get_default_dtype())
 
             # === Build reactive residual vector Q (charges) ===
             if f_react_parts:
@@ -5478,7 +5479,7 @@ class VACASKBenchmarkRunner:
                 all_f_react_val = jnp.concatenate([p[1] for p in f_react_parts])
                 Q = jax.ops.segment_sum(all_f_react_val, all_f_react_idx, num_segments=n_unknowns)
             else:
-                Q = jnp.zeros(n_unknowns, dtype=jnp.float64)
+                Q = jnp.zeros(n_unknowns, dtype=get_default_dtype())
 
             # === Combine for transient: f = f_resist + (Q - Q_prev) / dt ===
             # For DC (inv_dt=0): f = f_resist
@@ -5493,7 +5494,7 @@ class VACASKBenchmarkRunner:
             else:
                 all_j_resist_rows = jnp.zeros(0, dtype=jnp.int32)
                 all_j_resist_cols = jnp.zeros(0, dtype=jnp.int32)
-                all_j_resist_vals = jnp.zeros(0, dtype=jnp.float64)
+                all_j_resist_vals = jnp.zeros(0, dtype=get_default_dtype())
 
             # === Build reactive Jacobian C (capacitances) ===
             if j_react_parts:
@@ -5503,7 +5504,7 @@ class VACASKBenchmarkRunner:
             else:
                 all_j_react_rows = jnp.zeros(0, dtype=jnp.int32)
                 all_j_react_cols = jnp.zeros(0, dtype=jnp.int32)
-                all_j_react_vals = jnp.zeros(0, dtype=jnp.float64)
+                all_j_react_vals = jnp.zeros(0, dtype=get_default_dtype())
 
             # === Combine Jacobians: J = J_resist + C / dt ===
             # Concatenate COO triplets and scale reactive by inv_dt
@@ -5519,7 +5520,7 @@ class VACASKBenchmarkRunner:
                 )
                 J = J_flat.reshape((n_unknowns, n_unknowns))
                 # Add regularization (1e-9 matches sparse solver)
-                J = J + 1e-9 * jnp.eye(n_unknowns, dtype=jnp.float64)
+                J = J + 1e-9 * jnp.eye(n_unknowns, dtype=get_default_dtype())
             else:
                 # Sparse path - build BCOO sparse matrix
                 from jax.experimental.sparse import BCOO
@@ -5584,13 +5585,14 @@ class VACASKBenchmarkRunner:
             # State: (V, iteration, converged, max_f, max_delta, Q)
             # Q is tracked to return the final charges
             # Q has shape (n_unknowns,) = (n_nodes - 1,) since ground is excluded
-            init_Q = jnp.zeros(n_nodes - 1, dtype=jnp.float64)
+            init_Q = jnp.zeros(n_nodes - 1, dtype=get_default_dtype())
+            dtype = get_default_dtype()
             init_state = (
                 V_init,
                 jnp.array(0, dtype=jnp.int32),
                 jnp.array(False),
-                jnp.array(jnp.inf),
-                jnp.array(jnp.inf),
+                jnp.array(jnp.inf, dtype=dtype),
+                jnp.array(jnp.inf, dtype=dtype),
                 init_Q,
             )
 
@@ -5650,7 +5652,9 @@ class VACASKBenchmarkRunner:
 
                 converged = jnp.logical_or(residual_converged, delta_converged)
 
-                return (V_new, iteration + 1, converged, max_f, max_delta, Q)
+                # Cast to dtype to ensure consistent types for while_loop
+                return (V_new, iteration + 1, converged,
+                        max_f.astype(dtype), max_delta.astype(dtype), Q.astype(dtype))
 
             # Run NR loop on GPU
             V_final, iterations, converged, max_f, max_delta, _ = lax.while_loop(
@@ -5709,13 +5713,14 @@ class VACASKBenchmarkRunner:
         def nr_solve(V_init: jax.Array, vsource_vals: jax.Array, isource_vals: jax.Array,
                     Q_prev: jax.Array, inv_dt: float | jax.Array):
             # Q has shape (n_unknowns,) = (n_nodes - 1,) since ground is excluded
-            init_Q = jnp.zeros(n_nodes - 1, dtype=jnp.float64)
+            init_Q = jnp.zeros(n_nodes - 1, dtype=get_default_dtype())
+            dtype = get_default_dtype()
             init_state = (
                 V_init,
                 jnp.array(0, dtype=jnp.int32),
                 jnp.array(False),
-                jnp.array(jnp.inf),
-                jnp.array(jnp.inf),
+                jnp.array(jnp.inf, dtype=dtype),
+                jnp.array(jnp.inf, dtype=dtype),
                 init_Q,
             )
 
@@ -5841,13 +5846,14 @@ class VACASKBenchmarkRunner:
                     Q_prev: jax.Array, inv_dt: float | jax.Array):
             # State: (V, iteration, converged, max_f, max_delta, Q)
             # Q is tracked to return the final charges
-            init_Q = jnp.zeros(n_unknowns, dtype=jnp.float64)
+            init_Q = jnp.zeros(n_unknowns, dtype=get_default_dtype())
+            dtype = get_default_dtype()
             init_state = (
                 V_init,
                 jnp.array(0, dtype=jnp.int32),
                 jnp.array(False),
-                jnp.array(jnp.inf),
-                jnp.array(jnp.inf),
+                jnp.array(jnp.inf, dtype=dtype),
+                jnp.array(jnp.inf, dtype=dtype),
                 init_Q,
             )
 

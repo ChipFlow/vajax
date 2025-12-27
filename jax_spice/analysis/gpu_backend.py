@@ -106,22 +106,45 @@ def get_device(backend: str) -> jax.Device:
         raise RuntimeError("CPU backend requested but no CPU device available")
 
 
-def get_default_dtype(backend: str):
+def is_metal_backend() -> bool:
+    """Check if the current backend is Metal (Apple GPU).
+
+    Returns:
+        True if using jax-metal or iree-metal backend.
+    """
+    backend = jax.default_backend().lower()
+    return backend in ("metal", "iree_metal")
+
+
+def get_default_dtype(backend: str = None):
     """Get default dtype for the selected backend.
 
     Args:
-        backend: 'gpu' or 'cpu'
+        backend: 'gpu' or 'cpu' (optional, auto-detects if None)
 
     Returns:
         jax.numpy dtype (float64 for CPU/CUDA, float32 for Metal)
     """
     import jax.numpy as jnp
 
-    # Metal backend (Apple Silicon) only supports float32
-    if jax.default_backend() == "METAL":
+    # Metal backends (jax-metal and iree-metal) only support float32
+    if is_metal_backend():
         return jnp.float32
 
     return jnp.float64
+
+
+# Module-level dtype that gets set at import time
+# This allows code to use `from jax_spice.analysis.gpu_backend import default_dtype`
+default_dtype = None
+
+
+def _init_default_dtype():
+    """Initialize the default dtype based on current backend."""
+    global default_dtype
+    import jax.numpy as jnp
+    default_dtype = get_default_dtype()
+    return default_dtype
 
 
 def backend_info() -> dict:

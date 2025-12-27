@@ -164,7 +164,8 @@ class TestDtype:
 
     def test_metal_uses_float32(self):
         """Metal backend should use float32."""
-        if jax.default_backend() != "METAL":
+        from jax_spice.analysis.gpu_backend import is_metal_backend
+        if not is_metal_backend():
             pytest.skip("Not running on Metal backend")
 
         dtype = get_default_dtype("gpu")

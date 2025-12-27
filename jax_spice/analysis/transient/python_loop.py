@@ -30,6 +30,7 @@ import jax.numpy as jnp
 
 from .base import TransientStrategy
 from jax_spice.logging import logger
+from jax_spice.analysis.gpu_backend import get_default_dtype
 
 
 # Newton-Raphson solver constants
@@ -80,7 +81,7 @@ class PythonLoopStrategy(TransientStrategy):
         source_fn = setup.source_fn
 
         # Initialize state
-        V = jnp.zeros(n_total, dtype=jnp.float64)
+        V = jnp.zeros(n_total, dtype=get_default_dtype())
         times_list: List[float] = []
         voltages_dict: Dict[int, List[float]] = {i: [] for i in range(n_external)}
 

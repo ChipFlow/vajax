@@ -37,6 +37,7 @@ BoolScalar = Bool[Array, ""]
 from jax_spice.analysis.mna import MNASystem
 from jax_spice.analysis.context import AnalysisContext
 from jax_spice.analysis.dc import dc_operating_point
+from jax_spice.analysis.gpu_backend import get_default_dtype
 
 
 class CircuitData(NamedTuple):
@@ -848,8 +849,8 @@ def _transient_analysis_python(
     """Original Python-loop based transient analysis (for debugging)"""
     n = system.num_nodes
 
-    # Use float32 on Metal (no float64 support), float64 elsewhere
-    dtype = jnp.float32 if jax.default_backend() == 'METAL' else jnp.float64
+    # Use float32 on Metal backends (no float64 support), float64 elsewhere
+    dtype = get_default_dtype()
 
     # Find DC operating point for initial condition
     if initial_conditions is not None:
@@ -981,8 +982,8 @@ def _build_transient_system(
     """
     n = system.num_nodes - 1
 
-    # Use float32 on Metal (no float64 support), float64 elsewhere
-    dtype = jnp.float32 if jax.default_backend() == 'METAL' else jnp.float64
+    # Use float32 on Metal backends (no float64 support), float64 elsewhere
+    dtype = get_default_dtype()
 
     # Initialize
     jacobian = jnp.zeros((n, n), dtype=dtype)

@@ -28,6 +28,7 @@ ArrayLike = Union[Array, np.ndarray]
 
 from jax_spice.netlist.circuit import Circuit, Instance, Model
 from jax_spice.analysis.context import AnalysisContext
+from jax_spice.analysis.gpu_backend import is_metal_backend, get_default_dtype
 
 
 # =============================================================================
@@ -247,8 +248,8 @@ class MNASystem:
         """
         n = self.num_nodes - 1  # Exclude ground
 
-        # Use float32 on Metal (no float64 support), float64 elsewhere
-        dtype = jnp.float32 if jax.default_backend() == 'METAL' else jnp.float64
+        # Use float32 on Metal backends (no float64 support), float64 elsewhere
+        dtype = get_default_dtype()
 
         # Initialize Jacobian and residual
         jacobian = jnp.zeros((n, n), dtype=dtype)
