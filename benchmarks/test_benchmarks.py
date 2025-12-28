@@ -15,7 +15,7 @@ import numpy as np
 import jax
 jax.config.update('jax_enable_x64', True)
 
-from jax_spice.benchmarks.runner import VACASKBenchmarkRunner
+from jax_spice.analysis import CircuitEngine
 
 
 # Benchmark configuration
@@ -131,16 +131,16 @@ class TestVACASKBenchmarks:
 
         try:
             # Parse circuit
-            runner = VACASKBenchmarkRunner(sim_file)
-            runner.parse()
+            engine = CircuitEngine(sim_file)
+            engine.parse()
 
-            nodes = runner.num_nodes
-            devices = len(runner.devices)
-            openvaf = sum(1 for d in runner.devices if d.get('is_openvaf'))
+            nodes = engine.num_nodes
+            devices = len(engine.devices)
+            openvaf = sum(1 for d in engine.devices if d.get('is_openvaf'))
             solver = 'sparse' if use_sparse else 'dense'
 
             # Get timestep from analysis params
-            dt = runner.analysis_params.get('step', 1e-12)
+            dt = engine.analysis_params.get('step', 1e-12)
             t_stop = dt * max_steps
 
             print(f"Circuit: {nodes} nodes, {devices} devices ({openvaf} OpenVAF)")
@@ -148,7 +148,7 @@ class TestVACASKBenchmarks:
 
             # Run transient analysis
             start = time.perf_counter()
-            times, voltages, stats = runner.run_transient(
+            times, voltages, stats = engine.run_transient(
                 t_stop=t_stop, dt=dt, max_steps=max_steps, use_sparse=use_sparse
             )
             elapsed = time.perf_counter() - start

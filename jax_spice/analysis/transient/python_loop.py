@@ -43,7 +43,7 @@ class PythonLoopStrategy(TransientStrategy):
     tracking and debugging capability at the cost of Python loop overhead.
 
     Example:
-        runner = VACASKBenchmarkRunner(sim_path)
+        runner = CircuitEngine(sim_path)
         runner.parse()
 
         strategy = PythonLoopStrategy(runner, use_sparse=False)

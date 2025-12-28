@@ -43,7 +43,7 @@ class ScanStrategy(TransientStrategy):
     eliminate Python loop overhead entirely, achieving 5x+ speedup.
 
     Example:
-        runner = VACASKBenchmarkRunner(sim_path)
+        runner = CircuitEngine(sim_path)
         runner.parse()
 
         strategy = ScanStrategy(runner, use_sparse=False)

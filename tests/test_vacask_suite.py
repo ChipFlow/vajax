@@ -17,7 +17,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent / "openvaf-py"))
 import numpy as np
 
 from jax_spice.netlist.parser import parse_netlist
-from jax_spice.benchmarks import VACASKBenchmarkRunner
+from jax_spice.analysis import CircuitEngine
 
 # Paths - VACASK is at ../VACASK relative to jax-spice
 JAX_SPICE_ROOT = Path(__file__).parent.parent

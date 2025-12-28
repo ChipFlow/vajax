@@ -1,5 +1,10 @@
-"""VACASK benchmark runner utilities."""
+"""Circuit simulation and benchmarking utilities.
 
-from .runner import VACASKBenchmarkRunner
+Exports:
+    CircuitEngine: Core circuit simulation engine
+    BenchmarkRunner: Benchmark runner with timing utilities
+"""
 
-__all__ = ['VACASKBenchmarkRunner']
+from .runner import CircuitEngine, BenchmarkRunner
+
+__all__ = ['CircuitEngine', 'BenchmarkRunner']

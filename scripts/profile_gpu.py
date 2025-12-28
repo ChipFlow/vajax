@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """GPU Profiling Script for JAX-SPICE
 
-Profiles CPU/GPU performance of VACASK benchmark circuits using VACASKBenchmarkRunner.
+Profiles CPU/GPU performance of VACASK benchmark circuits using CircuitEngine.
 Compares dense vs sparse solvers across different circuit sizes.
 Outputs a report suitable for GitHub Actions job summaries.
 
@@ -47,7 +47,7 @@ import numpy as np
 jax.config.update('jax_enable_x64', True)
 
 
-from jax_spice.benchmarks.runner import VACASKBenchmarkRunner
+from jax_spice.analysis import CircuitEngine
 from jax_spice.logging import enable_performance_logging, logger
 
 # Enable verbose logging with flush and memory stats for profiling visibility
@@ -132,13 +132,13 @@ class GPUProfiler:
             logger.info(f"      parsing...")
             sys.stdout.flush()
             sys.stderr.flush()
-            runner = VACASKBenchmarkRunner(sim_path)
-            runner.parse()
+            engine = CircuitEngine(sim_path)
+            engine.parse()
             logger.info("      parsing done")
 
-            nodes = runner.num_nodes
-            devices = len(runner.devices)
-            openvaf_devices = sum(1 for d in runner.devices if d.get('is_openvaf'))
+            nodes = engine.num_nodes
+            devices = len(engine.devices)
+            openvaf_devices = sum(1 for d in engine.devices if d.get('is_openvaf'))
 
             # Estimate total nodes including internal nodes from OpenVAF devices
             # PSP103 has 8 internal nodes per device (13 total - 4 external - 1 branch)
@@ -150,7 +150,7 @@ class GPUProfiler:
             selected_backend = "gpu" if any(d.platform == 'gpu' for d in jax.devices()) else "cpu"
 
             # Skip sparse for non-OpenVAF circuits (they use JIT solver)
-            if use_sparse and not runner._has_openvaf_devices:
+            if use_sparse and not engine._has_openvaf_devices:
                 return BenchmarkResult(
                     name=name,
                     nodes=nodes,
@@ -166,8 +166,8 @@ class GPUProfiler:
                 )
 
             # Get analysis params from .sim file
-            dt = runner.analysis_params.get('step', 1e-12)
-            t_stop_original = runner.analysis_params.get('stop', 1e-9)
+            dt = engine.analysis_params.get('step', 1e-12)
+            t_stop_original = engine.analysis_params.get('stop', 1e-9)
 
             if full:
                 # Use original VACASK parameters for comparable benchmarking
@@ -185,7 +185,7 @@ class GPUProfiler:
                 sys.stdout.flush()
                 sys.stderr.flush()
                 warmup_start = time.perf_counter()
-                runner.run_transient(t_stop=dt * warmup_steps, dt=dt,
+                engine.run_transient(t_stop=dt * warmup_steps, dt=dt,
                                     max_steps=warmup_steps, use_sparse=use_sparse,
                                     backend=selected_backend)
                 warmup_time = time.perf_counter() - warmup_start
@@ -200,7 +200,7 @@ class GPUProfiler:
             sys.stdout.flush()
             with ctx:
                 start = time.perf_counter()
-                times, voltages, stats = runner.run_transient(
+                times, voltages, stats = engine.run_transient(
                     t_stop=t_stop, dt=dt,
                     max_steps=expected_steps * 2,  # Allow some margin
                     use_sparse=use_sparse,

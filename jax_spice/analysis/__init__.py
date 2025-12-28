@@ -4,6 +4,7 @@ Provides DC operating point and transient analysis using OpenVAF-compiled device
 """
 
 from jax_spice.analysis.context import AnalysisContext
+from jax_spice.analysis.engine import CircuitEngine
 from jax_spice.analysis.mna import DeviceInfo, DeviceType, eval_param_simple
 from jax_spice.analysis.transient import (
     TransientStrategy,
@@ -33,6 +34,7 @@ from jax_spice.analysis.homotopy import (
 
 __all__ = [
     "AnalysisContext",
+    "CircuitEngine",
     # MNA types
     "DeviceInfo",
     "DeviceType",

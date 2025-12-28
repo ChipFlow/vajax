@@ -29,8 +29,7 @@ import jax
 
 jax.config.update("jax_enable_x64", True)
 
-from jax_spice.analysis.transient import transient_analysis_vectorized
-from jax_spice.benchmarks import VACASKBenchmarkRunner
+from jax_spice.analysis import CircuitEngine
 
 
 def main():
@@ -63,7 +62,7 @@ def main():
     parser.add_argument(
         "--sparse",
         action="store_true",
-        help="Use sparse GMRES solver (for large circuits)",
+        help="Use sparse solver (for large circuits)",
     )
     args = parser.parse_args()
 
@@ -82,46 +81,45 @@ def main():
         print(f"ERROR: Benchmark file not found: {sim_path}")
         sys.exit(1)
 
-    # Setup circuit using VACASKBenchmarkRunner
+    # Setup circuit using CircuitEngine
     print(f"Setting up circuit from {sim_path}...")
-    runner = VACASKBenchmarkRunner(sim_path)
-    runner.parse()
-    system = runner.to_mna_system()
-    system.build_device_groups()
+    engine = CircuitEngine(sim_path)
+    engine.parse()
 
-    print(f"Circuit size: {system.num_nodes} nodes, {len(system.devices)} devices")
+    print(f"Circuit size: {engine.num_nodes} nodes, {len(engine.devices)} devices")
     print()
 
     # Timestep from analysis params or default
-    dt = runner.analysis_params.get("step", 1e-12)
+    dt = engine.analysis_params.get("step", 1e-12)
     print(f"Using dt={dt}")
     print()
 
     if not args.skip_warmup:
         # Warmup run (JIT compilation happens here, outside profiled region)
         print("Warmup run (JIT compilation)...")
-        _, _, _ = transient_analysis_vectorized(
-            system,
+        _ = engine.run_transient(
             t_stop=dt,
-            t_step=dt,
-            backend=args.backend,
+            dt=dt,
+            max_steps=10,
             use_sparse=args.sparse,
+            use_while_loop=True,  # use lax.scan for performance
         )
         print("Warmup complete")
         print()
 
     # Profiled run - nsys-jax captures this automatically
     print(f"Starting profiled run ({args.timesteps} timesteps)...")
-    times, solutions, info = transient_analysis_vectorized(
-        system,
+    times, voltages, stats = engine.run_transient(
         t_stop=args.timesteps * dt,
-        t_step=dt,
-        backend=args.backend,
+        dt=dt,
+        max_steps=args.timesteps + 10,
         use_sparse=args.sparse,
+        use_while_loop=True,
     )
 
     print()
     print(f"Completed: {len(times)} timesteps")
+    print(f"Wall time: {stats.get('wall_time', 0):.3f}s")
 
 
 if __name__ == "__main__":

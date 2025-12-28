@@ -62,7 +62,7 @@ class Simulator:
     """JAX-SPICE circuit simulator.
 
     Provides a simple interface for parsing and simulating circuits.
-    Uses VACASKBenchmarkRunner internally for the actual simulation.
+    Uses CircuitEngine internally for the actual simulation.
 
     Example:
         sim = Simulator("circuit.sim")
@@ -98,9 +98,9 @@ class Simulator:
         Returns:
             Self for method chaining
         """
-        from jax_spice.benchmarks.runner import VACASKBenchmarkRunner
+        from jax_spice.analysis.engine import CircuitEngine
 
-        self._runner = VACASKBenchmarkRunner(self._circuit_path)
+        self._runner = CircuitEngine(self._circuit_path)
         self._runner.parse()
         return self
 

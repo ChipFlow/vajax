@@ -14,7 +14,7 @@ import jax
 jax.config.update("jax_enable_x64", True)
 
 import jax.numpy as jnp
-from jax_spice.benchmarks.runner import VACASKBenchmarkRunner
+from jax_spice.analysis import CircuitEngine
 
 
 def parse_value_with_suffix(value_str: str) -> float:
@@ -113,14 +113,14 @@ def run_vacask_short_tran(sim_path: Path, vacask_bin: Path, steps: int = 5) -> d
 
 def run_jaxspice(sim_path: Path, steps: int = 5) -> dict:
     """Run JAX-SPICE and return final voltages."""
-    runner = VACASKBenchmarkRunner(sim_path)
-    runner.parse()
+    engine = CircuitEngine(sim_path)
+    engine.parse()
 
     # Get step from analysis params
-    step = runner.analysis_params.get('step', 1e-6)
+    step = engine.analysis_params.get('step', 1e-6)
     stop = step * steps
 
-    times, voltages_dict, stats = runner.run_transient(
+    times, voltages_dict, stats = engine.run_transient(
         t_stop=stop,
         dt=step,
         max_steps=steps + 10,  # Extra margin
@@ -129,14 +129,14 @@ def run_jaxspice(sim_path: Path, steps: int = 5) -> dict:
 
     # Get final voltages
     node_voltages = {}
-    index_to_name = {v: k for k, v in runner.node_names.items()}
+    index_to_name = {v: k for k, v in engine.node_names.items()}
 
     for node_idx, voltage_array in voltages_dict.items():
         node_name = index_to_name.get(node_idx, str(node_idx))
         final_v = float(voltage_array[-1]) if len(voltage_array) > 0 else 0.0
         node_voltages[node_name] = final_v
 
-    return node_voltages, runner, step
+    return node_voltages, engine, step
 
 
 def compare_benchmarks():
@@ -186,7 +186,7 @@ def compare_benchmarks():
         # Run JAX-SPICE
         print("  Running JAX-SPICE...", end=" ", flush=True)
         try:
-            jax_voltages, runner, jax_step = run_jaxspice(sim_path, config['steps'])
+            jax_voltages, engine, jax_step = run_jaxspice(sim_path, config['steps'])
             print(f"done ({len(jax_voltages)} nodes, dt={jax_step:.2e}s)")
         except Exception as e:
             print(f"FAILED: {e}")

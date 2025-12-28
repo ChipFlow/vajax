@@ -14,7 +14,7 @@ import jax.numpy as jnp
 from jax_spice.logging import logger
 
 if TYPE_CHECKING:
-    from jax_spice.benchmarks.runner import VACASKBenchmarkRunner
+    from jax_spice.analysis.engine import CircuitEngine
 
 
 @dataclass
@@ -63,12 +63,12 @@ class TransientStrategy(ABC):
     - lax.scan: Less debugging info, ~0.1ms/step (5x faster)
     """
 
-    def __init__(self, runner: 'VACASKBenchmarkRunner',
+    def __init__(self, runner: 'CircuitEngine',
                  use_sparse: bool = False, backend: str = "cpu"):
         """Initialize the strategy.
 
         Args:
-            runner: VACASKBenchmarkRunner instance with parsed circuit
+            runner: CircuitEngine instance with parsed circuit
             use_sparse: If True, use sparse solver; if False, use dense solver
             backend: 'cpu' or 'gpu' for device evaluation
         """

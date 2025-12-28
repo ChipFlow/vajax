@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """CPU Profiling Script for JAX-SPICE
 
-Profiles CPU performance of VACASK benchmark circuits using VACASKBenchmarkRunner.
+Profiles CPU performance of VACASK benchmark circuits using CircuitEngine.
 Compares dense vs sparse solvers across different circuit sizes.
 
 Usage:
@@ -36,7 +36,7 @@ import jax.numpy as jnp
 # Enable float64
 jax.config.update('jax_enable_x64', True)
 
-from jax_spice.benchmarks.runner import VACASKBenchmarkRunner
+from jax_spice.analysis import CircuitEngine
 
 
 @dataclass
@@ -84,16 +84,16 @@ def run_benchmark(sim_path: Path, name: str, use_sparse: bool,
     try:
         # Parse circuit
         log(f"      parsing...")
-        runner = VACASKBenchmarkRunner(sim_path)
-        runner.parse()
+        engine = CircuitEngine(sim_path)
+        engine.parse()
         log("      parsing done")
 
-        nodes = runner.num_nodes
-        devices = len(runner.devices)
-        openvaf_devices = sum(1 for d in runner.devices if d.get('is_openvaf'))
+        nodes = engine.num_nodes
+        devices = len(engine.devices)
+        openvaf_devices = sum(1 for d in engine.devices if d.get('is_openvaf'))
 
         # Skip sparse for non-OpenVAF circuits
-        if use_sparse and not runner._has_openvaf_devices:
+        if use_sparse and not engine._has_openvaf_devices:
             return BenchmarkResult(
                 name=name,
                 nodes=nodes,
@@ -108,7 +108,7 @@ def run_benchmark(sim_path: Path, name: str, use_sparse: bool,
             )
 
         # Get analysis params
-        dt = runner.analysis_params.get('step', 1e-12)
+        dt = engine.analysis_params.get('step', 1e-12)
 
         # Warmup run (includes JIT compilation)
         # IMPORTANT: Use same num_steps as timed run to avoid JAX re-tracing
@@ -116,15 +116,15 @@ def run_benchmark(sim_path: Path, name: str, use_sparse: bool,
         mode_str = "lax.scan" if use_scan else "Python loop"
         log(f"      warmup ({num_steps} steps, {mode_str}, includes JIT)...")
         warmup_start = time.perf_counter()
-        runner.run_transient(t_stop=dt * num_steps, dt=dt,
+        engine.run_transient(t_stop=dt * num_steps, dt=dt,
                             max_steps=num_steps, use_sparse=use_sparse,
                             use_while_loop=use_scan)
         warmup_time = time.perf_counter() - warmup_start
         log(f"      warmup done ({warmup_time:.1f}s)")
 
-        # Timed run - use same runner with cached JIT functions
+        # Timed run - use same engine with cached JIT functions
         start = time.perf_counter()
-        times, voltages, stats = runner.run_transient(
+        times, voltages, stats = engine.run_transient(
             t_stop=dt * num_steps, dt=dt,
             max_steps=num_steps, use_sparse=use_sparse,
             use_while_loop=use_scan
