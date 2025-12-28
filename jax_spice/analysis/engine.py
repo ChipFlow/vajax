@@ -6128,3 +6128,359 @@ class CircuitEngine:
         v2 = V[node2_idx] if node2_idx < len(V) else 0.0
         return v1 - v2
 
+    # =========================================================================
+    # AC (Small-Signal) Analysis
+    # =========================================================================
+
+    def run_ac(
+        self,
+        freq_start: float = 1.0,
+        freq_stop: float = 1e6,
+        mode: str = 'dec',
+        points: int = 10,
+        step: Optional[float] = None,
+        values: Optional[List[float]] = None,
+    ) -> 'ACResult':
+        """Run AC (small-signal) frequency sweep analysis.
+
+        AC analysis linearizes the circuit around its DC operating point and
+        computes the frequency response. The algorithm:
+        1. Compute DC operating point
+        2. Extract Jr (resistive Jacobian) and Jc (reactive/capacitance Jacobian)
+        3. For each frequency f: solve (Jr + j*omega*Jc) * X = U
+
+        Args:
+            freq_start: Starting frequency in Hz (default 1.0)
+            freq_stop: Ending frequency in Hz (default 1e6)
+            mode: Sweep mode - 'lin', 'dec', 'oct', or 'list'
+            points: Points per decade/octave (for 'dec'/'oct' modes)
+            step: Frequency step for 'lin' mode
+            values: Explicit frequency list for 'list' mode
+
+        Returns:
+            ACResult with frequencies and complex voltage phasors
+        """
+        from jax_spice.analysis.ac import ACConfig, ACResult, run_ac_analysis
+
+        logger.info(f"Running AC analysis: {freq_start:.2e} to {freq_stop:.2e} Hz, mode={mode}")
+
+        # Configure AC analysis
+        config = ACConfig(
+            freq_start=freq_start,
+            freq_stop=freq_stop,
+            mode=mode,
+            points=points,
+            step=step,
+            values=values,
+        )
+
+        # First, compute DC operating point
+        Jr, Jc, V_dc, ac_sources = self._compute_ac_operating_point()
+
+        logger.info(f"DC operating point found, extracting {len(ac_sources)} AC sources")
+
+        # Run AC frequency sweep
+        result = run_ac_analysis(
+            Jr=Jr,
+            Jc=Jc,
+            ac_sources=ac_sources,
+            config=config,
+            node_names=self.node_names,
+            dc_voltages=V_dc,
+        )
+
+        logger.info(f"AC analysis complete: {len(result.frequencies)} frequency points")
+        return result
+
+    def _compute_ac_operating_point(
+        self,
+    ) -> Tuple[Array, Array, Array, List[Dict]]:
+        """Compute DC operating point and extract Jr, Jc for AC analysis.
+
+        Returns:
+            Tuple of:
+            - Jr: Resistive Jacobian at DC operating point, shape (n, n)
+            - Jc: Reactive (capacitance) Jacobian at DC OP, shape (n, n)
+            - V_dc: DC operating point voltages, shape (n,)
+            - ac_sources: List of AC source specifications
+        """
+        # Compile OpenVAF models if not already done
+        if not self._compiled_models:
+            self._compile_openvaf_models()
+
+        # Prepare device batching (same logic as transient setup)
+        ground = 0  # Ground is always node 0
+
+        # Set up internal nodes using the same method as transient
+        n_total, device_internal_nodes = self._setup_internal_nodes()
+        n_unknowns = n_total - 1  # Ground excluded
+
+        # Group devices by model type
+        openvaf_by_type: Dict[str, List[Dict]] = {}
+        for dev in self.devices:
+            model = dev['model']
+            if model in ('vsource', 'isource'):
+                continue
+            openvaf_by_type.setdefault(model, []).append(dev)
+
+        # Prepare vmapped functions and static inputs
+        vmapped_fns: Dict[str, Callable] = {}
+        static_inputs_cache: Dict[str, Tuple] = {}
+
+        for model_type in openvaf_by_type:
+            compiled = self._compiled_models.get(model_type)
+            if compiled and 'vmapped_fn' in compiled:
+                vmapped_fns[model_type] = compiled['vmapped_fn']
+                static_inputs, voltage_indices, device_contexts, cache = self._prepare_static_inputs(
+                    model_type, openvaf_by_type[model_type], device_internal_nodes, ground
+                )
+                stamp_indices = self._build_stamp_index_mapping(
+                    model_type, device_contexts, ground
+                )
+                voltage_node1 = jnp.array([
+                    [n1 for n1, n2 in ctx['voltage_node_pairs']]
+                    for ctx in device_contexts
+                ], dtype=jnp.int32)
+                voltage_node2 = jnp.array([
+                    [n2 for n1, n2 in ctx['voltage_node_pairs']]
+                    for ctx in device_contexts
+                ], dtype=jnp.int32)
+                static_inputs = jnp.array(static_inputs, dtype=jnp.float64)
+                cache = jnp.array(cache, dtype=jnp.float64)
+                static_inputs_cache[model_type] = (
+                    static_inputs, voltage_indices, stamp_indices, voltage_node1, voltage_node2, cache
+                )
+
+        # Count sources
+        n_vsources = sum(1 for d in self.devices if d['model'] == 'vsource')
+        n_isources = sum(1 for d in self.devices if d['model'] == 'isource')
+
+        # Prepare source devices
+        source_devices = [d for d in self.devices if d['model'] in ('vsource', 'isource')]
+        source_device_data = self._prepare_source_devices_coo(source_devices, ground, n_unknowns)
+
+        # Get DC source values
+        vsource_dc_vals = jnp.zeros(n_vsources, dtype=jnp.float64)
+        isource_dc_vals = jnp.zeros(n_isources, dtype=jnp.float64)
+
+        vsource_idx = 0
+        isource_idx = 0
+        for dev in self.devices:
+            if dev['model'] == 'vsource':
+                dc_val = dev['params'].get('dc', 0.0)
+                vsource_dc_vals = vsource_dc_vals.at[vsource_idx].set(float(dc_val))
+                vsource_idx += 1
+            elif dev['model'] == 'isource':
+                source_type = str(dev['params'].get('type', 'dc')).lower()
+                dc_val = dev['params'].get('val0' if source_type == 'pulse' else 'dc', 0.0)
+                isource_dc_vals = isource_dc_vals.at[isource_idx].set(float(dc_val))
+                isource_idx += 1
+
+        # Build DC system builder
+        build_residual_fn, build_jacobian_fn = self._make_dc_homotopy_builders(
+            source_device_data, vmapped_fns, static_inputs_cache,
+            n_unknowns, vsource_dc_vals, isource_dc_vals, None
+        )
+
+        # Compute DC operating point using homotopy
+        homotopy_config = HomotopyConfig(
+            gmin=1e-12,
+            gdev_start=1e-3,
+            gdev_target=1e-13,
+            gmin_factor=3.0,
+            gmin_factor_min=1.1,
+            gmin_factor_max=10.0,
+            gmin_max=1.0,
+            gmin_max_steps=100,
+            source_step=0.1,
+            source_step_min=0.001,
+            source_max_steps=100,
+            chain=("gdev", "gshunt", "src"),
+            debug=0,
+        )
+
+        nr_config = NRConfig(
+            max_iterations=100,
+            abstol=1e-9,
+            reltol=1e-6,
+            damping=1.0,
+            max_step=2.0,
+        )
+
+        # Initialize V (including internal nodes)
+        vdd_value = max((dev['params'].get('dc', 0.0) for dev in self.devices
+                        if dev['model'] == 'vsource'), default=1.0)
+        mid_rail = vdd_value / 2.0
+        V_dc = jnp.full(n_total, mid_rail, dtype=jnp.float64)
+        V_dc = V_dc.at[0].set(0.0)
+
+        # Run homotopy to find DC operating point
+        result = run_homotopy_chain(
+            build_residual_fn=build_residual_fn,
+            build_jacobian_fn=build_jacobian_fn,
+            V_init=V_dc,
+            config=homotopy_config,
+            nr_config=nr_config,
+        )
+
+        V_dc = result.V
+        logger.info(f"DC operating point converged in {result.iterations} iterations")
+
+        # Now extract Jr and Jc at the DC operating point
+        Jr, Jc = self._extract_ac_jacobians(
+            V_dc, vmapped_fns, static_inputs_cache, source_device_data,
+            n_unknowns, vsource_dc_vals, isource_dc_vals
+        )
+
+        # Extract AC source specifications
+        ac_sources = self._extract_ac_sources()
+
+        return Jr, Jc, V_dc, ac_sources
+
+    def _extract_ac_jacobians(
+        self,
+        V: Array,
+        vmapped_fns: Dict[str, Callable],
+        static_inputs_cache: Dict[str, Tuple],
+        source_device_data: Dict[str, Any],
+        n_unknowns: int,
+        vsource_dc_vals: Array,
+        isource_dc_vals: Array,
+    ) -> Tuple[Array, Array]:
+        """Extract resistive and reactive Jacobians at given operating point.
+
+        Args:
+            V: Voltage vector at operating point
+            vmapped_fns: Dict of vmapped OpenVAF functions per model type
+            static_inputs_cache: Dict of static inputs per model type
+            source_device_data: Pre-computed source device stamp templates
+            n_unknowns: Number of unknowns
+            vsource_dc_vals: DC voltage source values
+            isource_dc_vals: DC current source values
+
+        Returns:
+            Tuple of (Jr, Jc) dense Jacobian matrices
+        """
+        model_types = list(static_inputs_cache.keys())
+
+        j_resist_parts = []
+        j_react_parts = []
+
+        # === Source device contributions (resistive only) ===
+        if 'vsource' in source_device_data and vsource_dc_vals.size > 0:
+            d = source_device_data['vsource']
+            G = 1e12
+            G_arr = jnp.full(d['n'], G)
+            j_vals_arr = G_arr[:, None] * d['j_signs'][None, :]
+            j_row = d['j_rows'].ravel()
+            j_col = d['j_cols'].ravel()
+            j_val = j_vals_arr.ravel()
+            j_valid = j_row >= 0
+            j_resist_parts.append((
+                jnp.where(j_valid, j_row, 0),
+                jnp.where(j_valid, j_col, 0),
+                jnp.where(j_valid, j_val, 0.0)
+            ))
+
+        # === OpenVAF device contributions ===
+        for model_type in model_types:
+            static_inputs, voltage_indices, stamp_indices, voltage_node1, voltage_node2, cache = \
+                static_inputs_cache[model_type]
+            vmapped_fn = vmapped_fns[model_type]
+
+            # Compute device voltages
+            voltage_updates = V[voltage_node1] - V[voltage_node2]
+            batch_inputs = static_inputs.at[:, jnp.array(voltage_indices)].set(voltage_updates)
+
+            # Evaluate devices
+            vmapped_eval_with_cache = self._compiled_models.get(model_type, {}).get('vmapped_eval_with_cache')
+            if vmapped_eval_with_cache is not None and cache.size > 0:
+                _, _, batch_jac_resist, batch_jac_react = vmapped_eval_with_cache(batch_inputs, cache)
+            else:
+                _, _, batch_jac_resist, batch_jac_react = vmapped_fn(batch_inputs)
+
+            # Extract Jacobian entries
+            jac_row_idx = stamp_indices['jac_row_indices']
+            jac_col_idx = stamp_indices['jac_col_indices']
+
+            flat_jac_rows = jac_row_idx.ravel()
+            flat_jac_cols = jac_col_idx.ravel()
+            valid_jac = (flat_jac_rows >= 0) & (flat_jac_cols >= 0)
+
+            # Resistive Jacobian
+            flat_jac_resist_vals = batch_jac_resist.ravel()
+            flat_jac_resist_masked = jnp.where(valid_jac, flat_jac_resist_vals, 0.0)
+            flat_jac_resist_masked = jnp.where(jnp.isnan(flat_jac_resist_masked), 0.0, flat_jac_resist_masked)
+            j_resist_parts.append((
+                jnp.where(valid_jac, flat_jac_rows, 0),
+                jnp.where(valid_jac, flat_jac_cols, 0),
+                flat_jac_resist_masked
+            ))
+
+            # Reactive Jacobian
+            flat_jac_react_vals = batch_jac_react.ravel()
+            flat_jac_react_masked = jnp.where(valid_jac, flat_jac_react_vals, 0.0)
+            flat_jac_react_masked = jnp.where(jnp.isnan(flat_jac_react_masked), 0.0, flat_jac_react_masked)
+            j_react_parts.append((
+                jnp.where(valid_jac, flat_jac_rows, 0),
+                jnp.where(valid_jac, flat_jac_cols, 0),
+                flat_jac_react_masked
+            ))
+
+        # === Assemble dense Jacobians ===
+        # Resistive Jacobian Jr
+        if j_resist_parts:
+            all_j_resist_rows = jnp.concatenate([p[0] for p in j_resist_parts])
+            all_j_resist_cols = jnp.concatenate([p[1] for p in j_resist_parts])
+            all_j_resist_vals = jnp.concatenate([p[2] for p in j_resist_parts])
+            flat_indices = all_j_resist_rows * n_unknowns + all_j_resist_cols
+            Jr_flat = jax.ops.segment_sum(all_j_resist_vals, flat_indices,
+                                          num_segments=n_unknowns * n_unknowns)
+            Jr = Jr_flat.reshape((n_unknowns, n_unknowns))
+        else:
+            Jr = jnp.zeros((n_unknowns, n_unknowns), dtype=jnp.float64)
+
+        # Reactive Jacobian Jc
+        if j_react_parts:
+            all_j_react_rows = jnp.concatenate([p[0] for p in j_react_parts])
+            all_j_react_cols = jnp.concatenate([p[1] for p in j_react_parts])
+            all_j_react_vals = jnp.concatenate([p[2] for p in j_react_parts])
+            flat_indices = all_j_react_rows * n_unknowns + all_j_react_cols
+            Jc_flat = jax.ops.segment_sum(all_j_react_vals, flat_indices,
+                                          num_segments=n_unknowns * n_unknowns)
+            Jc = Jc_flat.reshape((n_unknowns, n_unknowns))
+        else:
+            Jc = jnp.zeros((n_unknowns, n_unknowns), dtype=jnp.float64)
+
+        # Add regularization
+        Jr = Jr + 1e-12 * jnp.eye(n_unknowns, dtype=jnp.float64)
+
+        return Jr, Jc
+
+    def _extract_ac_sources(self) -> List[Dict]:
+        """Extract AC source specifications from devices.
+
+        Returns:
+            List of AC source specifications with mag, phase, node indices
+        """
+        ac_sources = []
+
+        for dev in self.devices:
+            if dev['model'] == 'vsource':
+                params = dev['params']
+                mag = params.get('mag', 0.0)
+                phase = params.get('phase', 0.0)
+
+                # Only include sources with non-zero AC magnitude
+                if mag != 0.0:
+                    nodes = dev.get('nodes', [0, 0])
+                    ac_sources.append({
+                        'name': dev['name'],
+                        'pos_node': nodes[0] if len(nodes) > 0 else 0,
+                        'neg_node': nodes[1] if len(nodes) > 1 else 0,
+                        'mag': float(mag),
+                        'phase': float(phase),
+                    })
+
+        return ac_sources
+

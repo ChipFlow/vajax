@@ -1,6 +1,7 @@
 """Analysis engines for JAX-SPICE
 
-Provides DC operating point and transient analysis using OpenVAF-compiled devices.
+Provides DC operating point, transient, and AC (small-signal) analysis
+using OpenVAF-compiled devices.
 """
 
 from jax_spice.analysis.context import AnalysisContext
@@ -31,6 +32,12 @@ from jax_spice.analysis.homotopy import (
     gmin_stepping,
     source_stepping,
 )
+from jax_spice.analysis.ac import (
+    ACConfig,
+    ACResult,
+    generate_frequencies,
+    run_ac_analysis,
+)
 
 __all__ = [
     "AnalysisContext",
@@ -45,6 +52,11 @@ __all__ = [
     "TransientSetup",
     "PythonLoopStrategy",
     "ScanStrategy",
+    # AC analysis
+    "ACConfig",
+    "ACResult",
+    "generate_frequencies",
+    "run_ac_analysis",
     # Sparse solver
     "sparse_solve",
     "sparse_solve_csr",
