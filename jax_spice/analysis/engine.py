@@ -6484,3 +6484,175 @@ class CircuitEngine:
 
         return ac_sources
 
+    # =========================================================================
+    # Transfer Function Analyses (DCINC, DCXF, ACXF)
+    # =========================================================================
+
+    def run_dcinc(self) -> 'DCIncResult':
+        """Run DC incremental (small-signal) analysis.
+
+        DC incremental analysis computes the small-signal response to
+        incremental source excitations. Sources with 'mag' parameters
+        are used as excitations.
+
+        Algorithm:
+        1. Compute DC operating point
+        2. Extract resistive Jacobian Jr
+        3. Build excitation vector from source 'mag' values
+        4. Solve: Jr·dx = du for incremental voltages
+
+        Returns:
+            DCIncResult with incremental node voltages
+        """
+        from jax_spice.analysis.xfer import DCIncResult, solve_dcinc, build_dcinc_excitation
+
+        logger.info("Running DCINC analysis")
+
+        # Compute DC operating point and extract Jacobians
+        Jr, Jc, V_dc, _ = self._compute_ac_operating_point()
+
+        # Extract sources with mag parameters
+        sources = self._extract_all_sources()
+
+        # Build excitation vector
+        n_unknowns = Jr.shape[0]
+        excitation = build_dcinc_excitation(sources, n_unknowns)
+
+        # Solve
+        result = solve_dcinc(
+            Jr=Jr,
+            excitation=excitation,
+            node_names=self.node_names,
+            dc_voltages=V_dc,
+        )
+
+        logger.info(f"DCINC complete: {len(result.incremental_voltages)} nodes")
+        return result
+
+    def run_dcxf(
+        self,
+        out: Union[str, int] = 1,
+    ) -> 'DCXFResult':
+        """Run DC transfer function analysis.
+
+        For each independent source, computes:
+        - tf: Transfer function (Vout / Vsrc)
+        - zin: Input impedance seen by source
+        - yin: Input admittance (1/zin)
+
+        Args:
+            out: Output node (name or index)
+
+        Returns:
+            DCXFResult with tf, zin, yin for each source
+        """
+        from jax_spice.analysis.xfer import DCXFResult, solve_dcxf
+
+        logger.info(f"Running DCXF analysis, output node: {out}")
+
+        # Compute DC operating point and extract Jacobians
+        Jr, Jc, V_dc, _ = self._compute_ac_operating_point()
+
+        # Extract all sources
+        sources = self._extract_all_sources()
+
+        # Solve
+        result = solve_dcxf(
+            Jr=Jr,
+            sources=sources,
+            out_node=out,
+            node_names=self.node_names,
+            dc_voltages=V_dc,
+        )
+
+        logger.info(f"DCXF complete: {len(result.tf)} sources analyzed")
+        return result
+
+    def run_acxf(
+        self,
+        out: Union[str, int] = 1,
+        freq_start: float = 1.0,
+        freq_stop: float = 1e6,
+        mode: str = 'dec',
+        points: int = 10,
+        step: Optional[float] = None,
+        values: Optional[List[float]] = None,
+    ) -> 'ACXFResult':
+        """Run AC transfer function analysis.
+
+        For each independent source, computes complex-valued:
+        - tf: Transfer function over frequency
+        - zin: Input impedance over frequency
+        - yin: Input admittance over frequency
+
+        Args:
+            out: Output node (name or index)
+            freq_start: Starting frequency in Hz
+            freq_stop: Ending frequency in Hz
+            mode: Sweep mode - 'lin', 'dec', 'oct', or 'list'
+            points: Points per decade/octave
+            step: Frequency step for 'lin' mode
+            values: Explicit frequency list for 'list' mode
+
+        Returns:
+            ACXFResult with complex tf, zin, yin over frequency
+        """
+        from jax_spice.analysis.xfer import ACXFConfig, ACXFResult, solve_acxf
+
+        logger.info(f"Running ACXF analysis: {freq_start:.2e} to {freq_stop:.2e} Hz, out={out}")
+
+        # Configure ACXF
+        config = ACXFConfig(
+            out=out,
+            freq_start=freq_start,
+            freq_stop=freq_stop,
+            mode=mode,
+            points=points,
+            step=step,
+            values=values,
+        )
+
+        # Compute DC operating point and extract Jacobians
+        Jr, Jc, V_dc, _ = self._compute_ac_operating_point()
+
+        # Extract all sources
+        sources = self._extract_all_sources()
+
+        # Solve
+        result = solve_acxf(
+            Jr=Jr,
+            Jc=Jc,
+            sources=sources,
+            config=config,
+            node_names=self.node_names,
+            dc_voltages=V_dc,
+        )
+
+        logger.info(f"ACXF complete: {len(result.frequencies)} frequencies, "
+                    f"{len(result.tf)} sources")
+        return result
+
+    def _extract_all_sources(self) -> List[Dict]:
+        """Extract all independent sources for transfer function analysis.
+
+        Returns:
+            List of source specifications with type, name, nodes, mag
+        """
+        sources = []
+
+        for dev in self.devices:
+            if dev['model'] in ('vsource', 'isource'):
+                params = dev['params']
+                nodes = dev.get('nodes', [0, 0])
+
+                sources.append({
+                    'name': dev['name'],
+                    'type': dev['model'],
+                    'pos_node': nodes[0] if len(nodes) > 0 else 0,
+                    'neg_node': nodes[1] if len(nodes) > 1 else 0,
+                    'mag': float(params.get('mag', 0.0)),
+                    'dc': float(params.get('dc', 0.0)),
+                })
+
+        return sources
+

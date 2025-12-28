@@ -38,6 +38,21 @@ from jax_spice.analysis.ac import (
     generate_frequencies,
     run_ac_analysis,
 )
+from jax_spice.analysis.xfer import (
+    # DCINC
+    DCIncConfig,
+    DCIncResult,
+    solve_dcinc,
+    build_dcinc_excitation,
+    # DCXF
+    DCXFConfig,
+    DCXFResult,
+    solve_dcxf,
+    # ACXF
+    ACXFConfig,
+    ACXFResult,
+    solve_acxf,
+)
 
 __all__ = [
     "AnalysisContext",
@@ -75,4 +90,15 @@ __all__ = [
     "run_homotopy_chain",
     "gmin_stepping",
     "source_stepping",
+    # Transfer function analyses
+    "DCIncConfig",
+    "DCIncResult",
+    "solve_dcinc",
+    "build_dcinc_excitation",
+    "DCXFConfig",
+    "DCXFResult",
+    "solve_dcxf",
+    "ACXFConfig",
+    "ACXFResult",
+    "solve_acxf",
 ]
