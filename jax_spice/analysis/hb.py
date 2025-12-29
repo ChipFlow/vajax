@@ -549,3 +549,120 @@ def run_hb_analysis(
         iterations=nf,  # One solve per frequency
         max_residual=0.0,
     )
+
+
+# =============================================================================
+# Full Nonlinear Harmonic Balance (TODO)
+# =============================================================================
+#
+# The full nonlinear HB requires re-evaluating devices at each Newton-Raphson
+# iteration. This section outlines the algorithm and provides a skeleton for
+# future implementation.
+#
+# Algorithm:
+# 1. Initialize: V_td shape (n_nodes, nt) from DC replicated across timepoints
+# 2. Newton-Raphson loop:
+#    a. Evaluate ALL devices at ALL collocation points:
+#       (f_resist, Q, J_resist, J_react) = evaluate_circuit(V_td)
+#       where each has shape (n_nodes, nt) or (n_nodes, n_nodes, nt) for Jacobians
+#
+#    b. Build HB residual:
+#       F = f_resist + DDT @ Q
+#       where DDT operates on the time dimension
+#       F has shape (n_nodes, nt) -> flattened to (n_nodes * nt,)
+#
+#    c. Build HB Jacobian:
+#       J_hb = J_resist + DDT @ J_react
+#       This is a block matrix of shape (n_nodes * nt, n_nodes * nt)
+#       Block (i,j,k,l) couples node i at timepoint k to node j at timepoint l
+#
+#    d. Solve: delta = -J_hb^{-1} @ F
+#    e. Update: V_td <- V_td + delta.reshape(n_nodes, nt)
+#    f. Check convergence: ||F|| < abstol, ||delta|| < reltol * ||V||
+#
+# 3. Transform converged V_td to frequency domain via APFT
+#
+# Implementation Requirements:
+# - Batched device evaluation: evaluate_circuit must accept V shape (n_nodes, nt)
+# - Efficient block Jacobian assembly
+# - Source handling: build time-domain source waveforms at collocation points
+# - Continuation: start with large harmonic truncation and refine
+#
+# Integration with CircuitEngine:
+# - Need access to _make_gpu_resident_build_system_fn but batched over timepoints
+# - Each device model's vmapped function needs additional time dimension
+# =============================================================================
+
+
+def run_hb_nonlinear(
+    build_circuit_fn,
+    config: HBConfig,
+    V_dc: Optional[Array] = None,
+    node_names: Optional[Dict[str, int]] = None,
+) -> HBResult:
+    """Run full nonlinear Harmonic Balance analysis.
+
+    This re-evaluates devices at each Newton-Raphson iteration for accurate
+    handling of strongly nonlinear circuits.
+
+    Args:
+        build_circuit_fn: Function that evaluates circuit at given voltages.
+            Signature: (V_td) -> (f_resist, Q, J_resist, J_react)
+            where V_td has shape (n_nodes, nt) - voltages at all collocation points
+            Returns:
+                f_resist: Resistive residual, shape (n_nodes, nt)
+                Q: Charges, shape (n_nodes, nt)
+                J_resist: Resistive Jacobian, shape (n_nodes, n_nodes, nt)
+                J_react: Reactive Jacobian, shape (n_nodes, n_nodes, nt)
+        config: HB configuration
+        V_dc: Initial DC solution, shape (n_nodes,)
+        node_names: Optional node name to index mapping
+
+    Returns:
+        HBResult with converged harmonic solutions
+
+    Note:
+        This is currently a placeholder. Full implementation requires:
+        1. Integration with CircuitEngine for batched device evaluation
+        2. Block Jacobian assembly and solve
+        3. Source waveform generation at collocation points
+    """
+    # Build frequency grid
+    frequencies, grid = build_frequency_grid(config)
+    nf = len(frequencies)
+    nt = 2 * nf - 1
+
+    logger.info(f"Nonlinear HB: {nf} frequencies, {nt} collocation points")
+
+    # Build collocation points
+    timepoints = build_collocation_points(
+        frequencies, config.freq, config.n_periods, config.sample_factor
+    )
+
+    # Build APFT matrices
+    APFT, IAPFT, DDT = build_apft_matrices(frequencies, timepoints)
+
+    # Get number of nodes from DC solution
+    if V_dc is not None:
+        n_nodes = len(V_dc)
+    else:
+        n_nodes = 0
+
+    # Initialize solution: replicate DC across all timepoints
+    if V_dc is not None:
+        V_td = jnp.tile(V_dc[:, None], (1, nt))
+    else:
+        V_td = None
+
+    # TODO: Implement full NR loop
+    # For now, return unconverged result to indicate not implemented
+    logger.warning("Nonlinear HB not yet implemented - returning empty result")
+
+    return HBResult(
+        frequencies=frequencies,
+        phasors={},
+        dc_voltages=V_dc,
+        converged=False,
+        iterations=0,
+        max_residual=float('inf'),
+    )
