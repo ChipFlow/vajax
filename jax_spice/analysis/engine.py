@@ -3825,7 +3825,54 @@ class CircuitEngine:
         return f, J
 
     def _extract_analysis_params(self):
-        """Extract analysis parameters from control block."""
+        """Extract analysis parameters from parsed control block.
+
+        Uses the structured ControlBlock from Circuit if available,
+        falls back to regex parsing for backwards compatibility.
+        """
+        from jax_spice.analysis.integration import IntegrationMethod, get_method_from_options
+
+        # Default values
+        self.analysis_params = {
+            'type': 'tran',
+            'step': 1e-6,
+            'stop': 1e-3,
+            'icmode': 'op',
+            'tran_method': IntegrationMethod.BACKWARD_EULER,
+        }
+
+        # Try to use the parsed control block first
+        if self.circuit and self.circuit.control:
+            control = self.circuit.control
+
+            # Extract tran_method from options
+            if control.options:
+                self.analysis_params['tran_method'] = get_method_from_options(
+                    control.options.params
+                )
+                logger.debug(f"Integration method: {self.analysis_params['tran_method']}")
+
+            # Extract analysis parameters from first tran analysis
+            for analysis in control.analyses:
+                if analysis.analysis_type == 'tran':
+                    params = analysis.params
+                    if 'step' in params:
+                        self.analysis_params['step'] = self.parse_spice_number(params['step'])
+                    if 'stop' in params:
+                        self.analysis_params['stop'] = self.parse_spice_number(params['stop'])
+                    if 'maxstep' in params:
+                        self.analysis_params['maxstep'] = self.parse_spice_number(params['maxstep'])
+                    if 'icmode' in params:
+                        icmode = params['icmode']
+                        if isinstance(icmode, str):
+                            icmode = icmode.strip('"\'')
+                        self.analysis_params['icmode'] = icmode
+                    break  # Use first tran analysis found
+
+            logger.debug(f"Analysis (from control block): {self.analysis_params}")
+            return
+
+        # Fallback: regex parsing for old-style netlists
         text = self.sim_path.read_text()
 
         # Find tran analysis line
@@ -3838,25 +3885,24 @@ class CircuitEngine:
             maxstep_match = re.search(r'maxstep=(\S+)', params_str)
             icmode_match = re.search(r'icmode="(\w+)"', params_str)
 
-            step = self.parse_spice_number(step_match.group(1)) if step_match else 1e-6
-            stop = self.parse_spice_number(stop_match.group(1)) if stop_match else 1e-3
+            if step_match:
+                self.analysis_params['step'] = self.parse_spice_number(step_match.group(1))
+            if stop_match:
+                self.analysis_params['stop'] = self.parse_spice_number(stop_match.group(1))
+            if icmode_match:
+                self.analysis_params['icmode'] = icmode_match.group(1)
 
-            self.analysis_params = {
-                'type': 'tran',
-                'step': step,
-                'stop': stop,
-                'icmode': icmode_match.group(1) if icmode_match else 'op',
-            }
-        else:
-            # Default values
-            self.analysis_params = {
-                'type': 'tran',
-                'step': 1e-6,
-                'stop': 1e-3,
-                'icmode': 'op',
-            }
+        # Try to extract tran_method from options line
+        tran_method_match = re.search(r'tran_method\s*=\s*"?(\w+)"?', text)
+        if tran_method_match:
+            try:
+                self.analysis_params['tran_method'] = IntegrationMethod.from_string(
+                    tran_method_match.group(1)
+                )
+            except ValueError:
+                pass  # Keep default
 
-        logger.debug(f"Analysis: {self.analysis_params}")
+        logger.debug(f"Analysis (from regex): {self.analysis_params}")
 
     def _build_source_fn(self):
         """Build time-varying source function from device parameters."""

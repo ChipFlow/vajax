@@ -11,7 +11,20 @@ from pathlib import Path
 from typing import Optional, Union, List, Tuple, Dict
 from dataclasses import dataclass
 
-from jax_spice.netlist.circuit import Circuit, Subcircuit, Instance, Model
+from jax_spice.netlist.circuit import (
+    Circuit,
+    Subcircuit,
+    Instance,
+    Model,
+    ControlBlock,
+    OptionsDirective,
+    AnalysisDirective,
+    SaveDirective,
+    VarDirective,
+    PrintDirective,
+    FileStack,
+    SourceLocation,
+)
 
 
 @dataclass
@@ -25,8 +38,14 @@ class Token:
 class Lexer:
     """Simple lexer for VACASK netlist format"""
 
-    KEYWORDS = {'load', 'include', 'global', 'ground', 'model', 'parameters',
-                'subckt', 'ends', 'control', 'endc', 'embed'}
+    KEYWORDS = {
+        # Netlist structure
+        'load', 'include', 'global', 'ground', 'model', 'parameters',
+        'subckt', 'ends', 'control', 'endc', 'embed',
+        # Control section commands (from VACASK cmd.cpp)
+        'options', 'analysis', 'save', 'var', 'print', 'alter',
+        'postprocess', 'abort', 'clear', 'elaborate',
+    }
 
     # Preprocessor directives (handled specially)
     DIRECTIVES = {'@if', '@elseif', '@else', '@endif'}
@@ -256,7 +275,7 @@ class Parser:
         elif tok.type == 'KW_SUBCKT':
             self.subckt_def()
         elif tok.type == 'KW_CONTROL':
-            self.control_block()
+            self.circuit.control = self.control_block()
         elif tok.type == 'KW_EMBED':
             self.embed_block()
         elif tok.type == 'DIRECTIVE':
@@ -395,15 +414,151 @@ class Parser:
         else:
             raise SyntaxError(f"Expected value, got {tok.type} at line {tok.line}")
 
-    def control_block(self):
-        """Skip control block"""
+    def control_block(self) -> ControlBlock:
+        """Parse control block with all VACASK commands.
+
+        Similar to VACASK CommandInterpreter::run() (cmd.cpp:109-245).
+        Parses: options, analysis, save, var, print, alter, postprocess, abort, clear
+        """
         self.expect('KW_CONTROL')
-        depth = 1
-        while depth > 0 and self.current().type != 'EOF':
-            if self.current().type == 'KW_CONTROL':
-                depth += 1
-            elif self.current().type == 'KW_ENDC':
-                depth -= 1
+        self.skip_newlines()
+
+        control = ControlBlock()
+
+        while self.current().type not in ('KW_ENDC', 'EOF'):
+            tok = self.current()
+
+            if tok.type == 'KW_OPTIONS':
+                options = self._parse_options_directive()
+                if control.options is None:
+                    control.options = options
+                else:
+                    # Merge multiple options directives
+                    control.options.params.update(options.params)
+
+            elif tok.type == 'KW_ANALYSIS':
+                control.analyses.append(self._parse_analysis_directive())
+
+            elif tok.type == 'KW_SAVE':
+                control.saves.append(self._parse_save_directive())
+
+            elif tok.type == 'KW_VAR':
+                control.vars.append(self._parse_var_directive())
+
+            elif tok.type == 'KW_PRINT':
+                control.prints.append(self._parse_print_directive())
+
+            elif tok.type == 'KW_POSTPROCESS':
+                self._skip_postprocess()
+
+            elif tok.type == 'KW_ALTER':
+                self._skip_alter()
+
+            elif tok.type in ('KW_ABORT', 'KW_CLEAR', 'KW_ELABORATE'):
+                self._skip_to_newline()
+
+            elif tok.type == 'NL':
+                self.advance()
+
+            else:
+                # Skip unknown tokens
+                self.advance()
+
+            self.skip_newlines()
+
+        self.expect('KW_ENDC')
+        return control
+
+    def _parse_options_directive(self) -> OptionsDirective:
+        """Parse: options tran_method="trap" reltol=1e-3 abstol=1e-9"""
+        self.expect('KW_OPTIONS')
+        params = self.param_list()
+        return OptionsDirective(params=params)
+
+    def _parse_analysis_directive(self) -> AnalysisDirective:
+        """Parse: analysis tran1 tran step=0.05n stop=1u maxstep=0.05n icmode="op" """
+        self.expect('KW_ANALYSIS')
+        name = self.expect('NAME').value
+        analysis_type = self.expect('NAME').value
+        params = self.param_list()
+        return AnalysisDirective(name=name, analysis_type=analysis_type, params=params)
+
+    def _parse_save_directive(self) -> SaveDirective:
+        """Parse: save v(out) i(r1) ..."""
+        self.expect('KW_SAVE')
+        signals = []
+        while self.current().type not in ('NL', 'EOF', 'KW_ENDC'):
+            # Save directives can have various forms: v(node), i(device), etc.
+            if self.current().type == 'NAME':
+                signal = self.advance().value
+                # Check for function-like syntax: v(node)
+                if self.current().type == 'LPAREN':
+                    self.advance()
+                    args = []
+                    while self.current().type not in ('RPAREN', 'EOF'):
+                        if self.current().type == 'NAME':
+                            args.append(self.advance().value)
+                        elif self.current().type == 'COMMA':
+                            self.advance()
+                        else:
+                            break
+                    if self.current().type == 'RPAREN':
+                        self.advance()
+                    signal = f"{signal}({','.join(args)})"
+                signals.append(signal)
+            else:
+                break
+        return SaveDirective(signals=signals)
+
+    def _parse_var_directive(self) -> VarDirective:
+        """Parse: var TEMP=27 VDD=1.8"""
+        self.expect('KW_VAR')
+        vars_dict = self.param_list()
+        return VarDirective(vars=vars_dict)
+
+    def _parse_print_directive(self) -> PrintDirective:
+        """Parse: print devices, print model "name", print stats"""
+        self.expect('KW_PRINT')
+        subcommand = ""
+        args = []
+
+        if self.current().type == 'NAME':
+            subcommand = self.advance().value
+
+        # Collect optional arguments (strings or names)
+        while self.current().type in ('NAME', 'STRING'):
+            val = self.advance().value
+            if val.startswith('"') and val.endswith('"'):
+                val = val[1:-1]
+            args.append(val)
+
+        return PrintDirective(subcommand=subcommand, args=args)
+
+    def _skip_postprocess(self):
+        """Skip postprocess block (Python code between <<< and >>>)"""
+        self.expect('KW_POSTPROCESS')
+        # Skip until newline or end of control
+        while self.current().type not in ('NL', 'EOF', 'KW_ENDC'):
+            # Check for heredoc-style blocks
+            if self.current().type == 'NAME' and self.current().value == '<<<':
+                self.advance()
+                # Skip until >>>
+                while self.current().type != 'EOF':
+                    if self.current().type == 'NAME' and self.current().value == '>>>':
+                        self.advance()
+                        break
+                    self.advance()
+            else:
+                self.advance()
+
+    def _skip_alter(self):
+        """Skip alter command"""
+        self.expect('KW_ALTER')
+        self._skip_to_newline()
+
+    def _skip_to_newline(self):
+        """Skip tokens until newline or end of control"""
+        while self.current().type not in ('NL', 'EOF', 'KW_ENDC'):
             self.advance()
 
     def embed_block(self):
