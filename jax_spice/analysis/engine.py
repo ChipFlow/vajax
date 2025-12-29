@@ -5375,6 +5375,9 @@ class CircuitEngine:
         # Capture model types as static list (unrolled at trace time)
         model_types = list(static_inputs_cache.keys())
 
+        # GMIN value for device models that use $simparam("gmin")
+        gmin = 1e-12
+
         def build_system(V: jax.Array, vsource_vals: jax.Array, isource_vals: jax.Array,
                         Q_prev: jax.Array, inv_dt: float | jax.Array
                         ) -> Tuple[Any, jax.Array, jax.Array]:

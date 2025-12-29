@@ -18,6 +18,7 @@ import numpy as np
 
 from jax_spice.netlist.parser import parse_netlist
 from jax_spice.analysis import CircuitEngine
+from conftest import parse_embedded_python, parse_si_value
 
 # Paths - VACASK is at ../VACASK relative to jax-spice
 JAX_SPICE_ROOT = Path(__file__).parent.parent
@@ -50,59 +51,7 @@ def discover_sim_files() -> List[Path]:
     return sorted(VACASK_TEST.glob("*.sim"))
 
 
-def parse_embedded_python(sim_path: Path) -> Dict[str, Any]:
-    """Extract expected values from embedded Python test script.
-
-    Parses patterns like:
-        v = op1["2"]
-        exact = 10*0.9
-
-    Returns dict with:
-        - 'expectations': List of (variable_name, expected_value, tolerance)
-        - 'analysis_type': 'op' or 'tran'
-    """
-    text = sim_path.read_text()
-
-    # Find embedded Python between <<<FILE and >>>FILE
-    match = re.search(r'<<<FILE\n(.*?)>>>FILE', text, re.DOTALL)
-    if not match:
-        return {'expectations': [], 'analysis_type': 'op'}
-
-    py_code = match.group(1)
-    lines = py_code.split('\n')
-
-    expectations = []
-    current_var = None
-
-    for i, line in enumerate(lines):
-        # Match: v = op1["node_name"] or i = op1["device.i"]
-        m = re.match(r'\s*(\w+)\s*=\s*op1\["([^"]+)"\]', line)
-        if m:
-            current_var = m.group(2)
-            continue
-
-        # Match: exact = <expression>
-        m = re.match(r'\s*exact\s*=\s*(.+)', line)
-        if m and current_var:
-            try:
-                # Safe evaluation of numeric expressions
-                expr = m.group(1).strip()
-                # Handle simple math expressions
-                val = eval(expr, {"__builtins__": {}, "np": np}, {})
-                expectations.append((current_var, float(val), 1e-3))
-            except:
-                pass
-            current_var = None
-
-    # Determine analysis type
-    analysis_type = 'op'
-    if 'tran1' in py_code or 'rawread(\'tran' in py_code:
-        analysis_type = 'tran'
-
-    return {
-        'expectations': expectations,
-        'analysis_type': analysis_type
-    }
+# parse_embedded_python is imported from conftest
 
 
 def parse_analysis_commands(sim_path: Path) -> List[Dict]:
@@ -211,17 +160,7 @@ def categorize_test(sim_path: Path) -> Tuple[str, List[str]]:
     return 'unsupported', ["no recognized analysis type"]
 
 
-def parse_si_value(s: str) -> float:
-    """Parse a SPICE value with SI suffix."""
-    s = s.strip().lower()
-    suffixes = {
-        'f': 1e-15, 'p': 1e-12, 'n': 1e-9, 'u': 1e-6, 'm': 1e-3,
-        'k': 1e3, 'meg': 1e6, 'g': 1e9, 't': 1e12
-    }
-    for suffix, mult in sorted(suffixes.items(), key=lambda x: -len(x[0])):
-        if s.endswith(suffix):
-            return float(s[:-len(suffix)]) * mult
-    return float(s)
+# parse_si_value is imported from conftest
 
 
 # Discover all tests
