@@ -7,10 +7,17 @@ Handles platform-specific JAX configuration:
 Enables jaxtyping runtime checks with beartype for array shape validation.
 
 Uses pytest_configure hook to ensure CUDA setup happens before any test imports.
+
+Also provides shared test utilities:
+- parse_embedded_python: Extract expected values from VACASK test files
+- parse_si_value: Parse SPICE values with SI suffixes
 """
 
 import os
+import re
 import sys
+from pathlib import Path
+from typing import Any, Dict
 
 
 def _setup_cuda_libraries():
@@ -67,3 +74,94 @@ def pytest_configure(config):
 
     # Enable float64 for numerical precision in tests
     jax.config.update('jax_enable_x64', True)
+
+
+# =============================================================================
+# Shared Test Utilities
+# =============================================================================
+
+
+def parse_si_value(s: str) -> float:
+    """Parse a SPICE value with SI suffix.
+
+    Handles standard SI prefixes like:
+    - f (femto, 1e-15), p (pico, 1e-12), n (nano, 1e-9)
+    - u (micro, 1e-6), m (milli, 1e-3)
+    - k (kilo, 1e3), meg (mega, 1e6), g (giga, 1e9), t (tera, 1e12)
+
+    Args:
+        s: String value like "2k", "100n", "1meg"
+
+    Returns:
+        Float value with SI scaling applied
+    """
+    s = s.strip().lower()
+    suffixes = {
+        'f': 1e-15, 'p': 1e-12, 'n': 1e-9, 'u': 1e-6, 'm': 1e-3,
+        'k': 1e3, 'meg': 1e6, 'g': 1e9, 't': 1e12
+    }
+    # Check longer suffixes first (meg before m)
+    for suffix, mult in sorted(suffixes.items(), key=lambda x: -len(x[0])):
+        if s.endswith(suffix):
+            return float(s[:-len(suffix)]) * mult
+    return float(s)
+
+
+def parse_embedded_python(sim_path: Path) -> Dict[str, Any]:
+    """Extract expected values from embedded Python test script in VACASK .sim files.
+
+    Parses patterns like:
+        v = op1["2"]
+        exact = 10*0.9
+
+    Args:
+        sim_path: Path to VACASK .sim file
+
+    Returns:
+        Dict with:
+        - 'expectations': List of (variable_name, expected_value, tolerance)
+        - 'analysis_type': 'op' or 'tran'
+    """
+    import numpy as np
+
+    text = sim_path.read_text()
+
+    # Find embedded Python between <<<FILE and >>>FILE
+    match = re.search(r'<<<FILE\n(.*?)>>>FILE', text, re.DOTALL)
+    if not match:
+        return {'expectations': [], 'analysis_type': 'op'}
+
+    py_code = match.group(1)
+    lines = py_code.split('\n')
+
+    expectations = []
+    current_var = None
+
+    for line in lines:
+        # Match: v = op1["node_name"] or i = op1["device.i"]
+        m = re.match(r'\s*(\w+)\s*=\s*op1\["([^"]+)"\]', line)
+        if m:
+            current_var = m.group(2)
+            continue
+
+        # Match: exact = <expression>
+        m = re.match(r'\s*exact\s*=\s*(.+)', line)
+        if m and current_var:
+            try:
+                # Safe evaluation of numeric expressions
+                expr = m.group(1).strip()
+                val = eval(expr, {"__builtins__": {}, "np": np}, {})
+                expectations.append((current_var, float(val), 1e-3))
+            except Exception:
+                pass
+            current_var = None
+
+    # Determine analysis type
+    analysis_type = 'op'
+    if 'tran1' in py_code or 'rawread(\'tran' in py_code:
+        analysis_type = 'tran'
+
+    return {
+        'expectations': expectations,
+        'analysis_type': analysis_type
+    }

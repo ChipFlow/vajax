@@ -12,7 +12,6 @@ The approach:
 
 import pytest
 import sys
-import re
 from pathlib import Path
 
 # Add openvaf-py to path
@@ -24,60 +23,15 @@ import jax.numpy as jnp
 import openvaf_py
 import openvaf_jax
 from jax_spice.netlist.parser import parse_netlist
+from conftest import parse_si_value
 
 # Paths
 VACASK_TEST = Path(__file__).parent.parent / "vendor" / "VACASK" / "test"
 VACASK_DEVICES = Path(__file__).parent.parent / "vendor" / "VACASK" / "devices"
 
-
-def parse_embedded_python(sim_path: Path) -> dict:
-    """Extract expected values from embedded Python test script.
-
-    Returns dict mapping variable names to expected values.
-    """
-    text = sim_path.read_text()
-
-    # Find embedded Python between <<<FILE and >>>FILE
-    match = re.search(r'<<<FILE\n(.*?)>>>FILE', text, re.DOTALL)
-    if not match:
-        return {}
-
-    py_code = match.group(1)
-
-    # Extract "exact = ..." assignments
-    expected = {}
-    for line in py_code.split('\n'):
-        # Match patterns like: exact = -1/2e3 * 3
-        m = re.match(r'\s*exact\s*=\s*(.+)', line)
-        if m:
-            try:
-                # Evaluate the expression
-                val = eval(m.group(1))
-                # Find what variable this is for by looking at preceding lines
-                expected['last'] = val
-            except:
-                pass
-
-        # Match patterns like: i = op1["r1.i"]
-        m = re.match(r'\s*(\w+)\s*=\s*op1\["([^"]+)"\]', line)
-        if m and 'last' in expected:
-            var_name = m.group(2)
-            expected[var_name] = expected.pop('last')
-
-    return expected
-
-
-def parse_si_value(s: str) -> float:
-    """Parse SI-suffixed value like '2k' -> 2000.0"""
-    s = s.strip()
-    suffixes = {
-        'T': 1e12, 'G': 1e9, 'M': 1e6, 'k': 1e3,
-        'm': 1e-3, 'u': 1e-6, 'n': 1e-9, 'p': 1e-12, 'f': 1e-15
-    }
-    for suffix, mult in suffixes.items():
-        if s.endswith(suffix):
-            return float(s[:-1]) * mult
-    return float(s)
+# Note: This file has its own parse_embedded_python that returns a simpler dict format
+# The conftest version returns {'expectations': [...], 'analysis_type': ...}
+# We keep this local version for backwards compatibility with the tests in this file
 
 
 class TestResistorSim:
