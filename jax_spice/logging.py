@@ -91,9 +91,20 @@ class PerfCounterHandler(logging.StreamHandler):
     Useful for correlating log messages with Perfetto trace timestamps.
     """
 
+    def __init__(self, stream=None, with_memory: bool = False):
+        super().__init__(stream)
+        self.with_memory = with_memory
+
     def emit(self, record):
-        # Prepend perf_counter timestamp
-        record.msg = f"[{time.perf_counter():.6f}] {record.msg}"
+        # Prepend memory stats if enabled
+        if self.with_memory:
+            mem_stats = _get_memory_stats()
+            if mem_stats:
+                record.msg = f"{mem_stats} [{time.perf_counter():.6f}] {record.msg}"
+            else:
+                record.msg = f"[{time.perf_counter():.6f}] {record.msg}"
+        else:
+            record.msg = f"[{time.perf_counter():.6f}] {record.msg}"
         super().emit(record)
         self.flush()
 
@@ -121,7 +132,7 @@ def enable_performance_logging(with_memory: bool = True, with_perf_counter: bool
 
     # Add appropriate handler
     if with_perf_counter:
-        handler = PerfCounterHandler(sys.stdout)
+        handler = PerfCounterHandler(sys.stdout, with_memory=with_memory)
     elif with_memory:
         handler = MemoryLoggingHandler(sys.stdout)
     else:
