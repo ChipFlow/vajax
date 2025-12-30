@@ -459,7 +459,7 @@ class TestNodeCountComparison:
 
     @pytest.mark.parametrize("benchmark,xfail_reason", [
         ("rc", None),
-        pytest.param("graetz", "Graetz node count mismatch - JAX-SPICE uses named nodes differently", marks=pytest.mark.xfail(reason="Node naming mismatch")),
+        ("graetz", None),  # Graetz node count now matches after branch current fix
         ("ring", None),  # Ring node count now matches VACASK (47 unknowns)
     ])
     def test_node_count_matches_vacask(self, vacask_bin, benchmark, xfail_reason):

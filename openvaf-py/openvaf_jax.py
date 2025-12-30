@@ -413,16 +413,31 @@ class OpenVAFToJAX:
 
         # Build collapse decision array from collapse_decision_outputs
         # Each entry is a boolean indicating if that collapsible pair should collapse
+        # Format: (pair_idx, condition_str) where condition_str may start with "!" for negation
         lines.append("")
         lines.append("    # Build collapse decision array")
         collapse_vals = []
-        for eq_idx, val_name in self.collapse_decision_outputs:
-            if val_name in init_defined:
-                # Convert boolean to float for array compatibility
-                collapse_vals.append(f"jnp.float32({val_name})")
+        for pair_idx, val_name in self.collapse_decision_outputs:
+            # Check if negation is needed (indicated by ! prefix)
+            if val_name.startswith('!'):
+                actual_val = val_name[1:]  # Remove ! prefix
+                negate = True
             else:
-                # Value not computed - default to False (no collapse)
-                collapse_vals.append("0.0")
+                actual_val = val_name
+                negate = False
+
+            if actual_val in init_defined:
+                # Convert boolean to float for array compatibility
+                if negate:
+                    # Collapse happens when condition is FALSE
+                    collapse_vals.append(f"jnp.float32(jnp.logical_not({actual_val}))")
+                else:
+                    collapse_vals.append(f"jnp.float32({actual_val})")
+            else:
+                # Value not computed - default to True (collapse) if negated, else False
+                # This handles the case where condition is always TRUE (never collapse)
+                # or always FALSE (always collapse)
+                collapse_vals.append("1.0" if negate else "0.0")
 
         if collapse_vals:
             lines.append(f"    collapse_decisions = jnp.array([{', '.join(collapse_vals)}])")

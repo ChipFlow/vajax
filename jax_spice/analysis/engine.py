@@ -1696,10 +1696,10 @@ class CircuitEngine:
                 )
             collapse_roots = collapse_roots_cache[pairs_key]
 
-            # Determine if last node is a branch current node (skip it if so)
-            # Branch current nodes have names like 'br[Branch(BranchId(N))]'
-            last_is_branch = n_model_nodes > 0 and model_nodes[-1].startswith('br[')
-            n_internal_end = n_model_nodes - 1 if last_is_branch else n_model_nodes
+            # Include all internal nodes including branch currents
+            # Branch currents (names like 'br[Branch(BranchId(N))]') are system unknowns
+            # VACASK counts branch currents as unknowns, and we must match for node counts
+            n_internal_end = n_model_nodes
 
             # Map external nodes to device's external circuit nodes
             # Number of external terminals is determined by the device instance

@@ -1168,22 +1168,69 @@ fn compile_va(path: &str, allow_analog_in_cond: bool, allow_builtin_primitives: 
 
         // Extract collapse decision outputs from init function
         // These are the boolean values that determine which pairs actually collapse at runtime
-        // Format: Vec<(pair_index, value_name)> where value_name is like "v123"
+        // Format: Vec<(pair_index, value_name, negate)> where:
+        //   - pair_index: index into collapsible_pairs
+        //   - value_name: the condition variable (e.g., "v3729")
+        //   - negate: true if collapse happens when condition is FALSE
         let mut collapse_decision_outputs: Vec<(u32, String)> = Vec::new();
-        for (&kind, val) in compiled.init.intern.outputs.iter() {
-            if let PlaceKind::CollapseImplicitEquation(eq) = kind {
-                if let Some(val) = val.expand() {
-                    // Find which pair index this corresponds to
-                    // The eq is an ImplicitEquation that maps to a SimUnknown in node_collapse.pairs()
-                    // We need to match it against the pairs we extracted
-                    let eq_idx: u32 = eq.into();
-                    // For now, store the equation index and value name
-                    // The pair matching will be done in openvaf_jax.py
-                    let val_idx: u32 = val.into();
-                    collapse_decision_outputs.push((eq_idx, format!("v{}", val_idx)));
+
+        use hir_lower::CallBackKind;
+
+        // Build mapping from FuncRef to CollapseHint callback info
+        // CollapseHint callbacks are indexed in order in intern.callbacks
+        let mut collapse_hint_funcs: HashMap<mir::FuncRef, usize> = HashMap::new();
+        let mut collapse_hint_index = 0usize;
+        for (idx, kind) in compiled.init.intern.callbacks.iter().enumerate() {
+            if matches!(kind, CallBackKind::CollapseHint(_, _)) {
+                let func_ref = mir::FuncRef::from(idx as u32);
+                collapse_hint_funcs.insert(func_ref, collapse_hint_index);
+                collapse_hint_index += 1;
+            }
+        }
+
+        // Find Call instructions to CollapseHint callbacks and their controlling conditions
+        // Strategy: For each Call to a CollapseHint, find the block it's in,
+        // then find the branch that targets that block
+        let init_func = &compiled.init.func;
+
+        // Build map of block -> instructions containing calls to CollapseHint
+        let mut callback_blocks: HashMap<mir::Block, Vec<(mir::FuncRef, usize)>> = HashMap::new();
+        for block in init_func.layout.blocks() {
+            for inst in init_func.layout.block_insts(block) {
+                if let mir::InstructionData::Call { func_ref, .. } = init_func.dfg.insts[inst] {
+                    if let Some(&hint_idx) = collapse_hint_funcs.get(&func_ref) {
+                        callback_blocks.entry(block).or_default().push((func_ref, hint_idx));
+                    }
                 }
             }
         }
+
+        // For each block containing a CollapseHint call, find the branch that targets it
+        for block in init_func.layout.blocks() {
+            for inst in init_func.layout.block_insts(block) {
+                if let mir::InstructionData::Branch { cond, then_dst, else_dst, .. } = init_func.dfg.insts[inst] {
+                    // Check if either branch target contains a CollapseHint call
+                    // then_dst and else_dst are Block types directly
+                    for (target_block, is_true_branch) in [(then_dst, true), (else_dst, false)] {
+                        if let Some(callbacks) = callback_blocks.get(&target_block) {
+                            for &(_func_ref, hint_idx) in callbacks {
+                                // hint_idx corresponds to collapsible_pairs index
+                                let pair_idx = hint_idx as u32;
+                                let cond_idx: u32 = cond.into();
+                                // If callback is on FALSE branch, collapse = NOT(cond)
+                                // We'll handle negation in Python by checking is_true_branch
+                                // For now, store condition with a prefix indicating if it needs negation
+                                let prefix = if is_true_branch { "" } else { "!" };
+                                collapse_decision_outputs.push((pair_idx, format!("{}v{}", prefix, cond_idx)));
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // Sort by pair index for consistent ordering
+        collapse_decision_outputs.sort_by_key(|(idx, _)| *idx);
 
         // Extract parameter defaults from HIR
         // For each parameter, try to get its literal default value
