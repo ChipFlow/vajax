@@ -29,7 +29,8 @@ from jax_spice.analysis.mna import DeviceInfo
 from jax_spice.analysis.homotopy import (
     HomotopyConfig, HomotopyResult, run_homotopy_chain, gmin_stepping, source_stepping
 )
-from jax_spice.analysis.solver import NRConfig, newton_solve
+# Note: solver.py contains standalone NR solvers (newton_solve) used by tests
+# The engine uses its own nr_solve with analytic jacobians from OpenVAF
 from jax_spice.logging import logger
 from jax_spice.profiling import profile, profile_section, ProfileConfig
 
@@ -2258,19 +2259,25 @@ class CircuitEngine:
         vsource_dc_vals, isource_dc_vals = self._get_dc_source_values(n_vsources, n_isources)
 
         n_unknowns = n_nodes - 1
+        Q_prev = jnp.zeros(n_unknowns, dtype=jnp.float64)
 
-        # Check if we have the data needed for homotopy
-        if source_device_data is not None and vmapped_fns is not None and static_inputs_cache is not None:
-            # Use homotopy chain with parameterized residual function
-            # This avoids creating new closures per parameter combo (reduces recompilation)
-            residual_fn = self._make_dc_homotopy_fns(
-                source_device_data, vmapped_fns, static_inputs_cache,
-                n_unknowns, vsource_dc_vals, isource_dc_vals, noi_indices
-            )
+        # First try direct NR without homotopy (works for well-initialized circuits)
+        # Uses analytic jacobians from OpenVAF via the cached nr_solve
+        logger.info("  Trying direct NR solver first...")
+        V_new, nr_iters, is_converged, max_f, _ = nr_solve(
+            V, vsource_dc_vals, isource_dc_vals, Q_prev, 0.0  # inv_dt=0 for DC
+        )
+
+        if is_converged:
+            V = V_new
+            logger.info(f"  DC operating point converged via direct NR "
+                       f"({nr_iters} iters, residual={max_f:.2e})")
+        else:
+            # Fall back to homotopy chain using the cached NR solver
+            # This uses analytic jacobians (NOT autodiff)
+            logger.info("  Direct NR failed, trying homotopy chain...")
 
             # Configure homotopy with conservative settings
-            # Note: Ring oscillator circuits may still not converge due to
-            # metastable DC operating point - this is a known limitation
             homotopy_config = HomotopyConfig(
                 gmin=1e-12,
                 gdev_start=1e-3,   # Start from moderate GMIN
@@ -2284,69 +2291,29 @@ class CircuitEngine:
                 source_step_min=0.001,
                 source_max_steps=100,
                 chain=("gdev", "gshunt", "src"),
-                debug=0,  # Disable debug output for normal runs
-            )
-            nr_config = NRConfig(
                 max_iterations=max_iterations,
                 abstol=1e-9,
-                reltol=1e-6,
-                damping=1.0,
-                max_step=2.0,
+                debug=0,  # Disable debug output for normal runs
             )
 
-            # First try direct NR without homotopy (works for well-initialized circuits)
-            logger.info("  Trying direct NR solver first...")
-            # Create wrapper with fixed parameters for direct solve
-            def direct_res_fn(v):
-                return residual_fn(v, 1.0, 1e-12, 0.0)  # source_scale=1, gmin=base, no gshunt
-            direct_jac_fn = jax.jacfwd(direct_res_fn)
-            direct_result = newton_solve(direct_res_fn, direct_jac_fn, V, nr_config)
+            result = run_homotopy_chain(
+                nr_solve, V, vsource_dc_vals, isource_dc_vals, Q_prev, homotopy_config
+            )
 
-            if direct_result.converged:
-                V = direct_result.V
-                logger.info(f"  DC operating point converged via direct NR "
-                           f"({direct_result.iterations} iters, residual={direct_result.residual_norm:.2e})")
+            if result.converged:
+                V = result.V
+                logger.info(f"  DC operating point converged via {result.method} "
+                           f"({result.iterations} total iters, {result.homotopy_steps} homotopy steps)")
             else:
-                # Fall back to homotopy chain
-                logger.info("  Direct NR failed, trying homotopy chain...")
-                result = run_homotopy_chain(
-                    residual_fn, V, homotopy_config, nr_config
-                )
+                logger.warning(f"  Homotopy chain did not converge (method={result.method})")
+                # For oscillator circuits, accept the best solution we have
+                # The DC operating point might be metastable anyway
+                V = result.V
+                logger.info("  Using best available solution for metastable circuit")
 
-                if result.converged:
-                    V = result.V
-                    logger.info(f"  DC operating point converged via {result.method} "
-                               f"({result.iterations} total iters, {result.homotopy_steps} homotopy steps)")
-                else:
-                    logger.warning(f"  Homotopy chain did not converge (method={result.method})")
-                    # For oscillator circuits, accept the best solution we have
-                    # The DC operating point might be metastable anyway
-                    V = result.V
-                    logger.info("  Using best available solution for metastable circuit")
-        else:
-            # Fallback: use simple NR with the cached solver
-            logger.info("  Using simple NR (no homotopy data available)")
-            Q_prev = jnp.zeros(n_unknowns, dtype=jnp.float64)
-            inv_dt = 0.0
-
-            converged = False
-            for iteration in range(max_iterations):
-                V_new, nr_iters, is_converged, max_f, _ = nr_solve(V, vsource_dc_vals, isource_dc_vals, Q_prev, inv_dt)
-                if bool(is_converged):
-                    converged = True
-                    V = V_new
-                    logger.info(f"  DC converged in {iteration + 1} iterations")
-                    break
-                delta = jnp.max(jnp.abs(V_new - V))
-                V = V_new
-                if noi_indices is not None:
-                    V = V.at[noi_indices].set(0.0)
-                if float(delta) < 1e-9:
-                    converged = True
-                    break
-
-            if not converged:
-                logger.warning(f"  DC did not converge after {max_iterations} iterations")
+        # Clamp NOI nodes after DC solution
+        if noi_indices is not None:
+            V = V.at[noi_indices].set(0.0)
 
         # Log key node voltages
         n_external = self.num_nodes
@@ -2886,11 +2853,9 @@ class CircuitEngine:
         # Capture model types as static list (unrolled at trace time)
         model_types = list(static_inputs_cache.keys())
 
-        # GMIN value for device models that use $simparam("gmin")
-        gmin = 1e-12
-
         def build_system(V: jax.Array, vsource_vals: jax.Array, isource_vals: jax.Array,
-                        Q_prev: jax.Array, inv_dt: float | jax.Array
+                        Q_prev: jax.Array, inv_dt: float | jax.Array,
+                        gmin: float | jax.Array = 1e-12, gshunt: float | jax.Array = 0.0
                         ) -> Tuple[Any, jax.Array, jax.Array]:
             """Build Jacobian J and residual f from current voltages.
 
@@ -2907,6 +2872,8 @@ class CircuitEngine:
                 isource_vals: Current source values
                 Q_prev: Charges from previous timestep (shape: n_unknowns)
                 inv_dt: 1/dt for transient, 0 for DC analysis
+                gmin: GMIN conductance for device models (default 1e-12)
+                gshunt: Shunt conductance to ground for homotopy (default 0)
 
             Returns:
                 J: Jacobian matrix (dense or BCOO)
@@ -3060,6 +3027,12 @@ class CircuitEngine:
             # For transient: f = f_resist + inv_dt * (Q - Q_prev)
             f = f_resist + inv_dt * (Q - Q_prev)
 
+            # === Add GSHUNT contribution to residual ===
+            # GSHUNT is a shunt conductance to ground: I = gshunt * V
+            # V[1:] are the non-ground node voltages (ground at index 0 is excluded)
+            V_nonground = V[1:]
+            f = f + gshunt * V_nonground
+
             # === Build resistive Jacobian J_resist ===
             if j_resist_parts:
                 all_j_resist_rows = jnp.concatenate([p[0] for p in j_resist_parts])
@@ -3093,18 +3066,18 @@ class CircuitEngine:
                     all_j_vals, flat_indices, num_segments=n_unknowns * n_unknowns
                 )
                 J = J_flat.reshape((n_unknowns, n_unknowns))
-                # Add regularization (1e-9 matches sparse solver)
-                J = J + 1e-9 * jnp.eye(n_unknowns, dtype=jnp.float64)
+                # Add regularization (1e-9) + gshunt to diagonal
+                J = J + (1e-9 + gshunt) * jnp.eye(n_unknowns, dtype=jnp.float64)
             else:
                 # Sparse path - build BCOO sparse matrix
                 from jax.experimental.sparse import BCOO
 
-                # Add diagonal regularization entries
+                # Add diagonal entries: regularization (1e-3) + gshunt
                 diag_idx = jnp.arange(n_unknowns, dtype=jnp.int32)
                 all_j_rows = jnp.concatenate([all_j_rows, diag_idx])
                 all_j_cols = jnp.concatenate([all_j_cols, diag_idx])
                 # Large regularization needed for GPU spsolve (stricter than scipy)
-                all_j_vals = jnp.concatenate([all_j_vals, jnp.full(n_unknowns, 1e-3)])
+                all_j_vals = jnp.concatenate([all_j_vals, jnp.full(n_unknowns, 1e-3 + gshunt)])
 
                 # Build BCOO with duplicates (BCSR.from_bcoo handles them)
                 indices = jnp.stack([all_j_rows, all_j_cols], axis=1)
@@ -3113,135 +3086,6 @@ class CircuitEngine:
             return J, f, Q
 
         return build_system
-
-    def _make_dc_homotopy_fns(
-        self,
-        source_device_data: Dict[str, Any],
-        vmapped_fns: Dict[str, Callable],
-        static_inputs_cache: Dict[str, Tuple],
-        n_unknowns: int,
-        vsource_dc_vals: jax.Array,
-        isource_dc_vals: jax.Array,
-        noi_indices: Optional[jax.Array] = None,
-    ) -> Callable:
-        """Create parameterized residual function for DC homotopy.
-
-        Returns a single function that takes homotopy parameters as explicit
-        arguments, avoiding closure-per-parameter-combo recompilation.
-
-        Args:
-            source_device_data: Pre-computed source device stamp templates
-            vmapped_fns: Dict of vmapped OpenVAF functions per model type
-            static_inputs_cache: Dict of static inputs per model type
-            n_unknowns: Number of unknowns (n_nodes - 1)
-            vsource_dc_vals: DC voltage source values
-            isource_dc_vals: DC current source values
-            noi_indices: Optional array of NOI node indices
-
-        Returns:
-            residual_fn(V, source_scale, gmin, gshunt) -> residual
-        """
-        model_types = list(static_inputs_cache.keys())
-
-        # Pre-compute residual mask for NOI nodes
-        if noi_indices is not None and len(noi_indices) > 0:
-            noi_res_idx = noi_indices - 1  # Convert to residual indices
-        else:
-            noi_res_idx = None
-
-        def residual_fn(V: jax.Array, source_scale: float, gmin: float, gshunt: float) -> jax.Array:
-            """Compute residual f(V) for DC analysis with homotopy aids."""
-            f_parts = []
-
-            # === Source devices contribution ===
-            # Scale voltage source values by source_scale
-            if 'vsource' in source_device_data and vsource_dc_vals.size > 0:
-                d = source_device_data['vsource']
-                G = 1e12
-                Vp, Vn = V[d['node_p']], V[d['node_n']]
-                scaled_vsource = vsource_dc_vals * source_scale
-                I = G * (Vp - Vn - scaled_vsource)
-
-                f_vals = I[:, None] * d['f_signs'][None, :]
-                f_idx = d['f_indices'].ravel()
-                f_val = f_vals.ravel()
-                f_valid = f_idx >= 0
-                f_parts.append((jnp.where(f_valid, f_idx, 0), jnp.where(f_valid, f_val, 0.0)))
-
-            # Current sources (also scaled)
-            if 'isource' in source_device_data and isource_dc_vals.size > 0:
-                d = source_device_data['isource']
-                scaled_isource = isource_dc_vals * source_scale
-                f_vals = scaled_isource[:, None] * jnp.array([1.0, -1.0])[None, :]
-                f_idx = d['f_indices'].ravel()
-                f_val = f_vals.ravel()
-                f_valid = f_idx >= 0
-                f_parts.append((jnp.where(f_valid, f_idx, 0), jnp.where(f_valid, f_val, 0.0)))
-
-            # === OpenVAF devices contribution ===
-            for model_type in model_types:
-                static_inputs, voltage_indices, stamp_indices, voltage_node1, voltage_node2, cache, _ = \
-                    static_inputs_cache[model_type]
-                vmapped_fn = vmapped_fns[model_type]
-
-                voltage_updates = V[voltage_node1] - V[voltage_node2]
-                batch_inputs = static_inputs.at[:, jnp.array(voltage_indices)].set(voltage_updates)
-
-                # Update analysis_type and gmin columns if this model uses them
-                # When uses_analysis is True: analysis_type at [-2], gmin at [-1]
-                # When only uses_simparam_gmin: gmin at [-1]
-                uses_analysis = self._compiled_models.get(model_type, {}).get('uses_analysis', False)
-                uses_simparam_gmin = self._compiled_models.get(model_type, {}).get('uses_simparam_gmin', False)
-                if uses_analysis:
-                    # Set analysis_type=0 (DC) at inputs[-2], gmin at inputs[-1]
-                    batch_inputs = batch_inputs.at[:, -2].set(0.0)  # DC analysis
-                    batch_inputs = batch_inputs.at[:, -1].set(gmin)
-                elif uses_simparam_gmin:
-                    # Only gmin at inputs[-1]
-                    batch_inputs = batch_inputs.at[:, -1].set(gmin)
-
-                vmapped_eval_with_cache = vmapped_fns.get(model_type + '_with_cache')
-                if vmapped_eval_with_cache is not None and cache.size > 0:
-                    batch_res_resist, batch_res_react, _, _ = vmapped_eval_with_cache(batch_inputs, cache)
-                else:
-                    batch_res_resist, batch_res_react, _, _ = vmapped_fn(batch_inputs)
-
-                # Resistive residuals only (DC analysis)
-                res_idx = stamp_indices['res_indices']
-                flat_res_idx = res_idx.ravel()
-                flat_res_val = batch_res_resist.ravel()
-                valid_res = flat_res_idx >= 0
-                flat_res_idx_masked = jnp.where(valid_res, flat_res_idx, 0)
-                flat_res_masked = jnp.where(valid_res, flat_res_val, 0.0)
-                flat_res_masked = jnp.where(jnp.isnan(flat_res_masked), 0.0, flat_res_masked)
-                f_parts.append((flat_res_idx_masked, flat_res_masked))
-
-            # === Assemble residual vector ===
-            if f_parts:
-                all_f_idx = jnp.concatenate([p[0] for p in f_parts])
-                all_f_val = jnp.concatenate([p[1] for p in f_parts])
-                f = jax.ops.segment_sum(all_f_val, all_f_idx, num_segments=n_unknowns)
-            else:
-                f = jnp.zeros(n_unknowns, dtype=jnp.float64)
-
-            # === Add GMIN contribution (to all nodes) ===
-            # GMIN adds current gmin * V[i] to each non-ground node
-            # V[1:] are the non-ground node voltages
-            V_nonground = V[1:]
-            f = f + gmin * V_nonground
-
-            # === Add GSHUNT contribution ===
-            # GSHUNT is a shunt conductance to ground: I = gshunt * V
-            if gshunt > 0:
-                f = f + gshunt * V_nonground
-
-            # Mask NOI residuals (they have 1e40 conductance)
-            if noi_res_idx is not None:
-                f = f.at[noi_res_idx].set(0.0)
-
-            return f
-
-        return residual_fn
 
     def _make_jit_compiled_solver(
         self,
@@ -3268,7 +3112,8 @@ class CircuitEngine:
             max_step: Maximum voltage step per iteration
 
         Returns:
-            JIT-compiled function: (V, vsource_vals, isource_vals, Q_prev, inv_dt) -> (V, iters, converged, max_f, Q)
+            JIT-compiled function: (V, vsource_vals, isource_vals, Q_prev, inv_dt, gmin, gshunt) -> (V, iters, converged, max_f, Q)
+            gmin and gshunt have defaults (1e-12, 0.0) for backward compatibility with transient calls.
         """
         # Pre-compute NOI indices for O(n) masking (instead of O(n²) boolean matrix ops)
         # NOI nodes have indices in the full V vector, but residuals use 0-indexed (ground excluded)
@@ -3284,7 +3129,8 @@ class CircuitEngine:
             residual_mask = None
 
         def nr_solve(V_init: jax.Array, vsource_vals: jax.Array, isource_vals: jax.Array,
-                    Q_prev: jax.Array, inv_dt: float | jax.Array):
+                    Q_prev: jax.Array, inv_dt: float | jax.Array,
+                    gmin: float | jax.Array = 1e-12, gshunt: float | jax.Array = 0.0):
             # State: (V, iteration, converged, max_f, max_delta, Q)
             # Q is tracked to return the final charges
             # Q has shape (n_unknowns,) = (n_nodes - 1,) since ground is excluded
@@ -3307,7 +3153,8 @@ class CircuitEngine:
 
                 # Build system (J, f, Q) - calls JIT'd function
                 # Q_prev is fixed for all NR iterations within this timestep
-                J, f, Q = build_system_jit(V, vsource_vals, isource_vals, Q_prev, inv_dt)
+                # gmin/gshunt passed through for homotopy support
+                J, f, Q = build_system_jit(V, vsource_vals, isource_vals, Q_prev, inv_dt, gmin, gshunt)
 
                 # Check residual convergence
                 # Note: f already excludes ground (has shape n_unknowns = n_nodes - 1)
@@ -3411,7 +3258,8 @@ class CircuitEngine:
             residual_mask = None
 
         def nr_solve(V_init: jax.Array, vsource_vals: jax.Array, isource_vals: jax.Array,
-                    Q_prev: jax.Array, inv_dt: float | jax.Array):
+                    Q_prev: jax.Array, inv_dt: float | jax.Array,
+                    gmin: float | jax.Array = 1e-12, gshunt: float | jax.Array = 0.0):
             # Q has shape (n_unknowns,) = (n_nodes - 1,) since ground is excluded
             init_Q = jnp.zeros(n_nodes - 1, dtype=jnp.float64)
             init_state = (
@@ -3430,8 +3278,8 @@ class CircuitEngine:
             def body_fn(state):
                 V, iteration, _, _, _, _ = state
 
-                # Build sparse system (J_bcoo, f, Q)
-                J_bcoo, f, Q = build_system_jit(V, vsource_vals, isource_vals, Q_prev, inv_dt)
+                # Build sparse system (J_bcoo, f, Q) with homotopy parameters
+                J_bcoo, f, Q = build_system_jit(V, vsource_vals, isource_vals, Q_prev, inv_dt, gmin, gshunt)
 
                 # Check residual convergence
                 # Mask out NOI residuals (they have 1e40 conductance and would dominate max_f)
@@ -3542,7 +3390,8 @@ class CircuitEngine:
         logger.info(f"Created Spineax solver with cached symbolic factorization")
 
         def nr_solve(V_init: jax.Array, vsource_vals: jax.Array, isource_vals: jax.Array,
-                    Q_prev: jax.Array, inv_dt: float | jax.Array):
+                    Q_prev: jax.Array, inv_dt: float | jax.Array,
+                    gmin: float | jax.Array = 1e-12, gshunt: float | jax.Array = 0.0):
             # State: (V, iteration, converged, max_f, max_delta, Q)
             # Q is tracked to return the final charges
             init_Q = jnp.zeros(n_unknowns, dtype=jnp.float64)
@@ -3563,7 +3412,7 @@ class CircuitEngine:
                 V, iteration, _, _, _, _ = state
 
                 # Build sparse system (J_bcoo, f, Q)
-                J_bcoo, f, Q = build_system_jit(V, vsource_vals, isource_vals, Q_prev, inv_dt)
+                J_bcoo, f, Q = build_system_jit(V, vsource_vals, isource_vals, Q_prev, inv_dt, gmin, gshunt)
 
                 # Check residual convergence
                 # Mask out NOI residuals (they have 1e40 conductance and would dominate max_f)
@@ -3608,7 +3457,7 @@ class CircuitEngine:
 
             # Recompute Q from the converged voltage
             # The Q from body_fn was computed from V before the update, not V_new
-            _, _, Q_final = build_system_jit(V_final, vsource_vals, isource_vals, Q_prev, inv_dt)
+            _, _, Q_final = build_system_jit(V_final, vsource_vals, isource_vals, Q_prev, inv_dt, gmin, gshunt)
 
             return V_final, iterations, converged, max_f, Q_final
 
@@ -3808,35 +3657,12 @@ class CircuitEngine:
         # Get DC source values
         vsource_dc_vals, isource_dc_vals = self._get_dc_source_values(n_vsources, n_isources)
 
-        # Build DC system with parameterized residual function
-        residual_fn = self._make_dc_homotopy_fns(
+        # Create NR solver for AC DC operating point calculation
+        # This uses analytic jacobians from OpenVAF (no autodiff)
+        nr_solve = self._create_dense_nr_solve(
+            n_total, n_vsources, n_isources,
             source_device_data, vmapped_fns, static_inputs_cache,
-            n_unknowns, vsource_dc_vals, isource_dc_vals, None
-        )
-
-        # Compute DC operating point using homotopy
-        homotopy_config = HomotopyConfig(
-            gmin=1e-12,
-            gdev_start=1e-3,
-            gdev_target=1e-13,
-            gmin_factor=3.0,
-            gmin_factor_min=1.1,
-            gmin_factor_max=10.0,
-            gmin_max=1.0,
-            gmin_max_steps=100,
-            source_step=0.1,
-            source_step_min=0.001,
-            source_max_steps=100,
-            chain=("gdev", "gshunt", "src"),
-            debug=0,
-        )
-
-        nr_config = NRConfig(
-            max_iterations=100,
-            abstol=1e-9,
-            reltol=1e-6,
-            damping=1.0,
-            max_step=2.0,
+            device_internal_nodes
         )
 
         # Initialize V (including internal nodes)
@@ -3845,16 +3671,47 @@ class CircuitEngine:
         V_dc = jnp.full(n_total, mid_rail, dtype=jnp.float64)
         V_dc = V_dc.at[0].set(0.0)
 
-        # Run homotopy to find DC operating point
-        result = run_homotopy_chain(
-            residual_fn=residual_fn,
-            V_init=V_dc,
-            config=homotopy_config,
-            nr_config=nr_config,
+        Q_prev = jnp.zeros(n_unknowns, dtype=jnp.float64)
+
+        # First try direct NR without homotopy
+        logger.info("  AC DC: Trying direct NR solver first...")
+        V_new, nr_iters, is_converged, max_f, _ = nr_solve(
+            V_dc, vsource_dc_vals, isource_dc_vals, Q_prev, 0.0  # inv_dt=0 for DC
         )
 
-        V_dc = result.V
-        logger.info(f"DC operating point converged in {result.iterations} iterations")
+        if is_converged:
+            V_dc = V_new
+            logger.info(f"  AC DC operating point converged via direct NR "
+                       f"({nr_iters} iters, residual={max_f:.2e})")
+        else:
+            # Fall back to homotopy chain using the cached NR solver
+            logger.info("  AC DC: Direct NR failed, trying homotopy chain...")
+
+            homotopy_config = HomotopyConfig(
+                gmin=1e-12,
+                gdev_start=1e-3,
+                gdev_target=1e-13,
+                gmin_factor=3.0,
+                gmin_factor_min=1.1,
+                gmin_factor_max=10.0,
+                gmin_max=1.0,
+                gmin_max_steps=100,
+                source_step=0.1,
+                source_step_min=0.001,
+                source_max_steps=100,
+                chain=("gdev", "gshunt", "src"),
+                max_iterations=100,
+                abstol=1e-9,
+                debug=0,
+            )
+
+            result = run_homotopy_chain(
+                nr_solve, V_dc, vsource_dc_vals, isource_dc_vals, Q_prev, homotopy_config
+            )
+
+            V_dc = result.V
+            logger.info(f"  AC DC operating point: {result.method} "
+                       f"({result.iterations} iterations, converged={result.converged})")
 
         # Now extract Jr and Jc at the DC operating point
         Jr, Jc = self._extract_ac_jacobians(
