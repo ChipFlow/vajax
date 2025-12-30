@@ -718,6 +718,16 @@ BENCHMARK_SPECS = {
         jax_nodes=[1],
         xfail=False,
     ),
+    'c6288': BenchmarkSpec(
+        name='c6288',
+        dt=1e-12,          # 1ps step
+        t_stop=5e-12,      # 5ps (just a few steps for timing)
+        max_rel_error=0.10,  # 10% allowed (large PSP103 circuit)
+        vacask_nodes=['v(p0)', 'p0'],  # Product bit 0
+        jax_nodes=[1],  # TODO: find correct JAX-SPICE node index for p0
+        xfail=True,
+        xfail_reason="PSP103 hidden_state params not initialized - 0% convergence (~3 min runtime)",
+    ),
 }
 
 
@@ -769,17 +779,18 @@ def run_vacask_simulation(
             cwd=sim_dir,
             capture_output=True,
             text=True,
-            timeout=120
+            timeout=600  # 10 min timeout for large circuits like c6288
         )
 
-        # Parse the raw file (VACASK may return non-zero from postprocess scripts)
-        raw_path = sim_dir / 'tran1.raw'
-        if not raw_path.exists():
+        # Find any .raw file (analysis name varies: tran1.raw, tranmul.raw, etc.)
+        raw_files = list(sim_dir.glob('*.raw'))
+        if not raw_files:
             raise RuntimeError(
-                f"VACASK did not produce {raw_path}.\n"
+                f"VACASK did not produce any .raw file in {sim_dir}.\n"
                 f"stdout: {result.stdout[:500]}\n"
                 f"stderr: {result.stderr[:500]}"
             )
+        raw_path = raw_files[0]  # Use first .raw file found
 
         raw = rawread(str(raw_path)).get()
         time_arr = np.array(raw['time'])
@@ -796,9 +807,9 @@ def run_vacask_simulation(
         # Clean up
         if temp_sim.exists():
             temp_sim.unlink()
-        raw_path = sim_dir / 'tran1.raw'
-        if raw_path.exists():
-            raw_path.unlink()
+        # Clean up all .raw files
+        for raw_file in sim_dir.glob('*.raw'):
+            raw_file.unlink()
 
 
 def compare_waveforms(
