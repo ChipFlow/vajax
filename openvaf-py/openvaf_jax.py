@@ -89,6 +89,12 @@ class OpenVAFToJAX:
         self.init_params = list(self.init_mir_data['params'])
         self.cache_mapping = list(self.init_mir_data['cache_mapping'])
 
+        # Node collapse support
+        # collapse_decision_outputs: List of (eq_index, value_name) tuples
+        # Each tuple maps an implicit equation to the init value that decides if it collapses
+        self.collapse_decision_outputs = list(module.collapse_decision_outputs)
+        self.collapsible_pairs = list(module.collapsible_pairs)
+
     @classmethod
     def from_file(cls, va_path: str) -> "OpenVAFToJAX":
         """Create translator from a Verilog-A file
@@ -243,6 +249,9 @@ class OpenVAFToJAX:
             'cache_size': len(self.cache_mapping),
             'cache_mapping': self.cache_mapping,
             'param_defaults': param_defaults,
+            # Node collapse support
+            'collapsible_pairs': self.collapsible_pairs,
+            'collapse_decision_outputs': self.collapse_decision_outputs,
         }
 
         return local_ns['init_fn'], metadata
@@ -402,7 +411,25 @@ class OpenVAFToJAX:
         else:
             lines.append("    cache = jnp.array([])")
 
-        lines.append("    return cache")
+        # Build collapse decision array from collapse_decision_outputs
+        # Each entry is a boolean indicating if that collapsible pair should collapse
+        lines.append("")
+        lines.append("    # Build collapse decision array")
+        collapse_vals = []
+        for eq_idx, val_name in self.collapse_decision_outputs:
+            if val_name in init_defined:
+                # Convert boolean to float for array compatibility
+                collapse_vals.append(f"jnp.float32({val_name})")
+            else:
+                # Value not computed - default to False (no collapse)
+                collapse_vals.append("0.0")
+
+        if collapse_vals:
+            lines.append(f"    collapse_decisions = jnp.array([{', '.join(collapse_vals)}])")
+        else:
+            lines.append("    collapse_decisions = jnp.array([])")
+
+        lines.append("    return cache, collapse_decisions")
         return lines
 
     def _generate_eval_code_with_cache(self) -> List[str]:

@@ -133,6 +133,10 @@ struct VaModule {
     /// Number of collapsible pairs
     #[pyo3(get)]
     num_collapsible: usize,
+    /// Collapse decision outputs: (eq_index, value_name)
+    /// Maps equation indices to the init function output values that control collapse
+    #[pyo3(get)]
+    collapse_decision_outputs: Vec<(u32, String)>,
 
     // Parameter defaults support
     /// Default values for parameters (extracted from Verilog-A source)
@@ -1162,6 +1166,25 @@ fn compile_va(path: &str, allow_analog_in_cond: bool, allow_builtin_primitives: 
             .collect();
         let num_collapsible = collapsible_pairs.len();
 
+        // Extract collapse decision outputs from init function
+        // These are the boolean values that determine which pairs actually collapse at runtime
+        // Format: Vec<(pair_index, value_name)> where value_name is like "v123"
+        let mut collapse_decision_outputs: Vec<(u32, String)> = Vec::new();
+        for (&kind, val) in compiled.init.intern.outputs.iter() {
+            if let PlaceKind::CollapseImplicitEquation(eq) = kind {
+                if let Some(val) = val.expand() {
+                    // Find which pair index this corresponds to
+                    // The eq is an ImplicitEquation that maps to a SimUnknown in node_collapse.pairs()
+                    // We need to match it against the pairs we extracted
+                    let eq_idx: u32 = eq.into();
+                    // For now, store the equation index and value name
+                    // The pair matching will be done in openvaf_jax.py
+                    let val_idx: u32 = val.into();
+                    collapse_decision_outputs.push((eq_idx, format!("v{}", val_idx)));
+                }
+            }
+        }
+
         // Extract parameter defaults from HIR
         // For each parameter, try to get its literal default value
         let mut param_defaults = HashMap::new();
@@ -1368,6 +1391,7 @@ fn compile_va(path: &str, allow_analog_in_cond: bool, allow_builtin_primitives: 
             // Node collapse support
             collapsible_pairs,
             num_collapsible,
+            collapse_decision_outputs,
             // Parameter defaults support
             param_defaults,
             // String constant values

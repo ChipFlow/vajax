@@ -619,18 +619,19 @@ class CircuitEngine:
 
     def _prepare_static_inputs(self, model_type: str, openvaf_devices: List[Dict],
                                 device_internal_nodes: Dict[str, Dict[str, int]],
-                                ground: int) -> Tuple[jax.Array, List[int], List[Dict], jax.Array]:
+                                ground: int) -> Tuple[jax.Array, List[int], List[Dict], jax.Array, jax.Array]:
         """Prepare static (non-voltage) inputs for all devices once.
 
         This is called once per simulation and caches the static parameter values.
         Only voltage parameters need to be updated each NR iteration.
 
         Returns:
-            (static_inputs, voltage_indices, device_contexts, cache) where:
+            (static_inputs, voltage_indices, device_contexts, cache, collapse_decisions) where:
             - static_inputs is shape (num_devices, num_params) JAX array with static params
             - voltage_indices is list of param indices that are voltages
             - device_contexts is list of dicts with node_map, voltage_node_pairs for fast update
             - cache is shape (num_devices, cache_size) JAX array with init-computed values
+            - collapse_decisions is shape (num_devices, num_collapsible) JAX array with collapse booleans
         """
         compiled = self._compiled_models.get(model_type)
         if not compiled:
@@ -838,14 +839,17 @@ class CircuitEngine:
         if init_to_eval is not None and vmapped_init is not None:
             # Extract init inputs: shape (n_devices, n_init_params)
             init_inputs = static_inputs[:, init_to_eval]
-            # Compute cache: shape (n_devices, cache_size)
-            cache = vmapped_init(init_inputs)
+            # Compute cache and collapse decisions
+            # init_fn returns (cache, collapse_decisions) tuple
+            cache, collapse_decisions = vmapped_init(init_inputs)
             logger.debug(f"Computed cache for {model_type}: shape={cache.shape}")
+            logger.debug(f"Collapse decisions for {model_type}: shape={collapse_decisions.shape}")
         else:
             # Fallback for models without init function (e.g., resistor)
             cache = jnp.empty((n_devices, 0), dtype=jnp.float64)
+            collapse_decisions = jnp.empty((n_devices, 0), dtype=jnp.float32)
 
-        return static_inputs, voltage_indices, device_contexts, cache
+        return static_inputs, voltage_indices, device_contexts, cache, collapse_decisions
 
     def _build_stamp_index_mapping(
         self,
@@ -958,7 +962,7 @@ class CircuitEngine:
             if model_type not in static_inputs_cache:
                 continue
 
-            _, _, stamp_indices, _, _ = static_inputs_cache[model_type]
+            _, _, stamp_indices, _, _, _, _ = static_inputs_cache[model_type]
             jac_row_idx = stamp_indices['jac_row_indices']  # (n_devices, n_jac_entries)
             jac_col_idx = stamp_indices['jac_col_indices']
 
@@ -1822,7 +1826,7 @@ class CircuitEngine:
                 compiled = self._compiled_models.get(model_type)
                 if compiled and 'vmapped_fn' in compiled:
                     vmapped_fns[model_type] = compiled['vmapped_fn']
-                    static_inputs, voltage_indices, device_contexts, cache = self._prepare_static_inputs(
+                    static_inputs, voltage_indices, device_contexts, cache, collapse_decisions = self._prepare_static_inputs(
                         model_type, openvaf_by_type[model_type], device_internal_nodes, ground
                     )
                     # Pre-compute stamp index mapping (once per model type)
@@ -1849,7 +1853,7 @@ class CircuitEngine:
                         static_inputs = jnp.array(static_inputs, dtype=jnp.float64)
                         cache = jnp.array(cache, dtype=jnp.float64)
                     static_inputs_cache[model_type] = (
-                        static_inputs, voltage_indices, stamp_indices, voltage_node1, voltage_node2, cache
+                        static_inputs, voltage_indices, stamp_indices, voltage_node1, voltage_node2, cache, collapse_decisions
                     )
                     n_devs = len(openvaf_by_type[model_type])
                     logger.info(f"Prepared {model_type}: {n_devs} devices, cache_size={cache.shape[1]}")
@@ -2933,7 +2937,7 @@ class CircuitEngine:
             # === OpenVAF devices contribution (unrolled at trace time) ===
             # Devices return 4 arrays: (res_resist, res_react, jac_resist, jac_react)
             for model_type in model_types:
-                static_inputs, voltage_indices, stamp_indices, voltage_node1, voltage_node2, cache = \
+                static_inputs, voltage_indices, stamp_indices, voltage_node1, voltage_node2, cache, _ = \
                     static_inputs_cache[model_type]
                 vmapped_fn = vmapped_fns[model_type]
 
@@ -3157,7 +3161,7 @@ class CircuitEngine:
 
                 # === OpenVAF devices contribution ===
                 for model_type in model_types:
-                    static_inputs, voltage_indices, stamp_indices, voltage_node1, voltage_node2, cache = \
+                    static_inputs, voltage_indices, stamp_indices, voltage_node1, voltage_node2, cache, _ = \
                         static_inputs_cache[model_type]
                     vmapped_fn = vmapped_fns[model_type]
 
@@ -3758,7 +3762,7 @@ class CircuitEngine:
             compiled = self._compiled_models.get(model_type)
             if compiled and 'vmapped_fn' in compiled:
                 vmapped_fns[model_type] = compiled['vmapped_fn']
-                static_inputs, voltage_indices, device_contexts, cache = self._prepare_static_inputs(
+                static_inputs, voltage_indices, device_contexts, cache, collapse_decisions = self._prepare_static_inputs(
                     model_type, openvaf_by_type[model_type], device_internal_nodes, ground
                 )
                 stamp_indices = self._build_stamp_index_mapping(
@@ -3775,7 +3779,7 @@ class CircuitEngine:
                 static_inputs = jnp.array(static_inputs, dtype=jnp.float64)
                 cache = jnp.array(cache, dtype=jnp.float64)
                 static_inputs_cache[model_type] = (
-                    static_inputs, voltage_indices, stamp_indices, voltage_node1, voltage_node2, cache
+                    static_inputs, voltage_indices, stamp_indices, voltage_node1, voltage_node2, cache, collapse_decisions
                 )
 
         # Count sources
@@ -3911,7 +3915,7 @@ class CircuitEngine:
 
         # === OpenVAF device contributions ===
         for model_type in model_types:
-            static_inputs, voltage_indices, stamp_indices, voltage_node1, voltage_node2, cache = \
+            static_inputs, voltage_indices, stamp_indices, voltage_node1, voltage_node2, cache, _ = \
                 static_inputs_cache[model_type]
             vmapped_fn = vmapped_fns[model_type]
 
