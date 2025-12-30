@@ -162,10 +162,9 @@ jobs:
         run: |
           echo "Running JAX-SPICE vs VACASK comparison..."
           # Run comparison script - it handles VACASK availability gracefully
-          # Note: c6288 is excluded because JIT compilation takes >10min on CPU
-          # For c6288, use GPU via: scripts/profile_gpu_cloudrun.py --benchmark c6288
+          # c6288 uses sparse solver automatically (10k devices)
           uv run python scripts/compare_vacask.py \
-            --benchmark rc,graetz,ring \
+            --benchmark rc,graetz,ring,c6288 \
             --max-steps 200 \
             --use-scan 2>&1 | tee /tmp/benchmark-comparison.log || true
 
