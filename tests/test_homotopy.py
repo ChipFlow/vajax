@@ -19,8 +19,7 @@ from jax_spice.analysis.homotopy import (
 )
 from jax_spice.analysis.solver import NRConfig
 
-# Enable 64-bit precision
-jax.config.update("jax_enable_x64", True)
+# Precision is auto-configured by jax_spice import based on backend capabilities
 
 
 class TestHomotopyConfig:

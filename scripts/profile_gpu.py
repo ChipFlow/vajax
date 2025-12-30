@@ -43,10 +43,8 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 
-# Enable float64
-jax.config.update('jax_enable_x64', True)
-
-
+# Import jax_spice first to auto-configure precision based on backend
+# (Metal/TPU use f32, CPU/CUDA use f64)
 from jax_spice.analysis import CircuitEngine
 from jax_spice.logging import enable_performance_logging, logger
 from scripts.benchmark_utils import BenchmarkResult, get_vacask_benchmarks

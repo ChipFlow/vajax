@@ -28,11 +28,8 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 # Force CPU backend
 os.environ['JAX_PLATFORMS'] = 'cpu'
 
-import jax
-
-# Enable float64
-jax.config.update('jax_enable_x64', True)
-
+# Import jax_spice first to auto-configure precision based on backend
+# (Metal/TPU use f32, CPU/CUDA use f64)
 from jax_spice.analysis import CircuitEngine
 from scripts.benchmark_utils import BenchmarkResult, get_vacask_benchmarks, log
 

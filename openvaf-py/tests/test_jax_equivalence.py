@@ -21,8 +21,13 @@ from jax import config
 import openvaf_py
 from openvaf_jax import OpenVAFToJAX
 
-# Ensure 64-bit precision for accurate comparisons
-config.update("jax_enable_x64", True)
+# Import jax_spice to auto-configure precision based on backend capabilities
+# This ensures Metal/TPU backends use f32 while CPU/CUDA use f64
+try:
+    import jax_spice  # noqa: F401
+except ImportError:
+    # Fallback if jax_spice not installed - enable x64 for CPU/CUDA
+    config.update("jax_enable_x64", True)
 
 # Base directories
 OPENVAF_DIR = Path(__file__).parent.parent / "vendor" / "OpenVAF"

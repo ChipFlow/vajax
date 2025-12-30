@@ -208,7 +208,10 @@ JAX_PLATFORMS=cpu uv run pytest tests/test_vacask_suite.py -v
 
 - **macOS**: Metal GPU backend doesn't support `triangular_solve`, automatically falls back to CPU
 - **Linux + CUDA**: CUDA libraries are auto-preloaded for GPU detection
-- **Float64**: Enabled by default for numerical precision (`jax_enable_x64=True`)
+- **Precision**: Auto-configured based on backend:
+  - CPU/CUDA: Float64 enabled for numerical precision
+  - Metal/TPU: Float32 (backends don't support float64 natively)
+  - Use `jax_spice.configure_precision(force_x64=True/False)` to override
 
 ## Documentation
 

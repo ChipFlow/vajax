@@ -10,10 +10,9 @@ from pathlib import Path
 # Add parent to path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-import jax
-jax.config.update("jax_enable_x64", True)
-
 import jax.numpy as jnp
+
+# Import jax_spice first to auto-configure precision based on backend
 from jax_spice.analysis import CircuitEngine
 
 

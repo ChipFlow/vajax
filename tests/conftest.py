@@ -69,11 +69,9 @@ def pytest_configure(config):
     # Enable jaxtyping runtime checking (must be before jax_spice imports)
     _setup_jaxtyping()
 
-    # Import JAX and configure it
-    import jax
-
-    # Enable float64 for numerical precision in tests
-    jax.config.update('jax_enable_x64', True)
+    # Import jax_spice to auto-configure precision based on backend
+    # This will detect Metal/TPU and disable x64 if needed
+    import jax_spice  # noqa: F401
 
 
 # =============================================================================

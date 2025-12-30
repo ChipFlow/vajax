@@ -25,10 +25,7 @@ from pathlib import Path
 
 sys.path.insert(0, ".")
 
-import jax
-
-jax.config.update("jax_enable_x64", True)
-
+# Import jax_spice first to auto-configure precision based on backend
 from jax_spice.analysis import CircuitEngine
 
 

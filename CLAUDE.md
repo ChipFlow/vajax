@@ -100,7 +100,25 @@ uv run python scripts/profile_gpu.py --benchmark ring,c6288
 
 ```
 
-Note: `jax_enable_x64` is set automatically on import via `jax_spice/__init__.py`.
+## Precision Configuration
+
+Precision is auto-configured on import via `jax_spice/__init__.py`:
+- **CPU/CUDA**: Float64 enabled (`jax_enable_x64=True`) for numerical accuracy
+- **Metal/TPU**: Float32 (`jax_enable_x64=False`) since these backends don't support float64 natively
+
+To check or override precision:
+```python
+import jax_spice
+
+# Check current settings
+info = jax_spice.get_precision_info()
+print(f"x64 enabled: {info['x64_enabled']}, backend: {info['backend']}")
+
+# Force specific precision (after import, before computation)
+jax_spice.configure_precision(force_x64=True)   # Force float64
+jax_spice.configure_precision(force_x64=False)  # Force float32
+jax_spice.configure_precision()                  # Auto-detect again
+```
 
 ## Key Architecture
 

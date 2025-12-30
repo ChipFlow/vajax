@@ -25,9 +25,7 @@ from pathlib import Path
 # Ensure jax-spice is importable
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-import jax
-jax.config.update('jax_enable_x64', True)
-
+# Import jax_spice first to auto-configure precision based on backend
 from jax_spice.analysis import CircuitEngine
 from jax_spice.analysis.debug import (
     trace_param,

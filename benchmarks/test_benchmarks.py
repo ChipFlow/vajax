@@ -12,9 +12,7 @@ from typing import List, Tuple
 import pytest
 import numpy as np
 
-import jax
-jax.config.update('jax_enable_x64', True)
-
+# Precision is auto-configured by jax_spice import based on backend capabilities
 from jax_spice.analysis import CircuitEngine
 
 

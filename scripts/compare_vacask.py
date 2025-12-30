@@ -53,8 +53,8 @@ os.environ.setdefault('XLA_PYTHON_CLIENT_ALLOCATOR', 'platform')
 import jax
 import jax.numpy as jnp
 
-# Enable float64
-jax.config.update('jax_enable_x64', True)
+# Precision is auto-configured by jax_spice import (imported above via logging)
+# Metal/TPU use f32, CPU/CUDA use f64
 
 from jax_spice.analysis import CircuitEngine
 from jax_spice.profiling import enable_profiling, ProfileConfig
