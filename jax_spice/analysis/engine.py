@@ -621,16 +621,20 @@ class CircuitEngine:
             log(f"  {model_type}: done ({len(module.param_names)} params, {len(module.nodes)} nodes)")
 
     def _compute_early_collapse_decisions(self):
-        """Compute collapse decisions for all devices using OpenVAF init_fn.
+        """Compute collapse decisions for all devices using OpenVAF vmapped_init.
 
         This is called early (before _setup_internal_nodes) to determine which
         node pairs should collapse for each device. Uses OpenVAF's generic
         collapse mechanism instead of model-specific code.
 
+        Uses batched (vmapped) computation for efficiency - O(1) JAX calls
+        instead of O(n_devices) calls.
+
         Stores results in self._device_collapse_decisions: Dict[device_name, List[Tuple[int, int]]]
         where each tuple is (node1_idx, node2_idx) that should be collapsed.
         """
         import jax.numpy as jnp
+        import numpy as np
 
         self._device_collapse_decisions: Dict[str, List[Tuple[int, int]]] = {}
 
@@ -646,8 +650,11 @@ class CircuitEngine:
             if not compiled:
                 continue
 
+            # Prefer vmapped_init for batched computation (much faster for large circuits)
+            vmapped_init = compiled.get('vmapped_init')
             init_fn = compiled.get('init_fn')
-            if init_fn is None:
+
+            if vmapped_init is None and init_fn is None:
                 # No init function - use all collapsible pairs
                 collapsible_pairs = compiled.get('collapsible_pairs', [])
                 for dev in devs:
@@ -659,53 +666,73 @@ class CircuitEngine:
             init_param_defaults = compiled.get('init_param_defaults', {})
             n_init_params = len(init_param_names)
             collapsible_pairs = compiled.get('collapsible_pairs', [])
+            n_collapsible = len(collapsible_pairs)
 
-            if n_init_params == 0:
-                # No init params - collapse decisions are constant
-                # Call init_fn once to get the decisions
-                try:
-                    _, collapse_decisions = init_fn(jnp.array([]))
-                    # Convert collapse decisions to pairs
-                    for dev in devs:
+            if n_init_params == 0 or n_collapsible == 0:
+                # No init params or no collapsible pairs - collapse decisions are constant
+                if init_fn is not None and n_collapsible > 0:
+                    try:
+                        _, collapse_decisions = init_fn(jnp.array([]))
+                        # Convert collapse decisions to pairs (same for all devices)
                         pairs = []
                         for i, (n1, n2) in enumerate(collapsible_pairs):
                             if i < len(collapse_decisions) and float(collapse_decisions[i]) > 0.5:
                                 pairs.append((n1, n2))
-                        self._device_collapse_decisions[dev['name']] = pairs
-                except Exception as e:
-                    logger.warning(f"Error computing collapse decisions for {model_type}: {e}")
-                    for dev in devs:
-                        self._device_collapse_decisions[dev['name']] = list(collapsible_pairs)
+                        for dev in devs:
+                            self._device_collapse_decisions[dev['name']] = pairs
+                        continue
+                    except Exception as e:
+                        logger.warning(f"Error computing collapse decisions for {model_type}: {e}")
+                # Fallback: use all collapsible pairs
+                for dev in devs:
+                    self._device_collapse_decisions[dev['name']] = list(collapsible_pairs)
                 continue
 
-            # Process each device individually
-            for dev in devs:
-                device_params = dev.get('params', {})
+            # Build batched init inputs array using numpy (fast)
+            n_devices = len(devs)
+            all_init_inputs = np.zeros((n_devices, n_init_params), dtype=np.float64)
 
-                # Build init input array
-                init_inputs = []
-                for pname in init_param_names:
+            for dev_idx, dev in enumerate(devs):
+                device_params = dev.get('params', {})
+                for param_idx, pname in enumerate(init_param_names):
                     pname_lower = pname.lower()
                     if pname_lower in device_params:
-                        init_inputs.append(float(device_params[pname_lower]))
+                        all_init_inputs[dev_idx, param_idx] = float(device_params[pname_lower])
                     elif pname_lower in init_param_defaults:
-                        init_inputs.append(float(init_param_defaults[pname_lower]))
-                    else:
-                        init_inputs.append(0.0)
+                        all_init_inputs[dev_idx, param_idx] = float(init_param_defaults[pname_lower])
+                    # else: stays 0.0
 
-                try:
-                    # Call init_fn to get collapse decisions
-                    _, collapse_decisions = init_fn(jnp.array(init_inputs))
+            try:
+                # Single batched call for ALL devices (O(1) JAX calls instead of O(n_devices))
+                logger.info(f"Computing collapse decisions for {model_type} ({n_devices} devices)...")
+                if vmapped_init is not None:
+                    _, all_collapse_decisions = vmapped_init(jnp.array(all_init_inputs))
+                else:
+                    # Fallback to unbatched if vmapped not available (shouldn't happen)
+                    logger.warning(f"vmapped_init not available for {model_type}, using slow path")
+                    all_collapse_decisions = []
+                    for dev_idx in range(n_devices):
+                        _, collapse_decisions = init_fn(jnp.array(all_init_inputs[dev_idx]))
+                        all_collapse_decisions.append(collapse_decisions)
+                    all_collapse_decisions = jnp.stack(all_collapse_decisions)
 
-                    # Convert collapse decisions to pairs
+                logger.info(f"Computed collapse decisions for {model_type}: shape={all_collapse_decisions.shape}")
+
+                # Convert to numpy for fast iteration
+                all_collapse_np = np.asarray(all_collapse_decisions)
+
+                # Extract per-device collapse pairs
+                for dev_idx, dev in enumerate(devs):
                     pairs = []
                     for i, (n1, n2) in enumerate(collapsible_pairs):
-                        if i < len(collapse_decisions) and float(collapse_decisions[i]) > 0.5:
+                        if i < all_collapse_np.shape[1] and all_collapse_np[dev_idx, i] > 0.5:
                             pairs.append((n1, n2))
                     self._device_collapse_decisions[dev['name']] = pairs
-                except Exception as e:
-                    logger.warning(f"Error computing collapse for device {dev['name']}: {e}")
-                    # Fallback: use all collapsible pairs
+
+            except Exception as e:
+                logger.warning(f"Error computing batched collapse for {model_type}: {e}")
+                # Fallback: use all collapsible pairs
+                for dev in devs:
                     self._device_collapse_decisions[dev['name']] = list(collapsible_pairs)
 
         logger.debug(f"Computed collapse decisions for {len(self._device_collapse_decisions)} devices")
