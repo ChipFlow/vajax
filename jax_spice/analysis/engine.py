@@ -3689,10 +3689,23 @@ class CircuitEngine:
 
         # Create NR solver for AC DC operating point calculation
         # This uses analytic jacobians from OpenVAF (no autodiff)
-        nr_solve = self._create_dense_nr_solve(
-            n_total, n_vsources, n_isources,
-            source_device_data, vmapped_fns, static_inputs_cache,
-            device_internal_nodes
+        # AC analysis uses dense solver (simpler circuits typically)
+        build_system_fn = self._make_gpu_resident_build_system_fn(
+            source_device_data, vmapped_fns, static_inputs_cache, n_unknowns, use_dense=True
+        )
+        build_system_jit = jax.jit(build_system_fn)
+
+        # Collect NOI node indices (PSP103 noise correlation internal node)
+        noi_indices = []
+        if device_internal_nodes:
+            for dev_name, internal_nodes in device_internal_nodes.items():
+                if 'node4' in internal_nodes:  # NOI is node4 in PSP103
+                    noi_indices.append(internal_nodes['node4'])
+        noi_indices = jnp.array(noi_indices, dtype=jnp.int32) if noi_indices else None
+
+        nr_solve = self._make_jit_compiled_solver(
+            build_system_jit, n_total, noi_indices=noi_indices,
+            max_iterations=MAX_NR_ITERATIONS, abstol=DEFAULT_ABSTOL, max_step=1.0
         )
 
         # Initialize V (including internal nodes)
