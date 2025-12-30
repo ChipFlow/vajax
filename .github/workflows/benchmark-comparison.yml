@@ -10,8 +10,10 @@ on:
 env:
   CARGO_TERM_COLOR: always
   CARGO_INCREMENTAL: 0
-  SCCACHE_GHA_ENABLED: "true"
-  RUSTC_WRAPPER: "sccache"
+  # Disabled sccache due to ongoing GitHub artifact cache issues (Dec 2025)
+  # See: https://www.githubstatus.com/
+  # SCCACHE_GHA_ENABLED: "true"
+  # RUSTC_WRAPPER: "sccache"
 
 jobs:
   benchmark-comparison:
@@ -45,8 +47,9 @@ jobs:
       - name: Set up Rust
         uses: dtolnay/rust-toolchain@stable
 
-      - name: Set up sccache
-        uses: mozilla-actions/sccache-action@v0.0.7
+      # sccache disabled due to GitHub artifact cache issues
+      # - name: Set up sccache
+      #   uses: mozilla-actions/sccache-action@v0.0.7
 
       - name: Cache Rust dependencies
         uses: Swatinem/rust-cache@v2
@@ -121,8 +124,6 @@ jobs:
           cmake .. \
             -G Ninja \
             -DCMAKE_BUILD_TYPE=Release \
-            -DCMAKE_C_COMPILER_LAUNCHER=sccache \
-            -DCMAKE_CXX_COMPILER_LAUNCHER=sccache \
             -DBoost_NO_SYSTEM_PATHS=TRUE \
             -DBoost_INCLUDE_DIR=/tmp/boost_1_88_0 \
             -DCMAKE_PREFIX_PATH="/tmp/boost_1_88_0/stage/lib/cmake" \
