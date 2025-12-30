@@ -627,8 +627,9 @@ class CircuitEngine:
         node pairs should collapse for each device. Uses OpenVAF's generic
         collapse mechanism instead of model-specific code.
 
-        Uses batched (vmapped) computation for efficiency - O(1) JAX calls
-        instead of O(n_devices) calls.
+        OPTIMIZATION: Groups devices by unique parameter combinations and computes
+        collapse decisions once per unique combo. For c6288, this reduces from
+        ~10k evaluations to just 2 (one for pmos, one for nmos).
 
         Stores results in self._device_collapse_decisions: Dict[device_name, List[Tuple[int, int]]]
         where each tuple is (node1_idx, node2_idx) that should be collapsed.
@@ -650,11 +651,9 @@ class CircuitEngine:
             if not compiled:
                 continue
 
-            # Prefer vmapped_init for batched computation (much faster for large circuits)
-            vmapped_init = compiled.get('vmapped_init')
             init_fn = compiled.get('init_fn')
 
-            if vmapped_init is None and init_fn is None:
+            if init_fn is None:
                 # No init function - use all collapsible pairs
                 collapsible_pairs = compiled.get('collapsible_pairs', [])
                 for dev in devs:
@@ -688,52 +687,55 @@ class CircuitEngine:
                     self._device_collapse_decisions[dev['name']] = list(collapsible_pairs)
                 continue
 
-            # Build batched init inputs array using numpy (fast)
-            n_devices = len(devs)
-            all_init_inputs = np.zeros((n_devices, n_init_params), dtype=np.float64)
-
-            for dev_idx, dev in enumerate(devs):
+            # OPTIMIZATION: Group devices by unique parameter combinations
+            # For c6288, this reduces 10k evaluations to just 2 (pmos, nmos)
+            def get_param_key(dev: Dict) -> Tuple:
+                """Build hashable key from device parameters."""
                 device_params = dev.get('params', {})
-                for param_idx, pname in enumerate(init_param_names):
+                values = []
+                for pname in init_param_names:
                     pname_lower = pname.lower()
                     if pname_lower in device_params:
-                        all_init_inputs[dev_idx, param_idx] = float(device_params[pname_lower])
+                        values.append(float(device_params[pname_lower]))
                     elif pname_lower in init_param_defaults:
-                        all_init_inputs[dev_idx, param_idx] = float(init_param_defaults[pname_lower])
-                    # else: stays 0.0
+                        values.append(float(init_param_defaults[pname_lower]))
+                    else:
+                        values.append(0.0)
+                return tuple(values)
 
-            try:
-                # Single batched call for ALL devices (O(1) JAX calls instead of O(n_devices))
-                logger.info(f"Computing collapse decisions for {model_type} ({n_devices} devices)...")
-                if vmapped_init is not None:
-                    _, all_collapse_decisions = vmapped_init(jnp.array(all_init_inputs))
-                else:
-                    # Fallback to unbatched if vmapped not available (shouldn't happen)
-                    logger.warning(f"vmapped_init not available for {model_type}, using slow path")
-                    all_collapse_decisions = []
-                    for dev_idx in range(n_devices):
-                        _, collapse_decisions = init_fn(jnp.array(all_init_inputs[dev_idx]))
-                        all_collapse_decisions.append(collapse_decisions)
-                    all_collapse_decisions = jnp.stack(all_collapse_decisions)
+            # Group devices by unique parameter combinations
+            unique_params: Dict[Tuple, List[Dict]] = {}
+            for dev in devs:
+                key = get_param_key(dev)
+                unique_params.setdefault(key, []).append(dev)
 
-                logger.info(f"Computed collapse decisions for {model_type}: shape={all_collapse_decisions.shape}")
+            n_unique = len(unique_params)
+            logger.info(f"Computing collapse decisions for {model_type}: "
+                       f"{len(devs)} devices, {n_unique} unique param combos")
 
-                # Convert to numpy for fast iteration
-                all_collapse_np = np.asarray(all_collapse_decisions)
+            # Compute collapse decisions for each unique parameter combination
+            for param_key, param_devs in unique_params.items():
+                try:
+                    # Single init_fn call for this parameter combination
+                    init_inputs = jnp.array(param_key, dtype=jnp.float64)
+                    _, collapse_decisions = init_fn(init_inputs)
 
-                # Extract per-device collapse pairs
-                for dev_idx, dev in enumerate(devs):
+                    # Convert to pairs
                     pairs = []
+                    collapse_np = np.asarray(collapse_decisions)
                     for i, (n1, n2) in enumerate(collapsible_pairs):
-                        if i < all_collapse_np.shape[1] and all_collapse_np[dev_idx, i] > 0.5:
+                        if i < len(collapse_np) and collapse_np[i] > 0.5:
                             pairs.append((n1, n2))
-                    self._device_collapse_decisions[dev['name']] = pairs
 
-            except Exception as e:
-                logger.warning(f"Error computing batched collapse for {model_type}: {e}")
-                # Fallback: use all collapsible pairs
-                for dev in devs:
-                    self._device_collapse_decisions[dev['name']] = list(collapsible_pairs)
+                    # Apply to all devices with this parameter combination
+                    for dev in param_devs:
+                        self._device_collapse_decisions[dev['name']] = pairs
+
+                except Exception as e:
+                    logger.warning(f"Error computing collapse for {model_type} params {param_key[:3]}...: {e}")
+                    # Fallback: use all collapsible pairs for these devices
+                    for dev in param_devs:
+                        self._device_collapse_decisions[dev['name']] = list(collapsible_pairs)
 
         logger.debug(f"Computed collapse decisions for {len(self._device_collapse_decisions)} devices")
 
