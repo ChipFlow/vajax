@@ -12,22 +12,18 @@ The default homotopy chain is: gdev -> gshunt -> src
 Reference: VACASK lib/hmtpgmin.cpp and lib/hmtpsrc.cpp
 
 Note on interface design:
-The residual function uses explicit parameters (V, source_scale, gmin, gshunt)
-rather than closure factories (build_residual_fn(params) -> residual_fn(V)).
-This avoids creating a new closure for each parameter combination, which
-would cause JAX to retrace/recompile for each unique closure.
+The homotopy functions take the cached nr_solve function directly, which
+uses analytic jacobians from OpenVAF. This avoids jax.jacfwd() autodiff
+and benefits from JIT compilation and warmup of the transient solver.
 """
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
-from typing import Callable, Tuple, Optional
+from dataclasses import dataclass
+from typing import Callable, Tuple
 
-import jax
 import jax.numpy as jnp
 from jax import Array
-
-from jax_spice.analysis.solver import NRConfig, NRResult, newton_solve
 
 
 @dataclass
@@ -58,6 +54,10 @@ class HomotopyConfig:
     # Homotopy chain (default: gdev -> gshunt -> src)
     chain: Tuple[str, ...] = ("gdev", "gshunt", "src")
 
+    # NR config
+    max_iterations: int = 100
+    abstol: float = 1e-9
+
     # Debug level (0=silent, 1=progress, 2=verbose)
     debug: int = 0
 
@@ -82,25 +82,29 @@ def _debug_print(config: HomotopyConfig, level: int, msg: str) -> None:
 
 
 def gmin_stepping(
-    residual_fn: Callable[[Array, float, float, float], Array],
+    nr_solve: Callable,
     V_init: Array,
+    vsource_vals: Array,
+    isource_vals: Array,
+    Q_prev: Array,
     source_scale: float,
     config: HomotopyConfig,
-    nr_config: NRConfig,
     mode: str = "gdev",
 ) -> HomotopyResult:
-    """VACASK-style adaptive GMIN stepping.
+    """VACASK-style adaptive GMIN stepping using cached NR solver.
 
     This algorithm gradually reduces GMIN from a high starting value
     down to the target, with adaptive step adjustment based on
     convergence behavior.
 
     Args:
-        residual_fn: Function (V, source_scale, gmin, gshunt) -> residual
+        nr_solve: Cached NR solver function with analytic jacobians
         V_init: Initial voltage guess
+        vsource_vals: DC voltage source values (unscaled)
+        isource_vals: DC current source values (unscaled)
+        Q_prev: Previous charges (zeros for DC)
         source_scale: Fixed source scaling factor for this stepping
         config: Homotopy configuration
-        nr_config: Newton-Raphson configuration
         mode: "gdev" (device GMIN) or "gshunt" (shunt to ground)
 
     Returns:
@@ -119,63 +123,50 @@ def gmin_stepping(
 
     _debug_print(config, 1, f"Homotopy: Starting {mode} stepping from {at_gmin:.2e}")
 
+    # Scale sources by source_scale
+    scaled_vsource = vsource_vals * source_scale
+    scaled_isource = isource_vals * source_scale
+
     for step in range(config.gmin_max_steps):
         homotopy_steps += 1
 
-        # Build residual/jacobian with current gmin
-        # Convert to Python float to ensure compatibility with type-checked functions
+        # Set gmin/gshunt based on mode
         if mode == "gdev":
-            effective_gmin = float(config.gmin + at_gmin)
+            effective_gmin = config.gmin + at_gmin
             gshunt = 0.0
         else:  # gshunt mode
-            effective_gmin = float(config.gmin)
-            gshunt = float(at_gmin)
+            effective_gmin = config.gmin
+            gshunt = at_gmin
 
         _debug_print(config, 2, f"  [step {step}] gmin={effective_gmin:.2e}, gshunt={gshunt:.2e}")
 
-        # Create wrapper with fixed parameters for this step
-        # Use default arg capture to avoid late binding issues
-        def res_fn(v, ss=source_scale, gm=effective_gmin, gs=gshunt):
-            return residual_fn(v, ss, gm, gs)
-        jac_fn = jax.jacfwd(res_fn)
+        # Run NR solver with analytic jacobians
+        V_new, iters, converged, max_f, _ = nr_solve(
+            V, scaled_vsource, scaled_isource, Q_prev, 0.0, effective_gmin, gshunt
+        )
+        total_iterations += int(iters)
 
-        # Run NR solver
-        _debug_print(config, 2, f"  [step {step}] Running NR solver...")
-        result = newton_solve(res_fn, jac_fn, V, nr_config)
-        _debug_print(config, 2, f"  [step {step}] NR solver returned")
-        total_iterations += result.iterations
-
-        if result.converged:
+        if converged:
             continuation = True
-            V_good = result.V
+            V_good = V_new
             good_gmin = at_gmin
 
             _debug_print(
                 config,
                 1,
                 f"Homotopy: {mode}={at_gmin:.2e}, step {homotopy_steps} "
-                f"converged in {result.iterations} iterations",
+                f"converged in {iters} iterations",
             )
-            # Show voltage solution summary at high debug level
-            if config.debug >= 2:
-                import jax.numpy as jnp
-                V_min = float(jnp.min(result.V))
-                V_max = float(jnp.max(result.V))
-                V_mean = float(jnp.mean(result.V))
-                print(f"    V: min={V_min:.4f}, max={V_max:.4f}, mean={V_mean:.4f}", flush=True)
 
             if at_gmin <= target_gmin:
                 # Success - reached target
                 _debug_print(config, 1, f"Homotopy: {mode} stepping succeeded")
                 break
 
-            # Adaptive factor adjustment - more conservative than VACASK
-            # Don't increase factor on fast convergence for difficult circuits
-            if result.iterations <= nr_config.max_iterations // 4:
-                # Converging quickly - keep factor unchanged (conservative)
-                pass
-            elif result.iterations > nr_config.max_iterations * 3 // 4:
-                # Converging slowly - decrease step size
+            # Adaptive factor adjustment
+            if iters <= config.max_iterations // 4:
+                pass  # Keep factor unchanged
+            elif iters > config.max_iterations * 3 // 4:
                 factor = max(jnp.sqrt(factor), config.gmin_factor_min)
 
             # Update gmin
@@ -185,13 +176,13 @@ def gmin_stepping(
             else:
                 at_gmin = at_gmin / factor
 
-            V = result.V  # Use as initial guess for next step
+            V = V_new  # Use as initial guess for next step
         else:
             _debug_print(
                 config,
                 1,
                 f"Homotopy: {mode}={at_gmin:.2e}, step {homotopy_steps} "
-                f"failed to converge in {result.iterations} iterations",
+                f"failed to converge in {iters} iterations",
             )
 
             if not continuation:
@@ -216,25 +207,24 @@ def gmin_stepping(
                 V = V_good
                 at_gmin = good_gmin
 
-    # Final solve at original gmin (VACASK hmtpgmin.cpp lines 157-172)
+    # Final solve at original gmin
     if continuation:
-        def final_res_fn(v, ss=source_scale, gm=float(config.gmin), gs=0.0):
-            return residual_fn(v, ss, gm, gs)
-        final_jac_fn = jax.jacfwd(final_res_fn)
-        result = newton_solve(final_res_fn, final_jac_fn, V_good, nr_config)
-        total_iterations += result.iterations
+        V_final, iters, converged, _, _ = nr_solve(
+            V_good, scaled_vsource, scaled_isource, Q_prev, 0.0, config.gmin, 0.0
+        )
+        total_iterations += int(iters)
         homotopy_steps += 1
 
         _debug_print(
             config,
             1,
             f"Homotopy: {mode} final step "
-            f"{'converged' if result.converged else 'failed'} in {result.iterations} iterations",
+            f"{'converged' if converged else 'failed'} in {iters} iterations",
         )
 
         return HomotopyResult(
-            converged=result.converged,
-            V=result.V if result.converged else V_good,
+            converged=bool(converged),
+            V=V_final if converged else V_good,
             method=f"{mode}_stepping",
             iterations=total_iterations,
             homotopy_steps=homotopy_steps,
@@ -252,10 +242,12 @@ def gmin_stepping(
 
 
 def source_stepping(
-    residual_fn: Callable[[Array, float, float, float], Array],
+    nr_solve: Callable,
     V_init: Array,
+    vsource_vals: Array,
+    isource_vals: Array,
+    Q_prev: Array,
     config: HomotopyConfig,
-    nr_config: NRConfig,
 ) -> HomotopyResult:
     """VACASK-style adaptive source stepping with GMIN fallback.
 
@@ -264,10 +256,12 @@ def source_stepping(
     GMIN stepping first.
 
     Args:
-        residual_fn: Function (V, source_scale, gmin, gshunt) -> residual
+        nr_solve: Cached NR solver function with analytic jacobians
         V_init: Initial voltage guess
+        vsource_vals: DC voltage source values (unscaled)
+        isource_vals: DC current source values (unscaled)
+        Q_prev: Previous charges (zeros for DC)
         config: Homotopy configuration
-        nr_config: Newton-Raphson configuration
 
     Returns:
         HomotopyResult with final voltage and convergence info
@@ -281,31 +275,34 @@ def source_stepping(
 
     _debug_print(config, 1, "Homotopy: Starting source stepping")
 
-    # Initial solve at source_factor=0 (VACASK hmtpsrc.cpp lines 64-69)
-    def init_res_fn(v, ss=0.0, gm=float(config.gmin), gs=0.0):
-        return residual_fn(v, ss, gm, gs)
-    init_jac_fn = jax.jacfwd(init_res_fn)
-    result = newton_solve(init_res_fn, init_jac_fn, V, nr_config)
-    total_iterations += result.iterations
+    # Initial solve at source_factor=0
+    zero_vsource = vsource_vals * 0.0
+    zero_isource = isource_vals * 0.0
+    V_new, iters, converged, _, _ = nr_solve(
+        V, zero_vsource, zero_isource, Q_prev, 0.0, config.gmin, 0.0
+    )
+    total_iterations += int(iters)
     homotopy_steps += 1
 
     _debug_print(
         config,
         1,
         f"Homotopy: srcfact=0.00, initial solve "
-        f"{'converged' if result.converged else 'failed'} in {result.iterations} iterations",
+        f"{'converged' if converged else 'failed'} in {iters} iterations",
     )
 
-    if not result.converged:
-        # Fallback to GMIN stepping at source_factor=0 (VACASK hmtpsrc.cpp lines 71-88)
+    if not converged:
+        # Fallback to GMIN stepping at source_factor=0
         _debug_print(config, 1, "Homotopy: Trying gdev stepping at source_factor=0")
 
         gmin_result = gmin_stepping(
-            residual_fn,
+            nr_solve,
             V,
-            source_scale=0.0,  # Fixed at 0 for GMIN stepping fallback
+            vsource_vals,
+            isource_vals,
+            Q_prev,
+            source_scale=0.0,
             config=config,
-            nr_config=nr_config,
             mode="gdev",
         )
         total_iterations += gmin_result.iterations
@@ -314,11 +311,13 @@ def source_stepping(
         if not gmin_result.converged:
             _debug_print(config, 1, "Homotopy: Trying gshunt stepping at source_factor=0")
             gmin_result = gmin_stepping(
-                residual_fn,
+                nr_solve,
                 V,
+                vsource_vals,
+                isource_vals,
+                Q_prev,
                 source_scale=0.0,
                 config=config,
-                nr_config=nr_config,
                 mode="gshunt",
             )
             total_iterations += gmin_result.iterations
@@ -335,33 +334,31 @@ def source_stepping(
                 final_source_scale=0.0,
             )
 
-        result = gmin_result
-        V_good = result.V
-
+        V_good = gmin_result.V
     else:
-        V_good = result.V
+        V_good = V_new
 
-    # Source stepping loop (VACASK hmtpsrc.cpp lines 99-164)
+    # Source stepping loop
     for step in range(config.source_max_steps):
         new_factor = min(good_factor + raise_step, 1.0)
 
-        # Create wrapper with fixed parameters for this step
-        def step_res_fn(v, ss=float(new_factor), gm=float(config.gmin), gs=0.0):
-            return residual_fn(v, ss, gm, gs)
-        step_jac_fn = jax.jacfwd(step_res_fn)
-        result = newton_solve(step_res_fn, step_jac_fn, V_good, nr_config)
-        total_iterations += result.iterations
+        scaled_vsource = vsource_vals * new_factor
+        scaled_isource = isource_vals * new_factor
+        V_new, iters, converged, _, _ = nr_solve(
+            V_good, scaled_vsource, scaled_isource, Q_prev, 0.0, config.gmin, 0.0
+        )
+        total_iterations += int(iters)
         homotopy_steps += 1
 
-        if result.converged:
-            V_good = result.V
+        if converged:
+            V_good = V_new
             good_factor = new_factor
 
             _debug_print(
                 config,
                 1,
                 f"Homotopy: srcfact={new_factor:.2f}, step {homotopy_steps} "
-                f"converged in {result.iterations} iterations",
+                f"converged in {iters} iterations",
             )
 
             if good_factor >= 1.0:
@@ -376,17 +373,17 @@ def source_stepping(
                     final_source_scale=1.0,
                 )
 
-            # Adaptive step adjustment (VACASK hmtpsrc.cpp lines 135-144)
-            if result.iterations <= nr_config.max_iterations // 4:
+            # Adaptive step adjustment
+            if iters <= config.max_iterations // 4:
                 raise_step *= config.source_scale
-            elif result.iterations > nr_config.max_iterations * 3 // 4:
+            elif iters > config.max_iterations * 3 // 4:
                 raise_step = max(raise_step / config.source_scale, config.source_step_min)
         else:
             _debug_print(
                 config,
                 1,
                 f"Homotopy: srcfact={new_factor:.2f}, step {homotopy_steps} "
-                f"failed to converge in {result.iterations} iterations",
+                f"failed to converge in {iters} iterations",
             )
 
             # Not converged, reduce step and retry
@@ -406,20 +403,24 @@ def source_stepping(
 
 
 def run_homotopy_chain(
-    residual_fn: Callable[[Array, float, float, float], Array],
+    nr_solve: Callable,
     V_init: Array,
+    vsource_vals: Array,
+    isource_vals: Array,
+    Q_prev: Array,
     config: HomotopyConfig,
-    nr_config: NRConfig,
 ) -> HomotopyResult:
     """Run VACASK-style homotopy chain: gdev -> gshunt -> src.
 
     Tries each algorithm in sequence until one succeeds.
 
     Args:
-        residual_fn: Function (V, source_scale, gmin, gshunt) -> residual
+        nr_solve: Cached NR solver function with analytic jacobians
         V_init: Initial voltage guess
+        vsource_vals: DC voltage source values (unscaled)
+        isource_vals: DC current source values (unscaled)
+        Q_prev: Previous charges (zeros for DC)
         config: Homotopy configuration
-        nr_config: Newton-Raphson configuration
 
     Returns:
         HomotopyResult with final voltage and convergence info
@@ -435,28 +436,34 @@ def run_homotopy_chain(
 
         if algorithm == "gdev":
             result = gmin_stepping(
-                residual_fn,
+                nr_solve,
                 V,
+                vsource_vals,
+                isource_vals,
+                Q_prev,
                 source_scale=1.0,  # Full sources for GMIN-only stepping
                 config=config,
-                nr_config=nr_config,
                 mode="gdev",
             )
         elif algorithm == "gshunt":
             result = gmin_stepping(
-                residual_fn,
+                nr_solve,
                 V,
+                vsource_vals,
+                isource_vals,
+                Q_prev,
                 source_scale=1.0,  # Full sources for GSHUNT-only stepping
                 config=config,
-                nr_config=nr_config,
                 mode="gshunt",
             )
         elif algorithm == "src":
             result = source_stepping(
-                residual_fn,
+                nr_solve,
                 V,
+                vsource_vals,
+                isource_vals,
+                Q_prev,
                 config,
-                nr_config,
             )
         else:
             _debug_print(config, 1, f"Homotopy: Unknown algorithm '{algorithm}', skipping")

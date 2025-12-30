@@ -9,6 +9,7 @@ from __future__ import annotations
 import jax
 import jax.numpy as jnp
 import pytest
+from jax import lax
 
 from jax_spice.analysis.homotopy import (
     HomotopyConfig,
@@ -17,9 +18,66 @@ from jax_spice.analysis.homotopy import (
     source_stepping,
     run_homotopy_chain,
 )
-from jax_spice.analysis.solver import NRConfig
 
 # Precision is auto-configured by jax_spice import based on backend capabilities
+
+
+def create_mock_nr_solve(residual_fn_factory, max_iterations=50, abstol=1e-10):
+    """Create a mock nr_solve function for testing.
+
+    Args:
+        residual_fn_factory: Function (gmin, gshunt) -> residual_fn
+                            where residual_fn(V) -> residual vector
+        max_iterations: Max NR iterations
+        abstol: Convergence tolerance
+
+    Returns:
+        A function with signature:
+        nr_solve(V_init, vsource_vals, isource_vals, Q_prev, inv_dt, gmin, gshunt)
+            -> (V, iters, converged, max_f, Q)
+    """
+    def nr_solve(V_init, vsource_vals, isource_vals, Q_prev, inv_dt, gmin=1e-12, gshunt=0.0):
+        # Build residual function with current gmin/gshunt
+        res_fn = residual_fn_factory(gmin, gshunt)
+        jac_fn = jax.jacfwd(res_fn)
+
+        # Simple NR loop
+        def cond_fn(state):
+            V, iteration, converged, max_f = state
+            return jnp.logical_and(~converged, iteration < max_iterations)
+
+        def body_fn(state):
+            V, iteration, _, _ = state
+
+            f = res_fn(V)
+            max_f = jnp.max(jnp.abs(f))
+
+            # Check convergence
+            converged = max_f < abstol
+
+            # Compute Jacobian and solve
+            J_full = jac_fn(V)
+            J = J_full[:, 1:]  # Non-ground columns only
+
+            # Add regularization
+            reg = 1e-14 * jnp.eye(J.shape[0], dtype=J.dtype)
+            J_reg = J + reg
+
+            # Solve: J * delta = -f
+            delta = jax.scipy.linalg.solve(J_reg, -f)
+
+            # Update V (ground stays 0)
+            V_new = V.at[1:].add(delta)
+
+            return (V_new, iteration + 1, converged, max_f)
+
+        init_state = (V_init, 0, jnp.array(False), jnp.array(jnp.inf))
+        V_final, iters, converged, max_f = lax.while_loop(cond_fn, body_fn, init_state)
+
+        Q = jnp.zeros(len(V_init) - 1)  # Dummy Q
+        return V_final, iters, converged, max_f, Q
+
+    return nr_solve
 
 
 class TestHomotopyConfig:
@@ -94,52 +152,43 @@ class TestSimpleCircuits:
         g1 = 1.0 / r1
         g2 = 1.0 / r2
 
-        # 2 nodes: ground (0), node1 (1)
-        # V includes ground, residual excludes ground
-        n_nodes = 2
-
-        def build_residual_fn(gmin: float, gshunt: float):
+        def residual_fn_factory(gmin, gshunt):
             """Build residual function for the resistor divider."""
-
             def residual_fn(V):
-                # V is the full voltage vector [V0, V1] where V0=0 (ground)
                 V1 = V[1]
-
-                # KCL at node 1:
-                # Current from VDD through R1: (VDD - V1) * G1 = G1*VDD - G1*V1
-                # Current to GND through R2: -V1 * G2
-                # GMIN contribution: gmin * V1
-                # GSHUNT contribution: gshunt * V1
+                # KCL at node 1
                 f1 = g1 * (vdd - V1) - g2 * V1 + gmin * V1 + gshunt * V1
-
                 return jnp.array([f1])
-
             return residual_fn
 
-        def build_jacobian_fn(gmin: float, gshunt: float):
-            """Build Jacobian function for the resistor divider."""
-            # Returns shape (n-1, n) = (1, 2)
-            return jax.jacfwd(build_residual_fn(gmin, gshunt))
+        # Create mock nr_solve
+        nr_solve = create_mock_nr_solve(residual_fn_factory)
 
         # Initial guess: V[0]=0 (ground), V[1]=0
         V_init = jnp.array([0.0, 0.0])
+        vsource_vals = jnp.array([vdd])  # Not used by our mock
+        isource_vals = jnp.array([])
+        Q_prev = jnp.zeros(1)
 
         # Config
         config = HomotopyConfig(
             gmin=1e-12,
             gdev_start=1e-3,
             gdev_target=1e-13,
+            max_iterations=50,
+            abstol=1e-10,
             debug=0,
         )
-        nr_config = NRConfig(max_iterations=50, abstol=1e-10, reltol=1e-6)
 
         # Run GMIN stepping
         result = gmin_stepping(
-            build_residual_fn,
-            build_jacobian_fn,
+            nr_solve,
             V_init,
-            config,
-            nr_config,
+            vsource_vals,
+            isource_vals,
+            Q_prev,
+            source_scale=1.0,
+            config=config,
             mode="gdev",
         )
 
@@ -156,45 +205,77 @@ class TestSimpleCircuits:
         Expected: V1 = VDD at source_scale=1.0
         """
         vdd = 1.2
-        n_nodes = 2
 
-        def build_residual_fn(source_scale: float, gmin: float, gshunt: float):
+        def residual_fn_factory(gmin, gshunt):
             """Build residual function with source scaling."""
-
             def residual_fn(V):
                 V1 = V[1]
-
-                # KCL at node 1 (VDD node):
-                # Voltage source enforces V1 = VDD * source_scale
-                # We use a large conductance to enforce this
+                # Note: source scaling is handled by the homotopy algorithm
+                # scaling vsource_vals, not inside the residual
                 G_source = 1e12
-                scaled_vdd = vdd * source_scale
-                f1 = G_source * (V1 - scaled_vdd) + gmin * V1 + gshunt * V1
-
+                f1 = G_source * (V1 - vdd) + gmin * V1 + gshunt * V1
                 return jnp.array([f1])
-
             return residual_fn
 
-        def build_jacobian_fn(source_scale: float, gmin: float, gshunt: float):
-            """Build Jacobian function."""
-            return jax.jacfwd(build_residual_fn(source_scale, gmin, gshunt))
+        # For source stepping, we need a residual that uses vsource_vals
+        def create_source_stepping_nr_solve():
+            def nr_solve(V_init, vsource_vals, isource_vals, Q_prev, inv_dt, gmin=1e-12, gshunt=0.0):
+                # Use the first vsource value as VDD (already scaled by homotopy)
+                scaled_vdd = vsource_vals[0] if len(vsource_vals) > 0 else vdd
+
+                def res_fn(V):
+                    V1 = V[1]
+                    G_source = 1e12
+                    f1 = G_source * (V1 - scaled_vdd) + gmin * V1 + gshunt * V1
+                    return jnp.array([f1])
+
+                jac_fn = jax.jacfwd(res_fn)
+
+                def cond_fn(state):
+                    V, iteration, converged, max_f = state
+                    return jnp.logical_and(~converged, iteration < 50)
+
+                def body_fn(state):
+                    V, iteration, _, _ = state
+                    f = res_fn(V)
+                    max_f = jnp.max(jnp.abs(f))
+                    converged = max_f < 1e-10
+                    J_full = jac_fn(V)
+                    J = J_full[:, 1:]
+                    reg = 1e-14 * jnp.eye(J.shape[0], dtype=J.dtype)
+                    delta = jax.scipy.linalg.solve(J + reg, -f)
+                    V_new = V.at[1:].add(delta)
+                    return (V_new, iteration + 1, converged, max_f)
+
+                init_state = (V_init, 0, jnp.array(False), jnp.array(jnp.inf))
+                V_final, iters, converged, max_f = lax.while_loop(cond_fn, body_fn, init_state)
+                Q = jnp.zeros(len(V_init) - 1)
+                return V_final, iters, converged, max_f, Q
+            return nr_solve
+
+        nr_solve = create_source_stepping_nr_solve()
 
         # V[0]=0 (ground), V[1]=initial
         V_init = jnp.array([0.0, 0.0])
+        vsource_vals = jnp.array([vdd])  # Full VDD, will be scaled by homotopy
+        isource_vals = jnp.array([])
+        Q_prev = jnp.zeros(1)
 
         config = HomotopyConfig(
             gmin=1e-12,
-            source_step=0.2,  # Start with larger steps
+            source_step=0.2,
+            max_iterations=50,
+            abstol=1e-10,
             debug=0,
         )
-        nr_config = NRConfig(max_iterations=50, abstol=1e-10, reltol=1e-6)
 
         result = source_stepping(
-            build_residual_fn,
-            build_jacobian_fn,
+            nr_solve,
             V_init,
+            vsource_vals,
+            isource_vals,
+            Q_prev,
             config,
-            nr_config,
         )
 
         assert result.converged, f"Source stepping should converge, got: {result}"
@@ -206,35 +287,57 @@ class TestSimpleCircuits:
     def test_homotopy_chain_simple_circuit(self):
         """Test the full homotopy chain with a simple circuit."""
         vdd = 1.2
-        n_nodes = 2
 
-        def build_residual_fn(source_scale: float, gmin: float, gshunt: float):
-            def residual_fn(V):
-                V1 = V[1]
+        def create_chain_nr_solve():
+            def nr_solve(V_init, vsource_vals, isource_vals, Q_prev, inv_dt, gmin=1e-12, gshunt=0.0):
+                scaled_vdd = vsource_vals[0] if len(vsource_vals) > 0 else vdd
 
-                G_source = 1e12
-                scaled_vdd = vdd * source_scale
-                f1 = G_source * (V1 - scaled_vdd) + gmin * V1 + gshunt * V1
+                def res_fn(V):
+                    V1 = V[1]
+                    G_source = 1e12
+                    f1 = G_source * (V1 - scaled_vdd) + gmin * V1 + gshunt * V1
+                    return jnp.array([f1])
 
-                return jnp.array([f1])
+                jac_fn = jax.jacfwd(res_fn)
 
-            return residual_fn
+                def cond_fn(state):
+                    V, iteration, converged, max_f = state
+                    return jnp.logical_and(~converged, iteration < 50)
 
-        def build_jacobian_fn(source_scale: float, gmin: float, gshunt: float):
-            return jax.jacfwd(build_residual_fn(source_scale, gmin, gshunt))
+                def body_fn(state):
+                    V, iteration, _, _ = state
+                    f = res_fn(V)
+                    max_f = jnp.max(jnp.abs(f))
+                    converged = max_f < 1e-10
+                    J_full = jac_fn(V)
+                    J = J_full[:, 1:]
+                    reg = 1e-14 * jnp.eye(J.shape[0], dtype=J.dtype)
+                    delta = jax.scipy.linalg.solve(J + reg, -f)
+                    V_new = V.at[1:].add(delta)
+                    return (V_new, iteration + 1, converged, max_f)
 
-        # V[0]=0 (ground), V[1]=initial
+                init_state = (V_init, 0, jnp.array(False), jnp.array(jnp.inf))
+                V_final, iters, converged, max_f = lax.while_loop(cond_fn, body_fn, init_state)
+                Q = jnp.zeros(len(V_init) - 1)
+                return V_final, iters, converged, max_f, Q
+            return nr_solve
+
+        nr_solve = create_chain_nr_solve()
+
         V_init = jnp.array([0.0, 0.0])
+        vsource_vals = jnp.array([vdd])
+        isource_vals = jnp.array([])
+        Q_prev = jnp.zeros(1)
 
-        config = HomotopyConfig(debug=0)
-        nr_config = NRConfig(max_iterations=50, abstol=1e-10, reltol=1e-6)
+        config = HomotopyConfig(max_iterations=50, abstol=1e-10, debug=0)
 
         result = run_homotopy_chain(
-            build_residual_fn,
-            build_jacobian_fn,
+            nr_solve,
             V_init,
+            vsource_vals,
+            isource_vals,
+            Q_prev,
             config,
-            nr_config,
         )
 
         assert result.converged, f"Homotopy chain should converge, got: {result}"
@@ -250,52 +353,65 @@ class TestDifficultCircuits:
         This simulates a MOSFET-like behavior where at V=0, the device
         has very low conductance (transistor off), causing convergence issues.
         """
-        # Parameters
         vdd = 1.2
-        r_load = 1000.0  # Load resistor
+        r_load = 1000.0
         g_load = 1.0 / r_load
-        n_nodes = 2
-
-        # MOSFET-like I-V: I = 0 for V < Vth, I = k*(V-Vth)^2 for V > Vth
         vth = 0.4
-        k = 1e-3  # transconductance
+        k = 1e-3
 
         def mosfet_current(V_gs):
-            """Simplified MOSFET current."""
             return jnp.where(V_gs > vth, k * (V_gs - vth) ** 2, 0.0)
 
-        def build_residual_fn(source_scale: float, gmin: float, gshunt: float):
-            def residual_fn(V):
-                V1 = V[1]  # Output node
-                scaled_vdd = vdd * source_scale
+        def create_mosfet_nr_solve():
+            def nr_solve(V_init, vsource_vals, isource_vals, Q_prev, inv_dt, gmin=1e-12, gshunt=0.0):
+                scaled_vdd = vsource_vals[0] if len(vsource_vals) > 0 else vdd
 
-                # KCL at output node:
-                # Current from VDD through load: (VDD - V1) * g_load
-                # Current through MOSFET (drain): I_ds (flows out)
-                # Assuming gate is at VDD, V_gs = VDD
-                I_ds = mosfet_current(scaled_vdd)
+                def res_fn(V):
+                    V1 = V[1]
+                    I_ds = mosfet_current(scaled_vdd)
+                    f1 = g_load * (scaled_vdd - V1) - I_ds + gmin * V1 + gshunt * V1
+                    return jnp.array([f1])
 
-                f1 = g_load * (scaled_vdd - V1) - I_ds + gmin * V1 + gshunt * V1
+                jac_fn = jax.jacfwd(res_fn)
 
-                return jnp.array([f1])
+                def cond_fn(state):
+                    V, iteration, converged, max_f = state
+                    return jnp.logical_and(~converged, iteration < 50)
 
-            return residual_fn
+                def body_fn(state):
+                    V, iteration, _, _ = state
+                    f = res_fn(V)
+                    max_f = jnp.max(jnp.abs(f))
+                    converged = max_f < 1e-10
+                    J_full = jac_fn(V)
+                    J = J_full[:, 1:]
+                    reg = 1e-14 * jnp.eye(J.shape[0], dtype=J.dtype)
+                    delta = jax.scipy.linalg.solve(J + reg, -f)
+                    V_new = V.at[1:].add(delta)
+                    return (V_new, iteration + 1, converged, max_f)
 
-        def build_jacobian_fn(source_scale: float, gmin: float, gshunt: float):
-            return jax.jacfwd(build_residual_fn(source_scale, gmin, gshunt))
+                init_state = (V_init, 0, jnp.array(False), jnp.array(jnp.inf))
+                V_final, iters, converged, max_f = lax.while_loop(cond_fn, body_fn, init_state)
+                Q = jnp.zeros(len(V_init) - 1)
+                return V_final, iters, converged, max_f, Q
+            return nr_solve
 
-        # V[0]=0 (ground), V[1]=initial
+        nr_solve = create_mosfet_nr_solve()
+
         V_init = jnp.array([0.0, 0.0])
+        vsource_vals = jnp.array([vdd])
+        isource_vals = jnp.array([])
+        Q_prev = jnp.zeros(1)
 
-        config = HomotopyConfig(debug=0)
-        nr_config = NRConfig(max_iterations=50, abstol=1e-10, reltol=1e-6)
+        config = HomotopyConfig(max_iterations=50, abstol=1e-10, debug=0)
 
         result = run_homotopy_chain(
-            build_residual_fn,
-            build_jacobian_fn,
+            nr_solve,
             V_init,
+            vsource_vals,
+            isource_vals,
+            Q_prev,
             config,
-            nr_config,
         )
 
         assert result.converged, f"Homotopy chain should handle near-singular case: {result}"
@@ -306,16 +422,11 @@ class TestAdaptiveStepAdjustment:
 
     def test_gmin_factor_increases_on_fast_convergence(self):
         """Verify factor increases when convergence is fast."""
-        # This is implicitly tested by the other tests - convergence
-        # behavior is observed in the debug output when debug=1
-
         config = HomotopyConfig(
             gmin_factor=10.0,
             gmin_factor_max=100.0,
             debug=0,
         )
-
-        # Just verify the config values are correct
         assert config.gmin_factor_max > config.gmin_factor
 
     def test_source_step_scales_adaptively(self):
@@ -326,8 +437,6 @@ class TestAdaptiveStepAdjustment:
             source_step_min=0.001,
             debug=0,
         )
-
-        # Just verify the config values are correct
         assert config.source_scale > 1.0
 
 
