@@ -671,7 +671,10 @@ class CircuitEngine:
                 # No init params or no collapsible pairs - collapse decisions are constant
                 if init_fn is not None and n_collapsible > 0:
                     try:
-                        _, collapse_decisions = init_fn(jnp.array([]))
+                        # Force CPU execution to avoid GPU JIT overhead for tiny computation
+                        cpu_device = jax.devices('cpu')[0]
+                        with jax.default_device(cpu_device):
+                            _, collapse_decisions = init_fn(jnp.array([]))
                         # Convert collapse decisions to pairs (same for all devices)
                         pairs = []
                         for i, (n1, n2) in enumerate(collapsible_pairs):
@@ -714,11 +717,14 @@ class CircuitEngine:
                        f"{len(devs)} devices, {n_unique} unique param combos")
 
             # Compute collapse decisions for each unique parameter combination
+            # Force CPU execution to avoid GPU JIT overhead for small computations
+            cpu_device = jax.devices('cpu')[0]
             for param_key, param_devs in unique_params.items():
                 try:
                     # Single init_fn call for this parameter combination
-                    init_inputs = jnp.array(param_key, dtype=jnp.float64)
-                    _, collapse_decisions = init_fn(init_inputs)
+                    with jax.default_device(cpu_device):
+                        init_inputs = jnp.array(param_key, dtype=jnp.float64)
+                        _, collapse_decisions = init_fn(init_inputs)
 
                     # Convert to pairs
                     pairs = []
@@ -963,9 +969,12 @@ class CircuitEngine:
             init_inputs = static_inputs[:, init_to_eval]
             # Compute cache and collapse decisions
             # init_fn returns (cache, collapse_decisions) tuple
-            # NOTE: First call triggers JIT compilation, which can be slow for large circuits
+            # Force CPU execution to avoid GPU JIT overhead - this is a one-time setup cost
+            # and the computation itself is small compared to the JIT compilation overhead on GPU
             logger.info(f"Computing init cache for {model_type} ({n_devices} devices)...")
-            cache, collapse_decisions = vmapped_init(init_inputs)
+            cpu_device = jax.devices('cpu')[0]
+            with jax.default_device(cpu_device):
+                cache, collapse_decisions = vmapped_init(init_inputs)
             logger.info(f"Init cache computed for {model_type}: shape={cache.shape}")
             logger.debug(f"Collapse decisions for {model_type}: shape={collapse_decisions.shape}")
         else:

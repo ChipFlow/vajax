@@ -29,10 +29,10 @@ import argparse
 import os
 import subprocess
 
-# Enable jax_spice performance logging with perf_counter timestamps
-# This helps correlate log messages with Perfetto trace timestamps
+# Enable jax_spice performance logging with memory stats and perf_counter timestamps
+# This helps track memory usage and correlate log messages with Perfetto trace timestamps
 from jax_spice.logging import enable_performance_logging
-enable_performance_logging(with_memory=False, with_perf_counter=True)
+enable_performance_logging(with_memory=True, with_perf_counter=True)
 import sys
 import time
 import re
