@@ -2037,15 +2037,17 @@ class CircuitEngine:
             self._cached_build_system = build_system_jit
             logger.info(f"Cached {'dense' if use_dense else 'sparse'} NR solver")
 
-            # JIT warmup: run one throwaway iteration to trigger all compilation
-            # This compiles vmapped_fn, build_system_jit, and nr_solve in one pass
-            V_warmup = jnp.zeros(n_nodes, dtype=jnp.float64)
-            vsource_warmup = jnp.zeros(n_vsources, dtype=jnp.float64)
-            isource_warmup = jnp.zeros(n_isources, dtype=jnp.float64)
-            Q_warmup = jnp.zeros(n_unknowns, dtype=jnp.float64)
-            _warmup_result = nr_solve(V_warmup, vsource_warmup, isource_warmup, Q_warmup, 1.0)
-            _warmup_result[0].block_until_ready()
-            logger.info("JIT warmup complete")
+            # Note: No explicit warmup needed - JIT compilation happens on first real use
+            # (DC operating point solve or first transient step)
+
+        # Early return for setup-only calls (t_stop=0 from _run_transient_while_loop)
+        # Setup cache and NR solver are now cached, no need to run DC or transient
+        if t_stop <= 0.0:
+            return TransientResult(
+                times=jnp.array([0.0]),
+                voltages={name: jnp.zeros((1,)) for name in self.node_names},
+                stats={'setup_only': True},
+            )
 
         # Compute initial condition based on icmode
         icmode = self.analysis_params.get('icmode', 'op')
