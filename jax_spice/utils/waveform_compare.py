@@ -80,8 +80,13 @@ def find_vacask_binary() -> Optional[Path]:
             return path
 
     # Check common locations
+    # __file__ is jax_spice/utils/waveform_compare.py
+    # .parent.parent.parent gets to jax-spice root
+    project_root = Path(__file__).parent.parent.parent
     search_paths = [
-        Path(__file__).parent.parent.parent.parent / "vendor/VACASK/build/simulator/vacask",
+        project_root / "vendor/VACASK/build/simulator/vacask",
+        project_root / "vendor/VACASK/build.VACASK/Release/simulator/vacask",
+        project_root / "vendor/VACASK/build.VACASK/Debug/simulator/vacask",
         Path.home() / "bin/vacask",
         Path("/usr/local/bin/vacask"),
     ]
