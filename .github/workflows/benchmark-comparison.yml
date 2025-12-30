@@ -10,10 +10,6 @@ on:
 env:
   CARGO_TERM_COLOR: always
   CARGO_INCREMENTAL: 0
-  # Disabled sccache due to ongoing GitHub artifact cache issues (Dec 2025)
-  # See: https://www.githubstatus.com/
-  # SCCACHE_GHA_ENABLED: "true"
-  # RUSTC_WRAPPER: "sccache"
 
 jobs:
   benchmark-comparison:
@@ -31,6 +27,7 @@ jobs:
             cmake ninja-build \
             flex bison libfl-dev \
             libsuitesparse-dev \
+            ccache \
             bc
 
       - name: Install LLVM 18
@@ -47,9 +44,19 @@ jobs:
       - name: Set up Rust
         uses: dtolnay/rust-toolchain@stable
 
-      # sccache disabled due to GitHub artifact cache issues
-      # - name: Set up sccache
-      #   uses: mozilla-actions/sccache-action@v0.0.7
+      - name: Cache ccache
+        uses: actions/cache@v4
+        with:
+          path: ~/.ccache
+          key: ccache-${{ runner.os }}-${{ github.sha }}
+          restore-keys: |
+            ccache-${{ runner.os }}-
+
+      - name: Configure ccache
+        run: |
+          ccache --set-config=max_size=500M
+          ccache --set-config=compression=true
+          ccache -z  # Zero stats
 
       - name: Cache Rust dependencies
         uses: Swatinem/rust-cache@v2
@@ -124,6 +131,8 @@ jobs:
           cmake .. \
             -G Ninja \
             -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_C_COMPILER_LAUNCHER=ccache \
+            -DCMAKE_CXX_COMPILER_LAUNCHER=ccache \
             -DBoost_NO_SYSTEM_PATHS=TRUE \
             -DBoost_INCLUDE_DIR=/tmp/boost_1_88_0 \
             -DCMAKE_PREFIX_PATH="/tmp/boost_1_88_0/stage/lib/cmake" \
@@ -137,6 +146,9 @@ jobs:
             echo "=== OpenVAF crash logs ==="
             cat /tmp/openvaf-crash-*.log 2>/dev/null || echo "No crash logs found"
           }
+          # Show ccache stats
+          echo "=== ccache stats ==="
+          ccache -s
 
       # Run automated VACASK result comparison tests
       # These tests compare simulation waveforms between JAX-SPICE and VACASK
