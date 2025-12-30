@@ -1823,6 +1823,9 @@ class CircuitEngine:
                 compiled = self._compiled_models.get(model_type)
                 if compiled and 'vmapped_fn' in compiled:
                     vmapped_fns[model_type] = compiled['vmapped_fn']
+                    # Also store vmapped_eval_with_cache if available (captured at setup, not looked up in traced fn)
+                    if 'vmapped_eval_with_cache' in compiled:
+                        vmapped_fns[model_type + '_with_cache'] = compiled['vmapped_eval_with_cache']
                     static_inputs, voltage_indices, device_contexts, cache, collapse_decisions = self._prepare_static_inputs(
                         model_type, openvaf_by_type[model_type], device_internal_nodes, ground
                     )
@@ -2976,8 +2979,8 @@ class CircuitEngine:
                     batch_inputs = batch_inputs.at[:, -1].set(gmin)
 
                 # Batched device evaluation with cache - returns 4 arrays
-                # Use vmapped_eval_with_cache if available, otherwise fall back to vmapped_fn
-                vmapped_eval_with_cache = self._compiled_models.get(model_type, {}).get('vmapped_eval_with_cache')
+                # Use vmapped_eval_with_cache if available (captured at setup), otherwise fall back to vmapped_fn
+                vmapped_eval_with_cache = vmapped_fns.get(model_type + '_with_cache')
                 if vmapped_eval_with_cache is not None and cache.size > 0:
                     batch_res_resist, batch_res_react, batch_jac_resist, batch_jac_react = \
                         vmapped_eval_with_cache(batch_inputs, cache)
@@ -3198,7 +3201,7 @@ class CircuitEngine:
                         # Only gmin at inputs[-1]
                         batch_inputs = batch_inputs.at[:, -1].set(gmin)
 
-                    vmapped_eval_with_cache = self._compiled_models.get(model_type, {}).get('vmapped_eval_with_cache')
+                    vmapped_eval_with_cache = vmapped_fns.get(model_type + '_with_cache')
                     if vmapped_eval_with_cache is not None and cache.size > 0:
                         batch_res_resist, batch_res_react, _, _ = vmapped_eval_with_cache(batch_inputs, cache)
                     else:
@@ -3779,6 +3782,9 @@ class CircuitEngine:
             compiled = self._compiled_models.get(model_type)
             if compiled and 'vmapped_fn' in compiled:
                 vmapped_fns[model_type] = compiled['vmapped_fn']
+                # Also store vmapped_eval_with_cache if available (captured at setup, not looked up in traced fn)
+                if 'vmapped_eval_with_cache' in compiled:
+                    vmapped_fns[model_type + '_with_cache'] = compiled['vmapped_eval_with_cache']
                 static_inputs, voltage_indices, device_contexts, cache, collapse_decisions = self._prepare_static_inputs(
                     model_type, openvaf_by_type[model_type], device_internal_nodes, ground
                 )
@@ -3936,7 +3942,7 @@ class CircuitEngine:
                 batch_inputs = batch_inputs.at[:, -1].set(1e-12)  # Default gmin
 
             # Evaluate devices
-            vmapped_eval_with_cache = self._compiled_models.get(model_type, {}).get('vmapped_eval_with_cache')
+            vmapped_eval_with_cache = vmapped_fns.get(model_type + '_with_cache')
             if vmapped_eval_with_cache is not None and cache.size > 0:
                 _, _, batch_jac_resist, batch_jac_react = vmapped_eval_with_cache(batch_inputs, cache)
             else:
