@@ -30,9 +30,13 @@ def is_gpu_available() -> bool:
     """Check if a GPU backend is available.
 
     Returns:
-        True if CUDA or other GPU devices are available, False otherwise.
+        True if CUDA, Metal, IREE Metal, or other GPU devices are available.
     """
     try:
+        backend = jax.default_backend().lower()
+        # IREE Metal and native Metal are GPU backends
+        if "metal" in backend or "iree" in backend:
+            return True
         devices = jax.devices()
         return any(d.platform != "cpu" for d in devices)
     except Exception:
@@ -98,12 +102,19 @@ def get_device(backend: str) -> jax.Device:
             raise RuntimeError("GPU backend requested but no GPU available")
         return gpu_devices[0]
     else:
-        # Explicitly request CPU device - this works even when GPU is default
-        cpu_devices = jax.devices("cpu")
-        if cpu_devices:
-            return cpu_devices[0]
-        # This shouldn't happen - CPU should always be available
-        raise RuntimeError("CPU backend requested but no CPU device available")
+        # Try to get CPU device
+        try:
+            cpu_devices = jax.devices("cpu")
+            if cpu_devices:
+                return cpu_devices[0]
+        except RuntimeError:
+            # CPU platform not available (e.g., JAX_PLATFORMS=iree_metal)
+            pass
+        # Fall back to default device (e.g., iree_metal when that's the only backend)
+        devices = jax.devices()
+        if devices:
+            return devices[0]
+        raise RuntimeError("No devices available")
 
 
 def get_default_dtype(backend: str):
@@ -113,12 +124,13 @@ def get_default_dtype(backend: str):
         backend: 'gpu' or 'cpu'
 
     Returns:
-        jax.numpy dtype (float64 for CPU/CUDA, float32 for Metal)
+        jax.numpy dtype (float64 for CPU/CUDA, float32 for Metal/IREE Metal)
     """
     import jax.numpy as jnp
 
-    # Metal backend (Apple Silicon) only supports float32
-    if jax.default_backend() == "METAL":
+    # Metal backends (Apple Silicon) only support float32
+    backend_name = jax.default_backend().lower()
+    if "metal" in backend_name:
         return jnp.float32
 
     return jnp.float64
