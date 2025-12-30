@@ -1563,9 +1563,7 @@ class CircuitEngine:
         Returns:
             TransientResult with times, voltages, and stats
         """
-        logger.debug("importing gpu backend")
         from jax_spice.analysis.gpu_backend import select_backend, is_gpu_available
-        logger.debug("imported gpu backend")
 
         if t_stop is None:
             t_stop = self.analysis_params.get('stop', 1e-3)
@@ -1579,7 +1577,6 @@ class CircuitEngine:
             logger.info(f"Limiting to {max_steps} steps, dt={dt:.2e}s")
 
         # Select backend if not specified
-        logger.debug("selecting gpu backend")
         if backend is None or backend == "auto":
             backend = select_backend(self.num_nodes)
 
@@ -2231,7 +2228,7 @@ class CircuitEngine:
         Returns:
             DC operating point voltages (shape: [n_nodes])
         """
-        logger.info("Computing DC operating point with homotopy chain...")
+        logger.info("Computing DC operating point...")
 
         # Find VDD value from voltage sources
         vdd_value = self._get_vdd_value()

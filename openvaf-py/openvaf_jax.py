@@ -2053,14 +2053,14 @@ class OpenVAFToJAX:
         pred_blocks = [op['block'] for op in phi_ops]
         pred_to_val = val_by_block
 
-        logger.debug(f"_build_init_multi_way_phi: phi_block={phi_block}, num_preds={len(pred_blocks)}")
+        # logger.debug(f"_build_init_multi_way_phi: phi_block={phi_block}, num_preds={len(pred_blocks)}")
 
         # Trace through the condition chain to build the nested where
         result = self._build_init_nested_where_from_blocks(
             phi_block, pred_blocks, pred_to_val, blocks, branch_conds, depth=0
         )
 
-        logger.debug(f"_build_init_multi_way_phi: done, result={'ok' if result else 'fallback'}")
+        # logger.debug(f"_build_init_multi_way_phi: done, result={'ok' if result else 'fallback'}")
 
         return result if result else val_by_block.get(pred_blocks[0], '0.0')
 
@@ -2082,8 +2082,8 @@ class OpenVAFToJAX:
             logger.warning(f"_build_init_nested_where: MAX_DEPTH exceeded at depth={depth}")
             return None
 
-        if depth == 0:
-            logger.debug(f"_build_init_nested_where: phi_block={phi_block}, num_preds={len(pred_blocks)}")
+        # if depth == 0:
+        #     logger.debug(f"_build_init_nested_where: phi_block={phi_block}, num_preds={len(pred_blocks)}")
 
         if len(pred_blocks) == 1:
             return pred_to_val.get(pred_blocks[0], '0.0')
@@ -2130,7 +2130,7 @@ class OpenVAFToJAX:
                 # Find remaining preds (those not reached by direct path)
                 remaining_preds = [p for p in pred_blocks if p != direct_pred]
 
-                logger.debug(f"_build_init_nested_where: depth={depth}, removed {direct_pred}, remaining={len(remaining_preds)}")
+                # logger.debug(f"_build_init_nested_where: depth={depth}, removed {direct_pred}, remaining={len(remaining_preds)}")
 
                 # Recursively build where for remaining preds
                 # GREEDY: We commit to this choice and don't backtrack
@@ -2149,7 +2149,7 @@ class OpenVAFToJAX:
                     return f"jnp.where({cond_var}, {remaining_expr}, {direct_val})"
 
         # Fallback: couldn't find any branch point
-        logger.debug(f"_build_init_nested_where: fallback at depth={depth}, pred_blocks={pred_blocks}")
+        # logger.debug(f"_build_init_nested_where: fallback at depth={depth}, pred_blocks={pred_blocks}")
         return None
 
     def _translate_init_instruction(self, inst: dict, defined_vars: Set[str]) -> Optional[str]:
