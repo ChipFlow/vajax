@@ -162,9 +162,10 @@ jobs:
         run: |
           echo "Running JAX-SPICE vs VACASK comparison..."
           # Run comparison script - it handles VACASK availability gracefully
-          # Use 200 steps to keep c6288 runtime reasonable
+          # Note: c6288 is excluded because JIT compilation takes >10min on CPU
+          # For c6288, use GPU via: scripts/profile_gpu_cloudrun.py --benchmark c6288
           uv run python scripts/compare_vacask.py \
-            --benchmark rc,graetz,ring,c6288 \
+            --benchmark rc,graetz,ring \
             --max-steps 200 \
             --use-scan 2>&1 | tee /tmp/benchmark-comparison.log || true
 
