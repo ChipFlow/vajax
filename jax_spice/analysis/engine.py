@@ -934,8 +934,10 @@ class CircuitEngine:
             init_inputs = static_inputs[:, init_to_eval]
             # Compute cache and collapse decisions
             # init_fn returns (cache, collapse_decisions) tuple
+            # NOTE: First call triggers JIT compilation, which can be slow for large circuits
+            logger.info(f"Computing init cache for {model_type} ({n_devices} devices)...")
             cache, collapse_decisions = vmapped_init(init_inputs)
-            logger.debug(f"Computed cache for {model_type}: shape={cache.shape}")
+            logger.info(f"Init cache computed for {model_type}: shape={cache.shape}")
             logger.debug(f"Collapse decisions for {model_type}: shape={collapse_decisions.shape}")
         else:
             # Fallback for models without init function (e.g., resistor)
