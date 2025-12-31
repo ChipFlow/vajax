@@ -2181,11 +2181,41 @@ class CircuitEngine:
                         logger.info(f"Spineax not available ({type(e).__name__}: {e}) - using JAX spsolve")
 
                 if use_spineax:
-                    # Pre-compute BCSR pattern for Spineax
+                    # Pre-compute BCSR pattern and COO→CSR mapping for Spineax
                     from jax.experimental.sparse import BCSR
+                    logger.info("Pre-computing COO→CSR mapping for Spineax...")
+
+                    # Get COO indices from probe
+                    coo_rows = np.asarray(J_bcoo_probe.indices[:, 0])
+                    coo_cols = np.asarray(J_bcoo_probe.indices[:, 1])
+                    n_coo = len(coo_rows)
+
+                    # Compute linear index for sorting/dedup
+                    linear_idx = coo_rows * n_unknowns + coo_cols
+
+                    # Sort COO by linear index (groups duplicates together)
+                    coo_sort_perm = np.argsort(linear_idx)
+                    sorted_linear = linear_idx[coo_sort_perm]
+
+                    # Find unique entries and inverse mapping for segment_sum
+                    unique_linear, coo_to_unique = np.unique(sorted_linear, return_inverse=True)
+
+                    # Get row indices for unique entries (for CSR row ordering)
+                    unique_rows = unique_linear // n_unknowns
+
+                    # Sort unique entries by row to get CSR order
+                    unique_to_csr = np.argsort(unique_rows)
+                    csr_to_unique = np.argsort(unique_to_csr)  # Inverse permutation
+
+                    # Final segment IDs: maps sorted COO values to CSR data positions
+                    csr_segment_ids = csr_to_unique[coo_to_unique]
+
+                    # Get BCSR structure
                     J_bcoo_dedup = J_bcoo_probe.sum_duplicates(nse=nse)
                     J_bcsr_probe = BCSR.from_bcoo(J_bcoo_dedup)
-                    logger.info(f"BCSR pattern: indptr={J_bcsr_probe.indptr.shape}, indices={J_bcsr_probe.indices.shape}")
+
+                    logger.info(f"Spineax COO→CSR mapping: {n_coo} COO -> {nse} CSR, "
+                               f"indptr={J_bcsr_probe.indptr.shape}, indices={J_bcsr_probe.indices.shape}")
 
                     nr_solve = self._make_spineax_jit_compiled_solver(
                         build_system_jit, n_nodes, nse,
@@ -2193,7 +2223,9 @@ class CircuitEngine:
                         bcsr_indices=J_bcsr_probe.indices,
                         device_arrays=device_arrays,
                         noi_indices=noi_indices,
-                        max_iterations=MAX_NR_ITERATIONS, abstol=DEFAULT_ABSTOL, max_step=1.0
+                        max_iterations=MAX_NR_ITERATIONS, abstol=DEFAULT_ABSTOL, max_step=1.0,
+                        coo_sort_perm=jnp.array(coo_sort_perm, dtype=jnp.int32),
+                        csr_segment_ids=jnp.array(csr_segment_ids, dtype=jnp.int32),
                     )
                 else:
                     # Fallback to JAX spsolve (QR factorization, no caching)
@@ -3683,6 +3715,8 @@ class CircuitEngine:
         max_iterations: int = MAX_NR_ITERATIONS,
         abstol: float = 1e-6,
         max_step: float = 1.0,
+        coo_sort_perm: Optional[jax.Array] = None,
+        csr_segment_ids: Optional[jax.Array] = None,
     ) -> Callable:
         """Create a JIT-compiled sparse NR solver using Spineax/cuDSS.
 
@@ -3701,6 +3735,8 @@ class CircuitEngine:
             max_iterations: Maximum NR iterations
             abstol: Absolute tolerance for convergence
             max_step: Maximum voltage step per iteration
+            coo_sort_perm: Pre-computed permutation for COO→CSR (avoids sorting)
+            csr_segment_ids: Pre-computed segment IDs for summing duplicates
 
         Returns:
             JIT-compiled sparse solver function: (V, vsrc, isrc, Q_prev, inv_dt, device_arrays) -> (V, iters, converged, max_f, Q)
@@ -3709,6 +3745,11 @@ class CircuitEngine:
         from spineax.cudss.solver import CuDSSSolver
 
         n_unknowns = n_nodes - 1  # Exclude ground
+
+        # Check if we have pre-computed COO→CSR mapping
+        use_precomputed = coo_sort_perm is not None and csr_segment_ids is not None
+        if use_precomputed:
+            logger.info("Spineax: Using pre-computed COO→CSR mapping (avoiding per-iteration sort)")
 
         # Pre-compute residual mask if we have NOI nodes
         if noi_indices is not None and len(noi_indices) > 0:
@@ -3764,15 +3805,20 @@ class CircuitEngine:
                     max_f = jnp.max(jnp.abs(f))
                 residual_converged = max_f < abstol
 
-                # Sum duplicates before converting to BCSR
-                J_bcoo_dedup = J_bcoo.sum_duplicates(nse=nse)
-
-                # Convert BCOO to BCSR to get data in correct order
-                J_bcsr = BCSR.from_bcoo(J_bcoo_dedup)
+                if use_precomputed:
+                    # Fast path: use pre-computed COO→CSR mapping (no sorting!)
+                    coo_vals = J_bcoo.data
+                    sorted_vals = coo_vals[coo_sort_perm]
+                    csr_data = jax.ops.segment_sum(sorted_vals, csr_segment_ids, num_segments=nse)
+                else:
+                    # Fallback: sort on every iteration (slower)
+                    J_bcoo_dedup = J_bcoo.sum_duplicates(nse=nse)
+                    J_bcsr = BCSR.from_bcoo(J_bcoo_dedup)
+                    csr_data = J_bcsr.data
 
                 # Solve using Spineax (cached symbolic factorization)
                 # Only numeric refactorization + triangular solve happens here
-                delta, _info = spineax_solver(-f, J_bcsr.data)
+                delta, _info = spineax_solver(-f, csr_data)
 
                 # Step limiting
                 max_delta = jnp.max(jnp.abs(delta))
