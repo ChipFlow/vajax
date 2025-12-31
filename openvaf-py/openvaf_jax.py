@@ -110,6 +110,21 @@ class OpenVAFToJAX:
             raise ValueError(f"No modules found in {va_path}")
         return cls(modules[0])
 
+    def release_mir_data(self):
+        """Release MIR data after code generation is complete.
+
+        Call this after all translate_*() methods have been called to free
+        ~28MB of memory for complex models like PSP103.
+
+        The translator remains usable for accessing metadata (param_names, etc.)
+        but cannot generate new code after this is called.
+        """
+        self.mir_data = None
+        self.init_mir_data = None
+        self.dae_data = None
+        # Keep the derived data (constants, params) since they're small and may be needed
+        # Only free the large MIR instruction data
+
     def translate(self) -> Callable:
         """Generate a JAX function from the MIR
 
