@@ -1275,6 +1275,38 @@ class CircuitEngine:
         # Convert to BCSR to get the fixed structure
         J_bcsr = BCSR.from_bcoo(J_bcoo_summed)
 
+        # Pre-compute COO→CSR permutation for fast assembly
+        # This avoids sorting on every NR iteration!
+        #
+        # Algorithm:
+        # 1. Compute linear index: linear = row * n_cols + col
+        # 2. Sort by linear index to group duplicates
+        # 3. Find unique entries and segment IDs for summing duplicates
+        # 4. Sort by row (CSR format) to get final data order
+        #
+        # In NR loop: csr_data = segment_sum(values[coo_to_csr_perm], csr_segment_ids)
+
+        linear_idx = merged_rows * n_unknowns + merged_cols
+
+        # Sort COO by linear index (groups duplicates together)
+        coo_sort_perm = np.argsort(linear_idx)
+        sorted_linear = linear_idx[coo_sort_perm]
+        sorted_rows = merged_rows[coo_sort_perm]
+
+        # Find unique entries and inverse mapping for segment_sum
+        unique_linear, coo_to_unique = np.unique(sorted_linear, return_inverse=True)
+        n_unique = len(unique_linear)
+
+        # Get row indices for unique entries (for CSR row ordering)
+        unique_rows = unique_linear // n_unknowns
+
+        # Sort unique entries by row to get CSR order
+        unique_to_csr = np.argsort(unique_rows)
+        csr_to_unique = np.argsort(unique_to_csr)  # Inverse permutation
+
+        # Final segment IDs: maps sorted COO values to CSR data positions
+        csr_segment_ids = csr_to_unique[coo_to_unique]
+
         # Store the structure
         return {
             'n_entries': n_entries,
@@ -1290,6 +1322,10 @@ class CircuitEngine:
             'bcsr_n_data': J_bcsr.data.shape[0],
             # For sum_duplicates mapping
             'bcoo_summed_indices': J_bcoo_summed.indices,
+            # Pre-computed COO→CSR mapping (avoids sorting in NR loop!)
+            'coo_sort_perm': jnp.array(coo_sort_perm, dtype=jnp.int32),
+            'csr_segment_ids': jnp.array(csr_segment_ids, dtype=jnp.int32),
+            'csr_n_segments': n_unique,
         }
 
     def _parse_voltage_param(self, name: str, node_map: Dict[str, int],
@@ -2161,10 +2197,49 @@ class CircuitEngine:
                     )
                 else:
                     # Fallback to JAX spsolve (QR factorization, no caching)
+                    # Pre-compute COO→CSR mapping to avoid sorting on every NR iteration
+                    from jax.experimental.sparse import BCSR
+                    logger.info("Pre-computing COO→CSR mapping for fast sparse assembly...")
+
+                    # Get COO indices from probe
+                    coo_rows = np.asarray(J_bcoo_probe.indices[:, 0])
+                    coo_cols = np.asarray(J_bcoo_probe.indices[:, 1])
+                    n_coo = len(coo_rows)
+
+                    # Compute linear index for sorting/dedup
+                    linear_idx = coo_rows * n_unknowns + coo_cols
+
+                    # Sort COO by linear index (groups duplicates together)
+                    coo_sort_perm = np.argsort(linear_idx)
+                    sorted_linear = linear_idx[coo_sort_perm]
+
+                    # Find unique entries and inverse mapping for segment_sum
+                    unique_linear, coo_to_unique = np.unique(sorted_linear, return_inverse=True)
+
+                    # Get row indices for unique entries (for CSR row ordering)
+                    unique_rows = unique_linear // n_unknowns
+
+                    # Sort unique entries by row to get CSR order
+                    unique_to_csr = np.argsort(unique_rows)
+                    csr_to_unique = np.argsort(unique_to_csr)  # Inverse permutation
+
+                    # Final segment IDs: maps sorted COO values to CSR data positions
+                    csr_segment_ids = csr_to_unique[coo_to_unique]
+
+                    # Get BCSR structure
+                    J_bcoo_dedup = J_bcoo_probe.sum_duplicates(nse=nse)
+                    J_bcsr_probe = BCSR.from_bcoo(J_bcoo_dedup)
+
+                    logger.info(f"COO→CSR mapping: {n_coo} COO entries -> {nse} CSR entries")
+
                     nr_solve = self._make_sparse_jit_compiled_solver(
                         build_system_jit, n_nodes, nse, device_arrays,
                         noi_indices=noi_indices,
-                        max_iterations=MAX_NR_ITERATIONS, abstol=DEFAULT_ABSTOL, max_step=1.0
+                        max_iterations=MAX_NR_ITERATIONS, abstol=DEFAULT_ABSTOL, max_step=1.0,
+                        coo_sort_perm=jnp.array(coo_sort_perm, dtype=jnp.int32),
+                        csr_segment_ids=jnp.array(csr_segment_ids, dtype=jnp.int32),
+                        bcsr_indices=J_bcsr_probe.indices,
+                        bcsr_indptr=J_bcsr_probe.indptr,
                     )
 
             # Cache JIT-wrapped solver and build_system (JAX handles compilation automatically)
@@ -3459,6 +3534,10 @@ class CircuitEngine:
         max_iterations: int = MAX_NR_ITERATIONS,
         abstol: float = 1e-6,
         max_step: float = 1.0,
+        coo_sort_perm: Optional[jax.Array] = None,
+        csr_segment_ids: Optional[jax.Array] = None,
+        bcsr_indices: Optional[jax.Array] = None,
+        bcsr_indptr: Optional[jax.Array] = None,
     ) -> Callable:
         """Create a JIT-compiled sparse NR solver using spsolve.
 
@@ -3474,12 +3553,22 @@ class CircuitEngine:
             max_iterations: Maximum NR iterations
             abstol: Absolute tolerance for convergence
             max_step: Maximum voltage step per iteration
+            coo_sort_perm: Pre-computed permutation for COO→CSR (avoids sorting)
+            csr_segment_ids: Pre-computed segment IDs for summing duplicates
+            bcsr_indices: Pre-computed CSR column indices
+            bcsr_indptr: Pre-computed CSR row pointers
 
         Returns:
             JIT-compiled sparse solver function: (V, vsrc, isrc, Q_prev, inv_dt, device_arrays) -> (V, iters, converged, max_f, Q)
         """
         from jax.experimental.sparse import BCSR
         from jax.experimental.sparse.linalg import spsolve
+
+        # Check if we have pre-computed COO→CSR mapping
+        use_precomputed = (coo_sort_perm is not None and csr_segment_ids is not None
+                          and bcsr_indices is not None and bcsr_indptr is not None)
+        if use_precomputed:
+            logger.info("Using pre-computed COO→CSR mapping (avoiding per-iteration sort)")
 
         # Pre-compute residual mask if we have NOI nodes
         if noi_indices is not None and len(noi_indices) > 0:
@@ -3524,17 +3613,32 @@ class CircuitEngine:
                     max_f = jnp.max(jnp.abs(f))
                 residual_converged = max_f < abstol
 
-                # Sum duplicates before converting to BCSR (required for scipy fallback)
-                J_bcoo_dedup = J_bcoo.sum_duplicates(nse=nse)
+                if use_precomputed:
+                    # Fast path: use pre-computed COO→CSR mapping (no sorting!)
+                    # 1. Get raw COO values from BCOO
+                    coo_vals = J_bcoo.data
 
-                # Convert BCOO to BCSR for spsolve
-                J_bcsr = BCSR.from_bcoo(J_bcoo_dedup)
+                    # 2. Apply pre-computed sort permutation
+                    sorted_vals = coo_vals[coo_sort_perm]
 
-                # Sparse solve: J @ delta = -f using QR factorization
-                # J and f are n_unknowns sized (ground already excluded)
-                delta = spsolve(
-                    J_bcsr.data, J_bcsr.indices, J_bcsr.indptr, -f, tol=1e-6
-                )
+                    # 3. Sum duplicates into CSR data array using segment_sum
+                    csr_data = jax.ops.segment_sum(sorted_vals, csr_segment_ids, num_segments=nse)
+
+                    # 4. Solve with pre-computed CSR structure
+                    delta = spsolve(csr_data, bcsr_indices, bcsr_indptr, -f, tol=1e-6)
+                else:
+                    # Fallback: original path with sorting (slower but always works)
+                    # Sum duplicates before converting to BCSR (required for scipy fallback)
+                    J_bcoo_dedup = J_bcoo.sum_duplicates(nse=nse)
+
+                    # Convert BCOO to BCSR for spsolve
+                    J_bcsr = BCSR.from_bcoo(J_bcoo_dedup)
+
+                    # Sparse solve: J @ delta = -f using QR factorization
+                    # J and f are n_unknowns sized (ground already excluded)
+                    delta = spsolve(
+                        J_bcsr.data, J_bcsr.indices, J_bcsr.indptr, -f, tol=1e-6
+                    )
 
                 # Step limiting
                 max_delta = jnp.max(jnp.abs(delta))
