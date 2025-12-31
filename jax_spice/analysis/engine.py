@@ -1135,7 +1135,7 @@ class CircuitEngine:
             if model_type not in static_inputs_cache:
                 continue
 
-            _, _, stamp_indices, _, _, _, _ = static_inputs_cache[model_type]
+            _, stamp_indices, _, _, _, _ = static_inputs_cache[model_type]
             jac_row_idx = stamp_indices['jac_row_indices']  # (n_devices, n_jac_entries)
             jac_col_idx = stamp_indices['jac_col_indices']
 
@@ -1929,13 +1929,12 @@ class CircuitEngine:
 
                     if backend == "gpu":
                         with jax.default_device(device):
-                            static_inputs = jnp.array(static_inputs, dtype=dtype)
                             cache = jnp.array(cache, dtype=dtype)
                     else:
-                        static_inputs = jnp.array(static_inputs, dtype=jnp.float64)
                         cache = jnp.array(cache, dtype=jnp.float64)
+                    # Note: static_inputs removed - data is in shared_params/device_params in compiled dict
                     static_inputs_cache[model_type] = (
-                        static_inputs, voltage_indices, stamp_indices, voltage_node1, voltage_node2, cache, collapse_decisions
+                        voltage_indices, stamp_indices, voltage_node1, voltage_node2, cache, collapse_decisions
                     )
                     n_devs = len(openvaf_by_type[model_type])
                     logger.info(f"Prepared {model_type}: {n_devs} devices, cache_size={cache.shape[1]}")
@@ -2284,7 +2283,7 @@ class CircuitEngine:
             n_vsources: Number of voltage sources
             n_isources: Number of current sources
             nr_solve: The cached NR solver function (used for fallback)
-            device_arrays: Dict[model_type, (static_inputs, cache)] - passed to nr_solve
+            device_arrays: Dict[model_type, cache] - passed to nr_solve
             backend: 'gpu' or 'cpu'
             use_dense: Whether using dense solver
             max_iterations: Maximum NR iterations per homotopy step
@@ -2925,17 +2924,17 @@ class CircuitEngine:
         static_inputs_cache: Dict[str, Tuple],
         n_unknowns: int,
         use_dense: bool,
-    ) -> Tuple[Callable, Dict[str, Tuple[jax.Array, jax.Array]]]:
+    ) -> Tuple[Callable, Dict[str, jax.Array]]:
         """Create a JIT-compilable function that builds J and f from V.
 
         This closure captures only small metadata (indices, vmapped functions).
-        Large arrays (static_inputs, cache) are passed as arguments to avoid
-        XLA constant folding overhead during compilation.
+        Cache arrays are passed as arguments to avoid XLA constant folding overhead.
+        Split eval params (shared_params, device_params) are captured in split_eval_info.
 
         Args:
             source_device_data: Pre-computed source device stamp templates
             vmapped_fns: Dict of vmapped OpenVAF functions per model type
-            static_inputs_cache: Dict of (static_inputs, voltage_indices, stamp_indices,
+            static_inputs_cache: Dict of (voltage_indices, stamp_indices,
                                           voltage_node1, voltage_node2, cache, ...) per model type
             n_unknowns: Number of unknowns (total nodes - 1 for ground)
             use_dense: Whether to use dense or sparse matrix assembly
@@ -2944,7 +2943,7 @@ class CircuitEngine:
             Tuple of:
             - build_system function with signature:
                 build_system(V, vsource_vals, isource_vals, Q_prev, inv_dt, device_arrays) -> (J, f, Q)
-            - device_arrays: Dict[model_type, (static_inputs, cache)] to pass to build_system
+            - device_arrays: Dict[model_type, cache] to pass to build_system
 
             For DC analysis: pass inv_dt=0.0 and Q_prev=zeros (reactive terms ignored)
             For transient: pass inv_dt=1/dt and Q_prev from previous timestep
@@ -2961,7 +2960,7 @@ class CircuitEngine:
         device_arrays = {}
         split_eval_info = {}  # Store split eval info for models that support it
         for model_type in model_types:
-            static_inputs, voltage_indices, stamp_indices, voltage_node1, voltage_node2, cache, _ = \
+            voltage_indices, stamp_indices, voltage_node1, voltage_node2, cache, _ = \
                 static_inputs_cache[model_type]
             # Metadata: small arrays and indices - captured in closure
             static_metadata[model_type] = (voltage_indices, stamp_indices, voltage_node1, voltage_node2)
@@ -2975,12 +2974,12 @@ class CircuitEngine:
                     'device_params': compiled['device_params'],
                     'voltage_positions': compiled['voltage_positions_in_varying'],
                 }
-            # static_inputs is empty when split eval is available (memory already freed)
-            device_arrays[model_type] = (static_inputs, cache)
+            # Only store cache - split eval uses shared_params/device_params from split_eval_info
+            device_arrays[model_type] = cache
 
         def build_system(V: jax.Array, vsource_vals: jax.Array, isource_vals: jax.Array,
                         Q_prev: jax.Array, inv_dt: float | jax.Array,
-                        device_arrays_arg: Dict[str, Tuple[jax.Array, jax.Array]],
+                        device_arrays_arg: Dict[str, jax.Array],
                         gmin: float | jax.Array = 1e-12, gshunt: float | jax.Array = 0.0
                         ) -> Tuple[Any, jax.Array, jax.Array]:
             """Build Jacobian J and residual f from current voltages.
@@ -2998,7 +2997,7 @@ class CircuitEngine:
                 isource_vals: Current source values
                 Q_prev: Charges from previous timestep (shape: n_unknowns)
                 inv_dt: 1/dt for transient, 0 for DC analysis
-                device_arrays_arg: Dict[model_type, (static_inputs, cache)] - large arrays passed as args
+                device_arrays_arg: Dict[model_type, cache] - cache arrays passed as args
                 gmin: GMIN conductance for device models (default 1e-12)
                 gshunt: Shunt conductance to ground for homotopy (default 0)
 
@@ -3056,57 +3055,35 @@ class CircuitEngine:
             for model_type in model_types:
                 # Get metadata from closure (small) and arrays from argument (large)
                 voltage_indices, stamp_indices, voltage_node1, voltage_node2 = static_metadata[model_type]
-                _, cache = device_arrays_arg[model_type]
-                vmapped_fn = vmapped_fns[model_type]
+                cache = device_arrays_arg[model_type]
 
-                # Vectorized voltage update (needed by all paths)
+                # Vectorized voltage update
                 voltage_updates = V[voltage_node1] - V[voltage_node2]
 
                 # Get model capabilities (captured in closure)
                 uses_analysis = self._compiled_models.get(model_type, {}).get('uses_analysis', False)
                 uses_simparam_gmin = self._compiled_models.get(model_type, {}).get('uses_simparam_gmin', False)
 
-                # Batched device evaluation - use split eval if available
-                split_info = split_eval_info.get(model_type)
-                if split_info is not None:
-                    # Split eval path (reduces HLO slice operations by ~99%)
-                    shared_params = split_info['shared_params']
-                    device_params = split_info['device_params']
-                    voltage_positions = split_info['voltage_positions']
+                # Split eval path (all OpenVAF models use this)
+                split_info = split_eval_info[model_type]
+                shared_params = split_info['shared_params']
+                device_params = split_info['device_params']
+                voltage_positions = split_info['voltage_positions']
 
-                    # Update voltage columns in device_params
-                    device_params_updated = device_params.at[:, voltage_positions].set(voltage_updates)
+                # Update voltage columns in device_params
+                device_params_updated = device_params.at[:, voltage_positions].set(voltage_updates)
 
-                    # Handle analysis_type and gmin in device_params
-                    if uses_analysis:
-                        analysis_type_val = jnp.where(inv_dt > 0, 2.0, 0.0)  # tran=2, dc=0
-                        device_params_updated = device_params_updated.at[:, -2].set(analysis_type_val)
-                        device_params_updated = device_params_updated.at[:, -1].set(gmin)
-                    elif uses_simparam_gmin:
-                        device_params_updated = device_params_updated.at[:, -1].set(gmin)
+                # Handle analysis_type and gmin in device_params
+                if uses_analysis:
+                    analysis_type_val = jnp.where(inv_dt > 0, 2.0, 0.0)  # tran=2, dc=0
+                    device_params_updated = device_params_updated.at[:, -2].set(analysis_type_val)
+                    device_params_updated = device_params_updated.at[:, -1].set(gmin)
+                elif uses_simparam_gmin:
+                    device_params_updated = device_params_updated.at[:, -1].set(gmin)
 
-                    vmapped_split_eval = split_info['vmapped_split_eval']
-                    batch_res_resist, batch_res_react, batch_jac_resist, batch_jac_react = \
-                        vmapped_split_eval(shared_params, device_params_updated, cache)
-                else:
-                    # Fallback for models without split eval (e.g., simple VA models)
-                    static_inputs = device_arrays_arg[model_type][0]
-                    batch_inputs = static_inputs.at[:, jnp.array(voltage_indices)].set(voltage_updates)
-
-                    if uses_analysis:
-                        analysis_type_val = jnp.where(inv_dt > 0, 2.0, 0.0)
-                        batch_inputs = batch_inputs.at[:, -2].set(analysis_type_val)
-                        batch_inputs = batch_inputs.at[:, -1].set(gmin)
-                    elif uses_simparam_gmin:
-                        batch_inputs = batch_inputs.at[:, -1].set(gmin)
-
-                    vmapped_eval_with_cache = vmapped_fns.get(model_type + '_with_cache')
-                    if vmapped_eval_with_cache is not None and cache.size > 0:
-                        batch_res_resist, batch_res_react, batch_jac_resist, batch_jac_react = \
-                            vmapped_eval_with_cache(batch_inputs, cache)
-                    else:
-                        batch_res_resist, batch_res_react, batch_jac_resist, batch_jac_react = \
-                            vmapped_fn(batch_inputs)
+                vmapped_split_eval = split_info['vmapped_split_eval']
+                batch_res_resist, batch_res_react, batch_jac_resist, batch_jac_react = \
+                    vmapped_split_eval(shared_params, device_params_updated, cache)
 
                 # NOTE: Huge value masking removed - NOI constraint enforcement in NR solver
                 # (lines 5601-5606) now handles 1e40 conductance by zeroing NOI rows/cols in J and f.
@@ -3258,7 +3235,7 @@ class CircuitEngine:
         Args:
             build_system_jit: JIT-wrapped function (V, vsource_vals, isource_vals, Q_prev, inv_dt, device_arrays) -> (J, f, Q)
             n_nodes: Total node count including ground (V.shape[0])
-            device_arrays: Dict[model_type, (static_inputs, cache)] - passed as traced arg to avoid XLA constant folding
+            device_arrays: Dict[model_type, cache] - passed as traced arg to avoid XLA constant folding
             noi_indices: Optional array of NOI node indices to constrain to 0V
             max_iterations: Maximum NR iterations
             abstol: Absolute tolerance for convergence
@@ -3283,7 +3260,7 @@ class CircuitEngine:
 
         def nr_solve(V_init: jax.Array, vsource_vals: jax.Array, isource_vals: jax.Array,
                     Q_prev: jax.Array, inv_dt: float | jax.Array,
-                    device_arrays_arg: Dict[str, Tuple[jax.Array, jax.Array]],
+                    device_arrays_arg: Dict[str, jax.Array],
                     gmin: float | jax.Array = 1e-12, gshunt: float | jax.Array = 0.0):
             # State: (V, iteration, converged, max_f, max_delta, Q)
             # Q is tracked to return the final charges
@@ -3393,7 +3370,7 @@ class CircuitEngine:
             build_system_jit: JIT-wrapped function returning (J_bcoo, f, Q)
             n_nodes: Total node count including ground
             nse: Number of stored elements after summing duplicates
-            device_arrays: Dict[model_type, (static_inputs, cache)] - passed as traced arg
+            device_arrays: Dict[model_type, cache] - passed as traced arg
             noi_indices: Optional array of NOI node indices to constrain to 0V
             max_iterations: Maximum NR iterations
             abstol: Absolute tolerance for convergence
@@ -3416,7 +3393,7 @@ class CircuitEngine:
 
         def nr_solve(V_init: jax.Array, vsource_vals: jax.Array, isource_vals: jax.Array,
                     Q_prev: jax.Array, inv_dt: float | jax.Array,
-                    device_arrays_arg: Dict[str, Tuple[jax.Array, jax.Array]],
+                    device_arrays_arg: Dict[str, jax.Array],
                     gmin: float | jax.Array = 1e-12, gshunt: float | jax.Array = 0.0):
             # Q has shape (n_unknowns,) = (n_nodes - 1,) since ground is excluded
             init_Q = jnp.zeros(n_nodes - 1, dtype=jnp.float64)
@@ -3516,7 +3493,7 @@ class CircuitEngine:
             nse: Number of stored elements after summing duplicates
             bcsr_indptr: Pre-computed BCSR row pointers
             bcsr_indices: Pre-computed BCSR column indices
-            device_arrays: Dict[model_type, (static_inputs, cache)] - passed as traced arg
+            device_arrays: Dict[model_type, cache] - passed as traced arg
             noi_indices: Optional array of NOI node indices to constrain to 0V
             max_iterations: Maximum NR iterations
             abstol: Absolute tolerance for convergence
@@ -3551,7 +3528,7 @@ class CircuitEngine:
 
         def nr_solve(V_init: jax.Array, vsource_vals: jax.Array, isource_vals: jax.Array,
                     Q_prev: jax.Array, inv_dt: float | jax.Array,
-                    device_arrays_arg: Dict[str, Tuple[jax.Array, jax.Array]],
+                    device_arrays_arg: Dict[str, jax.Array],
                     gmin: float | jax.Array = 1e-12, gshunt: float | jax.Array = 0.0):
             # State: (V, iteration, converged, max_f, max_delta, Q)
             # Q is tracked to return the final charges
@@ -3801,10 +3778,10 @@ class CircuitEngine:
                     [n2 for n1, n2 in ctx['voltage_node_pairs']]
                     for ctx in device_contexts
                 ], dtype=jnp.int32)
-                static_inputs = jnp.array(static_inputs, dtype=jnp.float64)
                 cache = jnp.array(cache, dtype=jnp.float64)
+                # Note: static_inputs removed - data is in shared_params/device_params in compiled dict
                 static_inputs_cache[model_type] = (
-                    static_inputs, voltage_indices, stamp_indices, voltage_node1, voltage_node2, cache, collapse_decisions
+                    voltage_indices, stamp_indices, voltage_node1, voltage_node2, cache, collapse_decisions
                 )
 
         # Count sources
@@ -3945,53 +3922,35 @@ class CircuitEngine:
 
         # === OpenVAF device contributions ===
         for model_type in model_types:
-            _, voltage_indices, stamp_indices, voltage_node1, voltage_node2, cache, _ = \
+            voltage_indices, stamp_indices, voltage_node1, voltage_node2, cache, _ = \
                 static_inputs_cache[model_type]
-            vmapped_fn = vmapped_fns[model_type]
 
             # Compute device voltages
             voltage_updates = V[voltage_node1] - V[voltage_node2]
 
-            # Use split eval if available
-            compiled = self._compiled_models.get(model_type, {})
+            # All OpenVAF models use split eval
+            compiled = self._compiled_models[model_type]
             uses_analysis = compiled.get('uses_analysis', False)
             uses_simparam_gmin = compiled.get('uses_simparam_gmin', False)
 
-            if compiled.get('use_split_eval', False):
-                shared_params = compiled['shared_params']
-                device_params = compiled['device_params']
-                voltage_positions = compiled['voltage_positions_in_varying']
-                vmapped_split_eval = compiled['vmapped_split_eval']
+            shared_params = compiled['shared_params']
+            device_params = compiled['device_params']
+            voltage_positions = compiled['voltage_positions_in_varying']
+            vmapped_split_eval = compiled['vmapped_split_eval']
 
-                # Update voltage columns in device_params
-                device_params_updated = device_params.at[:, voltage_positions].set(voltage_updates)
+            # Update voltage columns in device_params
+            device_params_updated = device_params.at[:, voltage_positions].set(voltage_updates)
 
-                # For AC analysis: analysis_type = 1
-                if uses_analysis:
-                    device_params_updated = device_params_updated.at[:, -2].set(1.0)
-                    device_params_updated = device_params_updated.at[:, -1].set(1e-12)
-                elif uses_simparam_gmin:
-                    device_params_updated = device_params_updated.at[:, -1].set(1e-12)
+            # For AC analysis: analysis_type = 1
+            if uses_analysis:
+                device_params_updated = device_params_updated.at[:, -2].set(1.0)
+                device_params_updated = device_params_updated.at[:, -1].set(1e-12)
+            elif uses_simparam_gmin:
+                device_params_updated = device_params_updated.at[:, -1].set(1e-12)
 
-                _, _, batch_jac_resist, batch_jac_react = vmapped_split_eval(
-                    shared_params, device_params_updated, cache
-                )
-            else:
-                # Fallback for models without split eval
-                static_inputs = static_inputs_cache[model_type][0]
-                batch_inputs = static_inputs.at[:, jnp.array(voltage_indices)].set(voltage_updates)
-
-                if uses_analysis:
-                    batch_inputs = batch_inputs.at[:, -2].set(1.0)
-                    batch_inputs = batch_inputs.at[:, -1].set(1e-12)
-                elif uses_simparam_gmin:
-                    batch_inputs = batch_inputs.at[:, -1].set(1e-12)
-
-                vmapped_eval_with_cache = vmapped_fns.get(model_type + '_with_cache')
-                if vmapped_eval_with_cache is not None and cache.size > 0:
-                    _, _, batch_jac_resist, batch_jac_react = vmapped_eval_with_cache(batch_inputs, cache)
-                else:
-                    _, _, batch_jac_resist, batch_jac_react = vmapped_fn(batch_inputs)
+            _, _, batch_jac_resist, batch_jac_react = vmapped_split_eval(
+                shared_params, device_params_updated, cache
+            )
 
             # Extract Jacobian entries
             jac_row_idx = stamp_indices['jac_row_indices']

@@ -36,7 +36,7 @@ class ParamTrace:
     1. Instance params (from netlist device line)
     2. Model params (from model card)
     3. OpenVAF param_kinds (param, hidden_state, voltage, etc.)
-    4. Final value in static_inputs array
+    4. Final value in shared_params or device_params arrays
     """
     param_name: str
     instance_name: str
@@ -175,19 +175,31 @@ def trace_param(
                 trace.param_index = idx
                 break
 
-    # Layer 4: Get final value from static_inputs if available
-    if hasattr(engine, '_transient_setup_cache') and engine._transient_setup_cache:
-        static_inputs_cache = engine._transient_setup_cache.get('static_inputs_cache', {})
-        if model_type in static_inputs_cache:
-            static_inputs = static_inputs_cache[model_type][0]
+    # Layer 4: Get final value from split eval params (shared_params/device_params)
+    if compiled and trace.param_index is not None:
+        shared_indices = compiled.get('shared_indices', [])
+        varying_indices = compiled.get('varying_indices', [])
+        shared_params = compiled.get('shared_params')
+        device_params = compiled.get('device_params')
 
+        if shared_params is not None and device_params is not None:
             # Find device index
             model_devices = [d for d in engine.devices if d.get('model_type', d.get('model')) == model_type]
             for dev_idx, dev in enumerate(model_devices):
                 if dev.get('name') == instance_name:
-                    if trace.param_index is not None and dev_idx < static_inputs.shape[0]:
-                        trace.final_value = float(static_inputs[dev_idx, trace.param_index])
-                        # Determine source
+                    param_idx = trace.param_index
+                    if param_idx in shared_indices:
+                        # Constant param - same for all devices
+                        shared_pos = shared_indices.index(param_idx)
+                        trace.final_value = float(shared_params[shared_pos])
+                    elif param_idx in varying_indices:
+                        # Varying param - different per device
+                        varying_pos = varying_indices.index(param_idx)
+                        if dev_idx < device_params.shape[0]:
+                            trace.final_value = float(device_params[dev_idx, varying_pos])
+
+                    # Determine source
+                    if trace.final_value is not None:
                         if trace.in_instance:
                             trace.source = "instance"
                         elif trace.in_model:
