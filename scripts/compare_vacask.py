@@ -316,11 +316,11 @@ def run_jax_spice(config: BenchmarkConfig, num_steps: int, use_scan: bool,
 
     # Create benchmark-specific profile config if profiling is enabled
     full_profile_config = None
-    scan_profile_config = None
+    sim_profile_config = None
     if profile_config:
         base_dir = Path(profile_config.trace_dir) / f"benchmark_{config.name}"
         if profile_full:
-            # Profile entire run - don't also profile scan to avoid nested profiles
+            # Profile entire run - don't also profile simulation to avoid nested profiles
             full_profile_config = ProfileConfig(
                 jax=profile_config.jax,
                 cuda=profile_config.cuda,
@@ -328,11 +328,13 @@ def run_jax_spice(config: BenchmarkConfig, num_steps: int, use_scan: bool,
                 create_perfetto_link=profile_config.create_perfetto_link,
             )
         else:
-            # Profile just the scan portion
-            scan_profile_config = ProfileConfig(
+            # Profile just the simulation portion
+            # Use mode-specific directory name
+            sim_mode = "lax_scan" if use_scan else "python_loop"
+            sim_profile_config = ProfileConfig(
                 jax=profile_config.jax,
                 cuda=profile_config.cuda,
-                trace_dir=str(base_dir / "lax_scan_simulation"),
+                trace_dir=str(base_dir / f"{sim_mode}_simulation"),
                 create_perfetto_link=profile_config.create_perfetto_link,
             )
 
@@ -398,7 +400,7 @@ def run_jax_spice(config: BenchmarkConfig, num_steps: int, use_scan: bool,
             t_stop=t_stop, dt=config.dt,
             use_sparse=use_sparse, use_while_loop=use_scan,
             backend=backend,
-            profile_config=scan_profile_config,
+            profile_config=sim_profile_config,
         )
         after_transient = time.perf_counter()
         print(f"AFTER_RUN_TRANSIENT: {after_transient:.6f} (elapsed: {after_transient - start:.6f}s)")

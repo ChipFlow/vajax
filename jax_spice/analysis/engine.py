@@ -1727,10 +1727,12 @@ class CircuitEngine:
 
         if use_sparse:
             logger.info(f"Using BCOO/BCSR sparse solver ({self.num_nodes} nodes)")
-            return self._run_transient_hybrid(t_stop, dt, backend=backend, use_dense=False)
+            return self._run_transient_hybrid(t_stop, dt, backend=backend, use_dense=False,
+                                               profile_config=profile_config)
         else:
             logger.info(f"Using dense solver ({self.num_nodes} nodes)")
-            return self._run_transient_hybrid(t_stop, dt, backend=backend, use_dense=True)
+            return self._run_transient_hybrid(t_stop, dt, backend=backend, use_dense=True,
+                                               profile_config=profile_config)
 
     # =========================================================================
     # Node Collapse Implementation
@@ -1896,7 +1898,8 @@ class CircuitEngine:
 
     def _run_transient_hybrid(self, t_stop: float, dt: float,
                                backend: str = "cpu",
-                               use_dense: bool = True) -> TransientResult:
+                               use_dense: bool = True,
+                               profile_config: Optional[ProfileConfig] = None) -> TransientResult:
         """Run transient analysis with OpenVAF devices.
 
         This solver handles a mix of simple devices (resistor, capacitor, etc.)
@@ -2241,37 +2244,49 @@ class CircuitEngine:
         num_timesteps = int(round(t_stop / dt)) + 1
 
         logger.info(f"Starting NR iteration ({num_timesteps} timesteps, inv_dt={inv_dt:.2e})")
-        for step_idx in range(num_timesteps):
-            t = step_idx * dt
-            source_values = source_fn(t)
-            # Build source value arrays once per timestep (Python loop here, not in NR loop)
-            vsource_vals, isource_vals = build_source_arrays(source_values)
 
-            # GPU-resident NR solve - JIT compiled, runs on GPU via lax.while_loop
-            # Backward Euler: f = f_resist + (Q - Q_prev)/dt, J = J_resist + C/dt
-            V_new, iterations, converged, max_f, Q = nr_solve(V, vsource_vals, isource_vals, Q_prev, inv_dt, device_arrays)
+        def run_simulation_loop():
+            nonlocal V, Q_prev, total_nr_iters, non_converged_steps, times_list, voltage_history, V_prev
+            for step_idx in range(num_timesteps):
+                t = step_idx * dt
+                source_values = source_fn(t)
+                # Build source value arrays once per timestep (Python loop here, not in NR loop)
+                vsource_vals, isource_vals = build_source_arrays(source_values)
 
-            # Transfer results back to Python for logging/tracking (once per timestep)
-            nr_iters = int(iterations)
-            is_converged = bool(converged)
-            residual = float(max_f)
+                # GPU-resident NR solve - JIT compiled, runs on GPU via lax.while_loop
+                # Backward Euler: f = f_resist + (Q - Q_prev)/dt, J = J_resist + C/dt
+                V_new, iterations, converged, max_f, Q = nr_solve(V, vsource_vals, isource_vals, Q_prev, inv_dt, device_arrays)
 
-            V = V_new
-            Q_prev = Q  # Update charge state for next timestep
-            total_nr_iters += nr_iters
+                # Transfer results back to Python for logging/tracking (once per timestep)
+                nr_iters = int(iterations)
+                is_converged = bool(converged)
+                residual = float(max_f)
 
-            if not is_converged:
-                non_converged_steps.append((t, residual))
-                if nr_iters >= MAX_NR_ITERATIONS:
-                    logger.warning(f"t={t:.2e}s hit max iterations ({MAX_NR_ITERATIONS}), max_f={residual:.2e}")
-                else:
-                    logger.warning(f"t={t:.2e}s did not converge (max_f={residual:.2e})")
+                V = V_new
+                Q_prev = Q  # Update charge state for next timestep
+                total_nr_iters += nr_iters
 
-            # Record state (keep as JAX arrays, convert at end)
-            times_list.append(t)
-            voltage_history.append(V[:n_external])  # Single JAX slice, no float() calls
+                if not is_converged:
+                    non_converged_steps.append((t, residual))
+                    if nr_iters >= MAX_NR_ITERATIONS:
+                        logger.warning(f"t={t:.2e}s hit max iterations ({MAX_NR_ITERATIONS}), max_f={residual:.2e}")
+                    else:
+                        logger.warning(f"t={t:.2e}s did not converge (max_f={residual:.2e})")
 
-            V_prev = V
+                # Record state (keep as JAX arrays, convert at end)
+                times_list.append(t)
+                voltage_history.append(V[:n_external])  # Single JAX slice, no float() calls
+
+                V_prev = V
+
+        if profile_config:
+            with profile_section("simulation", profile_config):
+                run_simulation_loop()
+                # Ensure all GPU work completes before exiting profile section
+                if voltage_history:
+                    voltage_history[-1].block_until_ready()
+        else:
+            run_simulation_loop()
 
         # Build stats dict
         stats = {
@@ -2699,7 +2714,7 @@ class CircuitEngine:
         logger.info("Running lax.scan simulation...")
         t0 = time_module.perf_counter()
         if profile_config:
-            with profile_section("lax_scan_simulation", profile_config):
+            with profile_section("simulation", profile_config):
                 all_V, all_iters, all_converged = run_simulation_with_outputs(V0, Q0, all_vsource_vals, all_isource_vals, self._device_arrays)
                 jax.block_until_ready(all_V)
                 # Measure time BEFORE profile_section.__exit__ (which saves trace to disk)
