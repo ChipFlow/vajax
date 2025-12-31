@@ -973,32 +973,33 @@ class CircuitEngine:
             else:
                 device_params = jnp.empty((n_devices, 0), dtype=jnp.float64)
 
-            # Compute init cache - build init_inputs from col_values
+            # Free col_values - we've extracted shared_params and device_params
+            del col_values
+
+            # Generate split functions - translator must be available
+            translator = compiled.get('translator')
+            if translator is None or translator.dae_data is None:
+                raise RuntimeError(
+                    f"{model_type}: translator.dae_data not available for split function generation. "
+                    f"This indicates a bug - MIR data was released before split funcs could be generated."
+                )
+
+            # Compute init cache using split init (avoids large init_inputs array)
             init_to_eval = compiled.get('init_to_eval_indices')
-            vmapped_init = compiled.get('vmapped_init')
+            if init_to_eval is not None:
+                logger.info(f"{model_type}: generating split init function...")
+                init_to_eval_list = [int(x) for x in init_to_eval]
+                split_init_fn, init_split_meta = translator.translate_init_array_split(
+                    shared_indices, varying_indices_list, init_to_eval_list
+                )
+                # vmap with in_axes=(None, 0) - shared broadcasts, device mapped
+                vmapped_split_init = jax.jit(jax.vmap(split_init_fn, in_axes=(None, 0)))
 
-            if init_to_eval is not None and vmapped_init is not None:
-                logger.debug("Building init inputs from col_values")
-                # Build init_inputs by looking up each column in col_values
-                init_cols = []
-                for col in init_to_eval:
-                    col = int(col)
-                    val = col_values.get(col)
-                    if val is None:
-                        init_cols.append(np.zeros(n_devices, dtype=np.float64))
-                    elif isinstance(val, np.ndarray):
-                        init_cols.append(val)
-                    else:
-                        init_cols.append(np.full(n_devices, float(val), dtype=np.float64))
-                init_inputs = jnp.array(np.column_stack(init_cols), dtype=jnp.float64)
-
-                # Force CPU execution to avoid GPU JIT overhead
-                logger.info(f"Computing init cache for {model_type} ({n_devices} devices)...")
+                # Compute cache using split init (no large init_inputs array needed!)
+                logger.info(f"Computing init cache for {model_type} ({n_devices} devices) via split init...")
                 cpu_device = jax.devices('cpu')[0]
                 with jax.default_device(cpu_device):
-                    cache, collapse_decisions = vmapped_init(init_inputs)
-                # Free init_inputs immediately - no longer needed
-                del init_inputs
+                    cache, collapse_decisions = vmapped_split_init(shared_params, device_params)
                 logger.info(f"Init cache computed for {model_type}: shape={cache.shape}")
                 logger.debug(f"Collapse decisions for {model_type}: shape={collapse_decisions.shape}")
             else:
@@ -1006,17 +1007,6 @@ class CircuitEngine:
                 logger.debug("Model has no init function")
                 cache = jnp.empty((n_devices, 0), dtype=jnp.float64)
                 collapse_decisions = jnp.empty((n_devices, 0), dtype=jnp.float32)
-
-            # Free col_values - we've extracted everything we need
-            del col_values
-
-            # Generate split function - translator must be available
-            translator = compiled.get('translator')
-            if translator is None or translator.dae_data is None:
-                raise RuntimeError(
-                    f"{model_type}: translator.dae_data not available for split eval generation. "
-                    f"This indicates a bug - MIR data was released before split eval could be generated."
-                )
 
             logger.info(f"{model_type}: generating split eval function...")
             split_fn, split_meta = translator.translate_eval_array_with_cache_split(

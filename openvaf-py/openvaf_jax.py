@@ -271,6 +271,72 @@ class OpenVAFToJAX:
 
         return local_ns['init_fn'], metadata
 
+    def translate_init_array_split(
+        self,
+        shared_indices: List[int],
+        varying_indices: List[int],
+        init_to_eval: List[int]
+    ) -> Tuple[Callable, Dict]:
+        """Generate a vmappable init function that takes split shared/device params.
+
+        This is an optimized version of translate_init_array that reduces memory
+        by separating constant parameters (shared across all devices) from varying
+        parameters (different per device).
+
+        Args:
+            shared_indices: Eval param indices that are constant across all devices
+            varying_indices: Eval param indices that vary per device
+            init_to_eval: Mapping from init param index to eval param index
+
+        Returns a function with signature:
+            init_fn_split(shared_params: Array[N_shared], device_params: Array[N_varying])
+                -> (cache: Array[N_cache], collapse_decisions: Array[N_collapse])
+
+        The function should be vmapped with in_axes=(None, 0) so that:
+        - shared_params broadcasts (not sliced)
+        - device_params is mapped over axis 0
+        """
+        import time
+
+        t0 = time.perf_counter()
+        logger.info("    translate_init_array_split: generating code...")
+        code_lines = self._generate_init_code_array_split(
+            shared_indices, varying_indices, init_to_eval
+        )
+        t1 = time.perf_counter()
+        logger.info(f"    translate_init_array_split: code generated ({len(code_lines)} lines) in {t1-t0:.1f}s")
+
+        code = '\n'.join(code_lines)
+        logger.info(f"    translate_init_array_split: code size = {len(code)} chars")
+
+        # Compile and return
+        import jax.numpy as jnp
+        from jax import lax
+        local_ns = {'jnp': jnp, 'lax': lax}
+        logger.info("    translate_init_array_split: exec()...")
+        exec(code, local_ns)
+        t2 = time.perf_counter()
+        logger.info(f"    translate_init_array_split: exec() done in {t2-t1:.1f}s")
+
+        # Build metadata
+        param_defaults = {}
+        if hasattr(self.module, 'get_param_defaults'):
+            param_defaults = dict(self.module.get_param_defaults())
+
+        metadata = {
+            'param_names': list(self.module.init_param_names),
+            'param_kinds': list(self.module.init_param_kinds),
+            'cache_size': len(self.cache_mapping),
+            'cache_mapping': self.cache_mapping,
+            'param_defaults': param_defaults,
+            'collapsible_pairs': self.collapsible_pairs,
+            'collapse_decision_outputs': self.collapse_decision_outputs,
+            'shared_indices': shared_indices,
+            'varying_indices': varying_indices,
+        }
+
+        return local_ns['init_fn_split'], metadata
+
     def translate_eval_array_with_cache(self) -> Tuple[Callable, Dict]:
         """Generate a vmappable eval function that takes cache as input.
 
@@ -520,6 +586,159 @@ class OpenVAFToJAX:
                 # Value not computed - default to True (collapse) if negated, else False
                 # This handles the case where condition is always TRUE (never collapse)
                 # or always FALSE (always collapse)
+                collapse_vals.append("_ONE" if negate else "_ZERO")
+
+        if collapse_vals:
+            lines.append(f"    collapse_decisions = jnp.array([{', '.join(collapse_vals)}])")
+        else:
+            lines.append("    collapse_decisions = jnp.array([])")
+
+        lines.append("    return cache, collapse_decisions")
+        return lines
+
+    def _generate_init_code_array_split(
+        self,
+        shared_indices: List[int],
+        varying_indices: List[int],
+        init_to_eval: List[int]
+    ) -> List[str]:
+        """Generate split init function code with shared/device params.
+
+        Similar to _generate_init_code_array but takes split parameters:
+        - shared_params: constant params (broadcasted, not sliced)
+        - device_params: varying params (per-device)
+
+        This reduces memory by not replicating shared values across all devices.
+        """
+        # Build index mappings
+        shared_set = set(shared_indices)
+        varying_set = set(varying_indices)
+        shared_to_pos = {idx: pos for pos, idx in enumerate(shared_indices)}
+        varying_to_pos = {idx: pos for pos, idx in enumerate(varying_indices)}
+
+        lines = []
+        lines.append("def init_fn_split(shared_params, device_params):")
+        lines.append("    import jax.numpy as jnp")
+        lines.append("    from jax import lax")
+        lines.append("")
+        lines.append("    # Shared constants (defined once to reduce HLO size)")
+        lines.append("    _ZERO = jnp.float64(0.0)")
+        lines.append("    _ONE = jnp.float64(1.0)")
+        lines.append("")
+
+        # Initialize init constants
+        lines.append("    # Init constants")
+        for name, value in self.init_constants.items():
+            if value == float('inf'):
+                lines.append(f"    {name} = jnp.inf")
+            elif value == float('-inf'):
+                lines.append(f"    {name} = -jnp.inf")
+            elif value != value:  # NaN check
+                lines.append(f"    {name} = jnp.nan")
+            else:
+                lines.append(f"    {name} = {repr(value)}")
+
+        # Boolean constants
+        lines.append("    # Boolean constants")
+        for name, value in self.init_bool_constants.items():
+            lines.append(f"    {name} = {_jax_bool_repr(value)}")
+
+        # Int constants
+        lines.append("    # Int constants")
+        for name, value in self.init_int_constants.items():
+            lines.append(f"    {name} = {repr(value)}")
+
+        # Ensure v3 exists (commonly used for zero)
+        if 'v3' not in self.init_constants:
+            lines.append("    v3 = _ZERO")
+
+        lines.append("")
+
+        # Map init params from split arrays
+        lines.append("    # Init parameters from split arrays (shared/device)")
+        for init_idx, param in enumerate(self.init_params):
+            eval_idx = init_to_eval[init_idx] if init_idx < len(init_to_eval) else -1
+            if eval_idx in shared_set:
+                # Param is in shared_params
+                pos = shared_to_pos[eval_idx]
+                lines.append(f"    {param} = shared_params[{pos}]")
+            elif eval_idx in varying_set:
+                # Param is in device_params
+                pos = varying_to_pos[eval_idx]
+                lines.append(f"    {param} = device_params[{pos}]")
+            else:
+                # Param not found in either - use zero (shouldn't happen)
+                lines.append(f"    {param} = _ZERO  # fallback: eval_idx={eval_idx} not in split")
+
+        lines.append("")
+
+        # Track defined variables
+        init_defined: Set[str] = set(self.init_constants.keys())
+        init_defined.update(self.init_bool_constants.keys())
+        init_defined.update(self.init_int_constants.keys())
+        init_defined.update(self.init_params)
+        init_defined.add('v3')
+
+        # Process init blocks in topological order
+        init_block_order = self._topological_sort_init_blocks()
+        init_by_block = self._group_init_instructions_by_block()
+
+        lines.append("    # Init function computation")
+        for item in init_block_order:
+            if isinstance(item, tuple) and item[0] == 'loop':
+                _, header, loop_blocks, exit_blocks = item
+                loop_lines = self._generate_standalone_init_loop(
+                    header, loop_blocks, exit_blocks,
+                    init_by_block, init_defined
+                )
+                lines.extend(loop_lines)
+            else:
+                block_name = item
+                lines.append(f"")
+                lines.append(f"    # {block_name}")
+
+                for inst in init_by_block.get(block_name, []):
+                    expr = self._translate_standalone_init_instruction(inst, init_defined)
+                    if expr and 'result' in inst:
+                        result = inst['result']
+                        lines.append(f"    {result} = {expr}")
+                        init_defined.add(result)
+
+        lines.append("")
+
+        # Build cache output array
+        lines.append("    # Build cache array from computed values")
+        cache_vals = []
+        for mapping in self.cache_mapping:
+            init_val = mapping['init_value']
+            if init_val in init_defined:
+                cache_vals.append(init_val)
+            else:
+                cache_vals.append('_ZERO')
+
+        if cache_vals:
+            lines.append(f"    cache = jnp.array([{', '.join(cache_vals)}])")
+        else:
+            lines.append("    cache = jnp.array([])")
+
+        # Build collapse decision array
+        lines.append("")
+        lines.append("    # Build collapse decision array")
+        collapse_vals = []
+        for pair_idx, val_name in self.collapse_decision_outputs:
+            if val_name.startswith('!'):
+                actual_val = val_name[1:]
+                negate = True
+            else:
+                actual_val = val_name
+                negate = False
+
+            if actual_val in init_defined:
+                if negate:
+                    collapse_vals.append(f"jnp.float32(jnp.logical_not({actual_val}))")
+                else:
+                    collapse_vals.append(f"jnp.float32({actual_val})")
+            else:
                 collapse_vals.append("_ONE" if negate else "_ZERO")
 
         if collapse_vals:
