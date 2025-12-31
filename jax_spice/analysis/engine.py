@@ -14,6 +14,7 @@ components. The key functionality is:
 
 import re
 import sys
+import warnings
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable, Dict, List, Tuple, Any, Optional, Union
@@ -22,6 +23,12 @@ import jax
 import jax.numpy as jnp
 from jax import lax, Array
 import numpy as np
+
+# Suppress scipy's MatrixRankWarning from spsolve - this is expected for circuits
+# with floating internal nodes (e.g., PSP103 NOI nodes). The QR solver handles
+# near-singular matrices gracefully and produces correct results.
+from scipy.sparse.linalg import MatrixRankWarning
+warnings.filterwarnings('ignore', category=MatrixRankWarning)
 
 from jax_spice.netlist.parser import VACASKParser
 from jax_spice.netlist.circuit import Instance
