@@ -1002,19 +1002,58 @@ class CircuitEngine:
                     cache, collapse_decisions = vmapped_split_init(shared_params, device_params)
                 logger.info(f"Init cache computed for {model_type}: shape={cache.shape}")
                 logger.debug(f"Collapse decisions for {model_type}: shape={collapse_decisions.shape}")
+
+                # Analyze cache constancy - which columns are identical across all devices?
+                n_cache_cols = cache.shape[1] if cache.ndim > 1 else 0
+                if n_cache_cols > 0 and n_devices > 1:
+                    # Move cache to numpy for constancy analysis (faster than JAX comparisons)
+                    cache_np = np.asarray(cache)
+                    # A column is constant if all values equal the first device's value
+                    const_mask = np.all(cache_np == cache_np[0:1, :], axis=0)
+                    shared_cache_indices = [int(i) for i in np.where(const_mask)[0]]
+                    varying_cache_indices = [int(i) for i in np.where(~const_mask)[0]]
+
+                    n_shared_cache = len(shared_cache_indices)
+                    n_varying_cache = len(varying_cache_indices)
+                    logger.info(f"{model_type}: cache constancy analysis: "
+                               f"{n_shared_cache}/{n_cache_cols} shared, {n_varying_cache} varying")
+
+                    # Only use cache split if there are shared columns (worthwhile optimization)
+                    use_cache_split = n_shared_cache > 0
+                else:
+                    shared_cache_indices = []
+                    varying_cache_indices = list(range(n_cache_cols))
+                    use_cache_split = False
             else:
                 # Fallback for models without init function
                 logger.debug("Model has no init function")
                 cache = jnp.empty((n_devices, 0), dtype=jnp.float64)
                 collapse_decisions = jnp.empty((n_devices, 0), dtype=jnp.float32)
+                shared_cache_indices = []
+                varying_cache_indices = []
+                use_cache_split = False
 
-            logger.info(f"{model_type}: generating split eval function...")
-            split_fn, split_meta = translator.translate_eval_array_with_cache_split(
-                shared_indices, varying_indices_list
-            )
-            # Create vmapped split function with in_axes=(None, 0, 0)
-            # shared_params broadcasts, device_params and cache are mapped
-            vmapped_split_fn = jax.jit(jax.vmap(split_fn, in_axes=(None, 0, 0)))
+            # Generate eval function with param split and optional cache split
+            logger.info(f"{model_type}: generating split eval function (cache_split={use_cache_split})...")
+            if use_cache_split:
+                split_fn, split_meta = translator.translate_eval_array_with_cache_split(
+                    shared_indices, varying_indices_list,
+                    shared_cache_indices, varying_cache_indices
+                )
+                # vmap with in_axes=(None, 0, None, 0) - shared arrays broadcast
+                vmapped_split_fn = jax.jit(jax.vmap(split_fn, in_axes=(None, 0, None, 0)))
+
+                # Split cache arrays
+                shared_cache = cache[0, shared_cache_indices]  # (n_shared_cache,)
+                device_cache = cache[:, varying_cache_indices]  # (n_devices, n_varying_cache)
+            else:
+                split_fn, split_meta = translator.translate_eval_array_with_cache_split(
+                    shared_indices, varying_indices_list
+                )
+                # vmap with in_axes=(None, 0, 0)
+                vmapped_split_fn = jax.jit(jax.vmap(split_fn, in_axes=(None, 0, 0)))
+                shared_cache = None
+                device_cache = cache
 
             # Compute voltage positions within device_params (varying indices)
             varying_idx_to_pos = {orig_idx: pos for pos, orig_idx in enumerate(varying_indices_list)}
@@ -1031,13 +1070,23 @@ class CircuitEngine:
             compiled['device_params'] = device_params
             compiled['voltage_positions_in_varying'] = voltage_positions
             compiled['use_split_eval'] = True
+            compiled['use_cache_split'] = use_cache_split
+            compiled['shared_cache'] = shared_cache
+            compiled['device_cache'] = device_cache
+            compiled['shared_cache_indices'] = shared_cache_indices
+            compiled['varying_cache_indices'] = varying_cache_indices
 
             split_mem_mb = shared_params.nbytes / 1024 / 1024 + device_params.nbytes / 1024 / 1024
+            if shared_cache is not None:
+                split_mem_mb += shared_cache.nbytes / 1024 / 1024
+            if device_cache is not None:
+                split_mem_mb += device_cache.nbytes / 1024 / 1024
             # Compare to theoretical full array size (never allocated)
             theoretical_full_mb = n_devices * n_params_total * 8 / 1024 / 1024
             logger.info(f"{model_type}: split eval ready "
-                       f"(shared={len(shared_indices)}, varying={len(varying_indices_list)}, "
-                       f"split={split_mem_mb:.1f}MB vs full={theoretical_full_mb:.1f}MB)")
+                       f"(params: shared={len(shared_indices)}, varying={len(varying_indices_list)}; "
+                       f"cache: shared={len(shared_cache_indices)}, varying={len(varying_cache_indices)}; "
+                       f"mem={split_mem_mb:.1f}MB vs full={theoretical_full_mb:.1f}MB)")
 
             # NOTE: Do NOT release MIR data here - different circuits may have different
             # shared/varying splits and need to regenerate split functions. MIR data is
@@ -2993,14 +3042,17 @@ class CircuitEngine:
             # Check if this model has split eval support
             compiled = self._compiled_models.get(model_type, {})
             if compiled.get('use_split_eval', False):
+                use_cache_split = compiled.get('use_cache_split', False)
                 split_eval_info[model_type] = {
                     'vmapped_split_eval': compiled['vmapped_split_eval'],
                     'shared_params': compiled['shared_params'],
                     'device_params': compiled['device_params'],
                     'voltage_positions': compiled['voltage_positions_in_varying'],
+                    'use_cache_split': use_cache_split,
+                    'shared_cache': compiled.get('shared_cache'),
                 }
-            # Only store cache - split eval uses shared_params/device_params from split_eval_info
-            device_arrays[model_type] = cache
+            # Store device_cache (or full cache if not split) - this is passed to build_system
+            device_arrays[model_type] = compiled.get('device_cache', cache)
 
         def build_system(V: jax.Array, vsource_vals: jax.Array, isource_vals: jax.Array,
                         Q_prev: jax.Array, inv_dt: float | jax.Array,
@@ -3094,6 +3146,8 @@ class CircuitEngine:
                 shared_params = split_info['shared_params']
                 device_params = split_info['device_params']
                 voltage_positions = split_info['voltage_positions']
+                use_cache_split = split_info['use_cache_split']
+                shared_cache = split_info['shared_cache']
 
                 # Update voltage columns in device_params
                 device_params_updated = device_params.at[:, voltage_positions].set(voltage_updates)
@@ -3107,8 +3161,13 @@ class CircuitEngine:
                     device_params_updated = device_params_updated.at[:, -1].set(gmin)
 
                 vmapped_split_eval = split_info['vmapped_split_eval']
-                batch_res_resist, batch_res_react, batch_jac_resist, batch_jac_react = \
-                    vmapped_split_eval(shared_params, device_params_updated, cache)
+                # cache here is device_cache (or full cache if not split)
+                if use_cache_split:
+                    batch_res_resist, batch_res_react, batch_jac_resist, batch_jac_react = \
+                        vmapped_split_eval(shared_params, device_params_updated, shared_cache, cache)
+                else:
+                    batch_res_resist, batch_res_react, batch_jac_resist, batch_jac_react = \
+                        vmapped_split_eval(shared_params, device_params_updated, cache)
 
                 # NOTE: Huge value masking removed - NOI constraint enforcement in NR solver
                 # (lines 5601-5606) now handles 1e40 conductance by zeroing NOI rows/cols in J and f.
@@ -3803,10 +3862,15 @@ class CircuitEngine:
                     [n2 for n1, n2 in ctx['voltage_node_pairs']]
                     for ctx in device_contexts
                 ], dtype=jnp.int32)
-                cache = jnp.array(cache, dtype=jnp.float64)
+                # Use device_cache if available (from split cache optimization)
+                device_cache = compiled.get('device_cache', cache)
+                if device_cache is None:
+                    device_cache = jnp.array(cache, dtype=jnp.float64)
+                else:
+                    device_cache = jnp.array(device_cache, dtype=jnp.float64)
                 # Note: static_inputs removed - data is in shared_params/device_params in compiled dict
                 static_inputs_cache[model_type] = (
-                    voltage_indices, stamp_indices, voltage_node1, voltage_node2, cache, collapse_decisions
+                    voltage_indices, stamp_indices, voltage_node1, voltage_node2, device_cache, collapse_decisions
                 )
 
         # Count sources
@@ -3957,11 +4021,13 @@ class CircuitEngine:
             compiled = self._compiled_models[model_type]
             uses_analysis = compiled.get('uses_analysis', False)
             uses_simparam_gmin = compiled.get('uses_simparam_gmin', False)
+            use_cache_split = compiled.get('use_cache_split', False)
 
             shared_params = compiled['shared_params']
             device_params = compiled['device_params']
             voltage_positions = compiled['voltage_positions_in_varying']
             vmapped_split_eval = compiled['vmapped_split_eval']
+            shared_cache = compiled.get('shared_cache')
 
             # Update voltage columns in device_params
             device_params_updated = device_params.at[:, voltage_positions].set(voltage_updates)
@@ -3973,9 +4039,15 @@ class CircuitEngine:
             elif uses_simparam_gmin:
                 device_params_updated = device_params_updated.at[:, -1].set(1e-12)
 
-            _, _, batch_jac_resist, batch_jac_react = vmapped_split_eval(
-                shared_params, device_params_updated, cache
-            )
+            # cache here is device_cache (or full cache if not split)
+            if use_cache_split:
+                _, _, batch_jac_resist, batch_jac_react = vmapped_split_eval(
+                    shared_params, device_params_updated, shared_cache, cache
+                )
+            else:
+                _, _, batch_jac_resist, batch_jac_react = vmapped_split_eval(
+                    shared_params, device_params_updated, cache
+                )
 
             # Extract Jacobian entries
             jac_row_idx = stamp_indices['jac_row_indices']

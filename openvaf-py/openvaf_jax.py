@@ -392,34 +392,47 @@ class OpenVAFToJAX:
     def translate_eval_array_with_cache_split(
         self,
         shared_indices: List[int],
-        varying_indices: List[int]
+        varying_indices: List[int],
+        shared_cache_indices: Optional[List[int]] = None,
+        varying_cache_indices: Optional[List[int]] = None
     ) -> Tuple[Callable, Dict]:
-        """Generate a vmappable eval function that takes split shared/device params.
+        """Generate a vmappable eval function that takes split shared/device params and cache.
 
         This is an optimized version of translate_eval_array_with_cache that reduces
         HLO slice operations by separating constant parameters (shared across all devices)
-        from varying parameters (different per device).
+        from varying parameters (different per device). Also supports cache splitting.
 
         Args:
             shared_indices: Original param indices that are constant across all devices
             varying_indices: Original param indices that vary per device (including voltages)
+            shared_cache_indices: Cache column indices that are constant across devices (optional)
+            varying_cache_indices: Cache column indices that vary per device (optional)
 
-        Returns a function with signature:
+        Returns a function with signature (if cache is split):
+            eval_fn(shared_params: Array[N_shared],
+                    device_params: Array[N_varying],
+                    shared_cache: Array[N_shared_cache],
+                    device_cache: Array[N_varying_cache])
+                -> (res_resist, res_react, jac_resist, jac_react)
+
+        Or (if cache is not split):
             eval_fn(shared_params: Array[N_shared],
                     device_params: Array[N_varying],
                     cache: Array[N_cache])
                 -> (res_resist, res_react, jac_resist, jac_react)
 
-        The function should be vmapped with in_axes=(None, 0, 0) so that:
-        - shared_params broadcasts (not sliced)
-        - device_params is mapped over axis 0
-        - cache is mapped over axis 0
+        The function should be vmapped with in_axes=(None, 0, None, 0) for split cache
+        or in_axes=(None, 0, 0) for unsplit cache.
         """
         import time
 
+        use_cache_split = shared_cache_indices is not None and varying_cache_indices is not None
+
         t0 = time.perf_counter()
-        logger.info("    translate_eval_array_with_cache_split: generating code...")
-        code_lines = self._generate_eval_code_with_cache_split(shared_indices, varying_indices)
+        logger.info(f"    translate_eval_array_with_cache_split: generating code (cache_split={use_cache_split})...")
+        code_lines = self._generate_eval_code_with_cache_split(
+            shared_indices, varying_indices, shared_cache_indices, varying_cache_indices
+        )
         t1 = time.perf_counter()
         logger.info(f"    translate_eval_array_with_cache_split: code generated ({len(code_lines)} lines) in {t1-t0:.1f}s")
 
@@ -449,9 +462,13 @@ class OpenVAFToJAX:
             'analysis_type_map': self.analysis_type_map,
             'shared_indices': shared_indices,
             'varying_indices': varying_indices,
+            'use_cache_split': use_cache_split,
+            'shared_cache_indices': shared_cache_indices if use_cache_split else None,
+            'varying_cache_indices': varying_cache_indices if use_cache_split else None,
         }
 
-        return local_ns['eval_fn_with_cache_split'], metadata
+        fn_name = 'eval_fn_with_cache_split_cache' if use_cache_split else 'eval_fn_with_cache_split'
+        return local_ns[fn_name], metadata
 
     def _generate_init_code_array(self) -> List[str]:
         """Generate standalone init function code returning cache array.
@@ -891,21 +908,29 @@ class OpenVAFToJAX:
     def _generate_eval_code_with_cache_split(
         self,
         shared_indices: List[int],
-        varying_indices: List[int]
+        varying_indices: List[int],
+        shared_cache_indices: Optional[List[int]] = None,
+        varying_cache_indices: Optional[List[int]] = None
     ) -> List[str]:
-        """Generate eval function code that takes split shared/device params.
+        """Generate eval function code that takes split shared/device params and optionally split cache.
 
         This optimization reduces HLO slice operations by separating:
         - shared_params: constant across all devices (broadcast, not sliced)
         - device_params: varies per device (sliced via vmap)
+        - shared_cache: cache values constant across devices (broadcast, not sliced)
+        - device_cache: cache values that vary per device (sliced via vmap)
 
         Args:
             shared_indices: Original param indices that are constant across devices
             varying_indices: Original param indices that vary per device (including voltages)
+            shared_cache_indices: Original cache indices constant across devices (optional)
+            varying_cache_indices: Original cache indices that vary per device (optional)
 
         Returns:
             List of code lines for the split eval function
         """
+        use_cache_split = shared_cache_indices is not None and varying_cache_indices is not None
+
         # Build reverse mappings: original_idx -> (source, new_idx)
         # source is 'shared' or 'device'
         idx_mapping: Dict[int, Tuple[str, int]] = {}
@@ -914,8 +939,19 @@ class OpenVAFToJAX:
         for new_idx, orig_idx in enumerate(varying_indices):
             idx_mapping[orig_idx] = ('device', new_idx)
 
+        # Build cache mappings if using split cache
+        cache_idx_mapping: Dict[int, Tuple[str, int]] = {}
+        if use_cache_split:
+            for new_idx, orig_idx in enumerate(shared_cache_indices):
+                cache_idx_mapping[orig_idx] = ('shared_cache', new_idx)
+            for new_idx, orig_idx in enumerate(varying_cache_indices):
+                cache_idx_mapping[orig_idx] = ('device_cache', new_idx)
+
         lines = []
-        lines.append("def eval_fn_with_cache_split(shared_params, device_params, cache):")
+        if use_cache_split:
+            lines.append("def eval_fn_with_cache_split_cache(shared_params, device_params, shared_cache, device_cache):")
+        else:
+            lines.append("def eval_fn_with_cache_split(shared_params, device_params, cache):")
         lines.append("    import jax.numpy as jnp")
         lines.append("    from jax import lax")
         lines.append("")
@@ -974,15 +1010,26 @@ class OpenVAFToJAX:
 
         lines.append("")
 
-        # Map cache values to eval param slots - same as original
-        lines.append("    # Cache values from init function")
+        # Map cache values to eval param slots
         all_func_params = self.module.get_all_func_params()
         param_idx_to_val = {p[0]: f"v{p[1]}" for p in all_func_params}
 
-        for cache_idx, mapping in enumerate(self.cache_mapping):
-            eval_param_idx = mapping['eval_param']
-            eval_val = param_idx_to_val.get(eval_param_idx, f"cached_{eval_param_idx}")
-            lines.append(f"    {eval_val} = cache[{cache_idx}]")
+        if use_cache_split:
+            lines.append("    # Cache values from split shared/device cache arrays")
+            for cache_idx, mapping in enumerate(self.cache_mapping):
+                eval_param_idx = mapping['eval_param']
+                eval_val = param_idx_to_val.get(eval_param_idx, f"cached_{eval_param_idx}")
+                if cache_idx in cache_idx_mapping:
+                    source, new_idx = cache_idx_mapping[cache_idx]
+                    lines.append(f"    {eval_val} = {source}[{new_idx}]")
+                else:
+                    lines.append(f"    {eval_val} = _ZERO  # unmapped cache index {cache_idx}")
+        else:
+            lines.append("    # Cache values from init function")
+            for cache_idx, mapping in enumerate(self.cache_mapping):
+                eval_param_idx = mapping['eval_param']
+                eval_val = param_idx_to_val.get(eval_param_idx, f"cached_{eval_param_idx}")
+                lines.append(f"    {eval_val} = cache[{cache_idx}]")
 
         lines.append("")
 
