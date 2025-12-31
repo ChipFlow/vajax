@@ -916,6 +916,8 @@ class CircuitEngine:
         # Compute cache by calling init function
         # Extract init inputs from all_inputs using init_to_eval mapping
         static_inputs = jnp.asarray(all_inputs)
+        # Free the numpy array now that we have JAX copy - saves ~200MB for large circuits
+        del all_inputs
         init_to_eval = compiled.get('init_to_eval_indices')
         vmapped_init = compiled.get('vmapped_init')
 
@@ -1000,8 +1002,14 @@ class CircuitEngine:
                     compiled['voltage_positions_in_varying'] = voltage_positions
                     compiled['use_split_eval'] = True
 
+                    # Free the full static_inputs array - we only need shared_params and device_params
+                    # This saves ~200MB for large circuits like c6288
+                    old_size_mb = static_inputs.nbytes / 1024 / 1024
+                    static_inputs = jnp.empty((0, 0), dtype=static_inputs.dtype)
+                    new_size_mb = shared_params.nbytes / 1024 / 1024 + device_params.nbytes / 1024 / 1024
                     logger.info(f"{model_type}: split eval function ready "
-                               f"(shared={len(shared_indices)}, varying={len(varying_indices_list)})")
+                               f"(shared={len(shared_indices)}, varying={len(varying_indices_list)}, "
+                               f"memory: {old_size_mb:.1f}MB -> {new_size_mb:.1f}MB)")
                 except Exception as e:
                     logger.warning(f"{model_type}: failed to generate split function: {e}")
                     compiled['use_split_eval'] = False
@@ -3050,31 +3058,22 @@ class CircuitEngine:
             for model_type in model_types:
                 # Get metadata from closure (small) and arrays from argument (large)
                 voltage_indices, stamp_indices, voltage_node1, voltage_node2 = static_metadata[model_type]
-                static_inputs, cache = device_arrays_arg[model_type]
+                _, cache = device_arrays_arg[model_type]
                 vmapped_fn = vmapped_fns[model_type]
 
-                # Vectorized voltage update
+                # Vectorized voltage update (needed by all paths)
                 voltage_updates = V[voltage_node1] - V[voltage_node2]
-                batch_inputs = static_inputs.at[:, jnp.array(voltage_indices)].set(voltage_updates)
 
-                # Update analysis_type and gmin columns if this model uses them
-                # inv_dt > 0 means transient, inv_dt = 0 means DC
-                # Analysis type encoding: 0=dc/static, 1=ac, 2=tran, 3=noise
+                # Get model capabilities (captured in closure)
                 uses_analysis = self._compiled_models.get(model_type, {}).get('uses_analysis', False)
                 uses_simparam_gmin = self._compiled_models.get(model_type, {}).get('uses_simparam_gmin', False)
-                if uses_analysis:
-                    # Determine analysis type: DC (0) vs transient (2)
-                    analysis_type_val = jnp.where(inv_dt > 0, 2.0, 0.0)  # tran=2, dc=0
-                    batch_inputs = batch_inputs.at[:, -2].set(analysis_type_val)
-                    batch_inputs = batch_inputs.at[:, -1].set(gmin)
-                elif uses_simparam_gmin:
-                    batch_inputs = batch_inputs.at[:, -1].set(gmin)
 
                 # Batched device evaluation with cache - returns 4 arrays
                 # Use split eval if available (reduces HLO slice operations by ~99%)
                 split_info = split_eval_info.get(model_type)
                 if split_info is not None and cache.size > 0:
                     # Split eval path: shared_params broadcast, device_params per-device
+                    # NOTE: static_inputs from device_arrays is empty when split eval is available
                     shared_params = split_info['shared_params']
                     device_params = split_info['device_params']
                     voltage_positions = split_info['voltage_positions']
@@ -3085,7 +3084,7 @@ class CircuitEngine:
                     # Handle analysis_type and gmin in device_params
                     # These are the last 1-2 columns if the model uses them
                     if uses_analysis:
-                        analysis_type_val = jnp.where(inv_dt > 0, 2.0, 0.0)
+                        analysis_type_val = jnp.where(inv_dt > 0, 2.0, 0.0)  # tran=2, dc=0
                         device_params_updated = device_params_updated.at[:, -2].set(analysis_type_val)
                         device_params_updated = device_params_updated.at[:, -1].set(gmin)
                     elif uses_simparam_gmin:
@@ -3094,14 +3093,32 @@ class CircuitEngine:
                     vmapped_split_eval = split_info['vmapped_split_eval']
                     batch_res_resist, batch_res_react, batch_jac_resist, batch_jac_react = \
                         vmapped_split_eval(shared_params, device_params_updated, cache)
-                elif vmapped_fns.get(model_type + '_with_cache') is not None and cache.size > 0:
-                    # Standard eval_with_cache path
-                    vmapped_eval_with_cache = vmapped_fns[model_type + '_with_cache']
-                    batch_res_resist, batch_res_react, batch_jac_resist, batch_jac_react = \
-                        vmapped_eval_with_cache(batch_inputs, cache)
                 else:
-                    # Fallback to original vmapped function
-                    batch_res_resist, batch_res_react, batch_jac_resist, batch_jac_react = vmapped_fn(batch_inputs)
+                    # Old path: build batch_inputs from full static_inputs
+                    # Only used when split eval is unavailable (single device or no cache)
+                    # NOTE: This path is slower due to more HLO slice operations
+                    logger.info(f"{model_type}: using non-split eval path (split_info={split_info is not None}, "
+                               f"cache.size={cache.size})")
+                    static_inputs = device_arrays_arg[model_type][0]
+                    batch_inputs = static_inputs.at[:, jnp.array(voltage_indices)].set(voltage_updates)
+
+                    # Update analysis_type and gmin columns
+                    # inv_dt > 0 means transient, inv_dt = 0 means DC
+                    # Analysis type encoding: 0=dc/static, 1=ac, 2=tran, 3=noise
+                    if uses_analysis:
+                        analysis_type_val = jnp.where(inv_dt > 0, 2.0, 0.0)  # tran=2, dc=0
+                        batch_inputs = batch_inputs.at[:, -2].set(analysis_type_val)
+                        batch_inputs = batch_inputs.at[:, -1].set(gmin)
+                    elif uses_simparam_gmin:
+                        batch_inputs = batch_inputs.at[:, -1].set(gmin)
+
+                    # Standard eval_with_cache or fallback
+                    if vmapped_fns.get(model_type + '_with_cache') is not None and cache.size > 0:
+                        vmapped_eval_with_cache = vmapped_fns[model_type + '_with_cache']
+                        batch_res_resist, batch_res_react, batch_jac_resist, batch_jac_react = \
+                            vmapped_eval_with_cache(batch_inputs, cache)
+                    else:
+                        batch_res_resist, batch_res_react, batch_jac_resist, batch_jac_react = vmapped_fn(batch_inputs)
 
                 # NOTE: Huge value masking removed - NOI constraint enforcement in NR solver
                 # (lines 5601-5606) now handles 1e40 conductance by zeroing NOI rows/cols in J and f.
@@ -3940,30 +3957,58 @@ class CircuitEngine:
 
         # === OpenVAF device contributions ===
         for model_type in model_types:
-            static_inputs, voltage_indices, stamp_indices, voltage_node1, voltage_node2, cache, _ = \
+            _, voltage_indices, stamp_indices, voltage_node1, voltage_node2, cache, _ = \
                 static_inputs_cache[model_type]
             vmapped_fn = vmapped_fns[model_type]
 
             # Compute device voltages
             voltage_updates = V[voltage_node1] - V[voltage_node2]
-            batch_inputs = static_inputs.at[:, jnp.array(voltage_indices)].set(voltage_updates)
 
-            # Update analysis_type and gmin columns if this model uses them
-            # For AC analysis: analysis_type = 1
-            uses_analysis = self._compiled_models.get(model_type, {}).get('uses_analysis', False)
-            uses_simparam_gmin = self._compiled_models.get(model_type, {}).get('uses_simparam_gmin', False)
-            if uses_analysis:
-                batch_inputs = batch_inputs.at[:, -2].set(1.0)  # AC analysis
-                batch_inputs = batch_inputs.at[:, -1].set(1e-12)  # Default gmin
-            elif uses_simparam_gmin:
-                batch_inputs = batch_inputs.at[:, -1].set(1e-12)  # Default gmin
+            # Check if split eval is available for this model
+            compiled = self._compiled_models.get(model_type, {})
+            uses_analysis = compiled.get('uses_analysis', False)
+            uses_simparam_gmin = compiled.get('uses_simparam_gmin', False)
 
-            # Evaluate devices
-            vmapped_eval_with_cache = vmapped_fns.get(model_type + '_with_cache')
-            if vmapped_eval_with_cache is not None and cache.size > 0:
-                _, _, batch_jac_resist, batch_jac_react = vmapped_eval_with_cache(batch_inputs, cache)
+            if compiled.get('use_split_eval', False) and cache.size > 0:
+                # Split eval path: shared_params broadcast, device_params per-device
+                shared_params = compiled['shared_params']
+                device_params = compiled['device_params']
+                voltage_positions = compiled['voltage_positions_in_varying']
+                vmapped_split_eval = compiled['vmapped_split_eval']
+
+                # Update voltage columns in device_params
+                device_params_updated = device_params.at[:, voltage_positions].set(voltage_updates)
+
+                # Update analysis_type and gmin in device_params
+                # For AC analysis: analysis_type = 1
+                if uses_analysis:
+                    device_params_updated = device_params_updated.at[:, -2].set(1.0)  # AC analysis
+                    device_params_updated = device_params_updated.at[:, -1].set(1e-12)  # gmin
+                elif uses_simparam_gmin:
+                    device_params_updated = device_params_updated.at[:, -1].set(1e-12)  # gmin
+
+                _, _, batch_jac_resist, batch_jac_react = vmapped_split_eval(
+                    shared_params, device_params_updated, cache
+                )
             else:
-                _, _, batch_jac_resist, batch_jac_react = vmapped_fn(batch_inputs)
+                # Old path: full static_inputs (only used when split eval unavailable)
+                static_inputs = static_inputs_cache[model_type][0]
+                batch_inputs = static_inputs.at[:, jnp.array(voltage_indices)].set(voltage_updates)
+
+                # Update analysis_type and gmin columns if this model uses them
+                # For AC analysis: analysis_type = 1
+                if uses_analysis:
+                    batch_inputs = batch_inputs.at[:, -2].set(1.0)  # AC analysis
+                    batch_inputs = batch_inputs.at[:, -1].set(1e-12)  # Default gmin
+                elif uses_simparam_gmin:
+                    batch_inputs = batch_inputs.at[:, -1].set(1e-12)  # Default gmin
+
+                # Evaluate devices
+                vmapped_eval_with_cache = vmapped_fns.get(model_type + '_with_cache')
+                if vmapped_eval_with_cache is not None and cache.size > 0:
+                    _, _, batch_jac_resist, batch_jac_react = vmapped_eval_with_cache(batch_inputs, cache)
+                else:
+                    _, _, batch_jac_resist, batch_jac_react = vmapped_fn(batch_inputs)
 
             # Extract Jacobian entries
             jac_row_idx = stamp_indices['jac_row_indices']
