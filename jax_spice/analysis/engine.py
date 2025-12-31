@@ -765,6 +765,8 @@ class CircuitEngine:
             - cache is shape (num_devices, cache_size) JAX array with init-computed values
             - collapse_decisions is shape (num_devices, num_collapsible) JAX array with collapse booleans
         """
+        logger.debug(f"Preparing static inputs for {model_type}")
+
         compiled = self._compiled_models.get(model_type)
         if not compiled:
             raise ValueError(f"OpenVAF model {model_type} not compiled")
@@ -772,6 +774,10 @@ class CircuitEngine:
         param_names = compiled['param_names']
         param_kinds = compiled['param_kinds']
         model_nodes = compiled['nodes']
+
+        logger.debug(f"  param_names = {param_names}")
+        logger.debug(f"  {len(param_kinds)} param_kinds")
+        logger.debug(f"  {len(model_nodes)} model_nodes")
 
         # Find which parameter indices are voltages
         voltage_indices = []
@@ -788,6 +794,7 @@ class CircuitEngine:
         # === VECTORIZED PARAM FILLING (replaces 26M-iteration inner loop) ===
         # For c6288: reduces 10k × 2.6k = 26M iterations to ~100 vectorized numpy ops
         if n_devices > 0:
+            logger.debug("Filling params")
             all_dev_params = [dev['params'] for dev in openvaf_devices]
             # Get defaults from openvaf-py (extracted from Verilog-A source)
             model_defaults = compiled.get('init_param_defaults', {})
@@ -832,7 +839,7 @@ class CircuitEngine:
                         default = model_defaults.get(pname, 0.0)
                     for col in cols:
                         all_inputs[:, col] = default
-
+            logger.debug("Params filled")
             # NOTE: Hidden_state values are now computed by the init function
             # and passed to eval via cache. No manual computation needed here.
 
@@ -867,65 +874,8 @@ class CircuitEngine:
                 node_pair = self._parse_voltage_param(name, node_map, model_nodes, ground)
                 voltage_node_pairs.append(node_pair)
 
-            # Get model-specific defaults from openvaf-py (extracted from Verilog-A source)
-            # NOTE: This is redundant since vectorized filling above handles all params,
-            # but kept for consistency if the per-device loop is ever re-enabled.
-            model_defaults = compiled.get('init_param_defaults', {})
-
-            # Build a set of provided parameter names (lowercase) for param_given lookup
-            provided_params = set(k.lower() for k in params.keys())
-
-            # Fill input array for this device (static params only, voltages stay 0)
-            # NOTE: Vectorized filling is done above. Skip this 2600-line loop.
-            for param_idx, (name, kind) in enumerate(zip(param_names, param_kinds)):
-                continue  # SKIP - vectorized filling handles all params
-                if kind == 'voltage':
-                    pass  # Already 0 from np.zeros
-                elif kind == 'temperature':
-                    # Temperature parameters (e.g., $temperature)
-                    all_inputs[dev_idx, param_idx] = 300.15  # ~27°C in Kelvin
-                elif kind == 'sysfun':
-                    # System functions like mfactor
-                    # mfactor is the system-level device multiplier and must be 1.0 by default
-                    # (it's independent of the MULT model parameter)
-                    if name.lower() == 'mfactor':
-                        all_inputs[dev_idx, param_idx] = params.get('mfactor', 1.0)
-                elif kind == 'param_given':
-                    # param_given flags indicate whether a parameter was explicitly provided
-                    # Set to 1.0 if the parameter is in the params dict
-                    param_lower = name.lower()
-                    if param_lower in provided_params or name in params:
-                        all_inputs[dev_idx, param_idx] = 1.0
-                    # Otherwise leave at 0.0 (not provided)
-                elif kind == 'param':
-                    param_lower = name.lower()
-                    if param_lower in params:
-                        all_inputs[dev_idx, param_idx] = float(params[param_lower])
-                    elif name in params:
-                        all_inputs[dev_idx, param_idx] = float(params[name])
-                    elif 'temperature' in param_lower or name == '$temperature':
-                        all_inputs[dev_idx, param_idx] = 300.15
-                    elif param_lower == 'mfactor':
-                        all_inputs[dev_idx, param_idx] = params.get('mfactor', 1.0)
-                    elif param_lower in model_defaults:
-                        # Use model-specific default (handles tnom, etc. correctly)
-                        all_inputs[dev_idx, param_idx] = model_defaults[param_lower]
-                    elif param_lower in ('tnom', 'tref', 'tr'):
-                        # Temperature reference in Celsius (most VA models use 27°C)
-                        all_inputs[dev_idx, param_idx] = 27.0
-                    elif param_lower == 'cox':
-                        # COX = gate oxide capacitance per unit area = eps_r * eps_0 / t_ox
-                        # Must be computed from TOXO and EPSROXO if not provided directly
-                        toxo = float(params.get('toxo', params.get('TOXO', 2e-9)))
-                        epsroxo = float(params.get('epsroxo', params.get('EPSROXO', 3.9)))
-                        eps0 = 8.854187817e-12  # vacuum permittivity F/m
-                        all_inputs[dev_idx, param_idx] = epsroxo * eps0 / toxo
-                    else:
-                        all_inputs[dev_idx, param_idx] = 1.0
-                # hidden_state values are computed by init function and stored in cache
-                # eval_with_cache overrides input values with cache values for hidden_state
-                elif kind == 'hidden_state':
-                    pass  # Leave at 0, cache provides actual values
+            # NOTE: Parameter filling is done by vectorized code above (lines 788-834).
+            # The per-device loop that was here has been removed as it was dead code.
 
             device_contexts.append({
                 'name': dev['name'],
@@ -942,6 +892,7 @@ class CircuitEngine:
         uses_simparam_gmin = compiled.get('uses_simparam_gmin', False)
 
         if uses_analysis and n_devices > 0:
+            logger.debug("Appending analysis_type and gmin columns") 
             # Analysis type encoding: 0=dc/static, 1=ac, 2=tran, 3=noise
             # Default to DC analysis (type=0)
             analysis_type_column = np.full((n_devices, 1), 0.0, dtype=np.float64)
@@ -969,6 +920,7 @@ class CircuitEngine:
         vmapped_init = compiled.get('vmapped_init')
 
         if init_to_eval is not None and vmapped_init is not None:
+            logger.debug("Extracting init inputs")
             # Extract init inputs: shape (n_devices, n_init_params)
             init_inputs = static_inputs[:, init_to_eval]
             # Compute cache and collapse decisions
@@ -983,6 +935,7 @@ class CircuitEngine:
             logger.debug(f"Collapse decisions for {model_type}: shape={collapse_decisions.shape}")
         else:
             # Fallback for models without init function (e.g., resistor)
+            logger.debug("Model has no init function, inputs zeroed")
             cache = jnp.empty((n_devices, 0), dtype=jnp.float64)
             collapse_decisions = jnp.empty((n_devices, 0), dtype=jnp.float32)
 
@@ -1938,20 +1891,24 @@ class CircuitEngine:
             for model_type in openvaf_by_type:
                 compiled = self._compiled_models.get(model_type)
                 if compiled and 'vmapped_fn' in compiled:
+                    logger.debug(f"{model_type} already compiled")
                     vmapped_fns[model_type] = compiled['vmapped_fn']
                     # Also store vmapped_eval_with_cache if available (captured at setup, not looked up in traced fn)
                     if 'vmapped_eval_with_cache' in compiled:
+                        logger.debug(f"{model_type} has vmapped_eval_with_cache")
                         vmapped_fns[model_type + '_with_cache'] = compiled['vmapped_eval_with_cache']
                     static_inputs, voltage_indices, device_contexts, cache, collapse_decisions = self._prepare_static_inputs(
                         model_type, openvaf_by_type[model_type], device_internal_nodes, ground
                     )
                     # Pre-compute stamp index mapping (once per model type)
+                    logger.debug("building stamp_indicies")
                     stamp_indices = self._build_stamp_index_mapping(
                         model_type, device_contexts, ground
                     )
                     # Pre-compute voltage node arrays for vectorized update
                     n_devices = len(device_contexts)
                     # Build arrays directly from list comprehension (setup phase only)
+                    logger.debug("building voltage nodes")
                     voltage_node1 = jnp.array([
                         [n1 for n1, n2 in ctx['voltage_node_pairs']]
                         for ctx in device_contexts
@@ -2759,6 +2716,7 @@ class CircuitEngine:
         Returns dict with device data and pre-computed stamp templates.
         """
         # Group by model type (only vsource and isource expected)
+        logger.debug("Preparing source devices COO")
         by_type: Dict[str, List[Dict]] = {}
         for dev in source_devices:
             model = dev['model']
@@ -2769,6 +2727,7 @@ class CircuitEngine:
 
         result = {}
         for model, devs in by_type.items():
+            logger.debug(f"COO for {model}, {devs}")
             n = len(devs)
             # Extract node indices as JAX arrays
             node_p = jnp.array([d['nodes'][0] for d in devs], dtype=jnp.int32)
@@ -2777,6 +2736,7 @@ class CircuitEngine:
 
             # Pre-compute stamp templates for 2-terminal devices
             # Residual indices: [p-1, n-1] for each device, -1 if grounded
+            logger.debug("Pre-computing stamp templates")
             f_idx_p = jnp.where(node_p != ground, node_p - 1, -1)
             f_idx_n = jnp.where(node_n != ground, node_n - 1, -1)
             # Stack to shape (n, 2): [[p0, n0], [p1, n1], ...]
@@ -2832,7 +2792,7 @@ class CircuitEngine:
                     'j_cols': jnp.zeros((n, 0), dtype=jnp.int32),
                     'j_signs': jnp.array([]),
                 }
-
+            logger.debug("Stamp templates complete")
         return result
 
     def _collect_source_devices_coo(
