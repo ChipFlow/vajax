@@ -2727,7 +2727,7 @@ class CircuitEngine:
 
         result = {}
         for model, devs in by_type.items():
-            logger.debug(f"COO for {model}, {devs}")
+            logger.debug(f"COO for {model}")
             n = len(devs)
             # Extract node indices as JAX arrays
             node_p = jnp.array([d['nodes'][0] for d in devs], dtype=jnp.int32)
@@ -2955,8 +2955,6 @@ class CircuitEngine:
                 static_inputs_cache[model_type]
             # Metadata: small arrays and indices - captured in closure
             static_metadata[model_type] = (voltage_indices, stamp_indices, voltage_node1, voltage_node2)
-            # Arrays: large arrays - passed as argument
-            device_arrays[model_type] = (static_inputs, cache)
 
             # Check if this model has split eval support
             compiled = self._compiled_models.get(model_type, {})
@@ -2967,6 +2965,12 @@ class CircuitEngine:
                     'device_params': compiled['device_params'],
                     'voltage_positions': compiled['voltage_positions_in_varying'],
                 }
+                # When split eval is available, we don't need the full static_inputs
+                # Use empty placeholder to save memory (200MB for c6288)
+                device_arrays[model_type] = (jnp.empty((0, 0), dtype=static_inputs.dtype), cache)
+            else:
+                # Arrays: large arrays - passed as argument (only when split eval unavailable)
+                device_arrays[model_type] = (static_inputs, cache)
 
         def build_system(V: jax.Array, vsource_vals: jax.Array, isource_vals: jax.Array,
                         Q_prev: jax.Array, inv_dt: float | jax.Array,
