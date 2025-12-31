@@ -323,6 +323,70 @@ class OpenVAFToJAX:
 
         return local_ns['eval_fn_with_cache'], metadata
 
+    def translate_eval_array_with_cache_split(
+        self,
+        shared_indices: List[int],
+        varying_indices: List[int]
+    ) -> Tuple[Callable, Dict]:
+        """Generate a vmappable eval function that takes split shared/device params.
+
+        This is an optimized version of translate_eval_array_with_cache that reduces
+        HLO slice operations by separating constant parameters (shared across all devices)
+        from varying parameters (different per device).
+
+        Args:
+            shared_indices: Original param indices that are constant across all devices
+            varying_indices: Original param indices that vary per device (including voltages)
+
+        Returns a function with signature:
+            eval_fn(shared_params: Array[N_shared],
+                    device_params: Array[N_varying],
+                    cache: Array[N_cache])
+                -> (res_resist, res_react, jac_resist, jac_react)
+
+        The function should be vmapped with in_axes=(None, 0, 0) so that:
+        - shared_params broadcasts (not sliced)
+        - device_params is mapped over axis 0
+        - cache is mapped over axis 0
+        """
+        import time
+
+        t0 = time.perf_counter()
+        logger.info("    translate_eval_array_with_cache_split: generating code...")
+        code_lines = self._generate_eval_code_with_cache_split(shared_indices, varying_indices)
+        t1 = time.perf_counter()
+        logger.info(f"    translate_eval_array_with_cache_split: code generated ({len(code_lines)} lines) in {t1-t0:.1f}s")
+
+        code = '\n'.join(code_lines)
+        logger.info(f"    translate_eval_array_with_cache_split: code size = {len(code)} chars")
+
+        # Compile and return
+        import jax.numpy as jnp
+        from jax import lax
+        local_ns = {'jnp': jnp, 'lax': lax}
+        logger.info("    translate_eval_array_with_cache_split: exec()...")
+        exec(code, local_ns)
+        t2 = time.perf_counter()
+        logger.info(f"    translate_eval_array_with_cache_split: exec() done in {t2-t1:.1f}s")
+
+        # Build metadata - same as original
+        node_names = list(self.dae_data['residuals'].keys())
+        jacobian_keys = [(entry['row'], entry['col']) for entry in self.dae_data['jacobian']]
+        cache_to_param = [m['eval_param'] for m in self.cache_mapping]
+
+        metadata = {
+            'node_names': node_names,
+            'jacobian_keys': jacobian_keys,
+            'cache_to_param_mapping': cache_to_param,
+            'uses_simparam_gmin': self.uses_simparam_gmin,
+            'uses_analysis': self.uses_analysis,
+            'analysis_type_map': self.analysis_type_map,
+            'shared_indices': shared_indices,
+            'varying_indices': varying_indices,
+        }
+
+        return local_ns['eval_fn_with_cache_split'], metadata
+
     def _generate_init_code_array(self) -> List[str]:
         """Generate standalone init function code returning cache array.
 
@@ -334,6 +398,10 @@ class OpenVAFToJAX:
         lines.append("def init_fn(inputs):")
         lines.append("    import jax.numpy as jnp")
         lines.append("    from jax import lax")
+        lines.append("")
+        lines.append("    # Shared constants (defined once to reduce HLO size)")
+        lines.append("    _ZERO = jnp.float64(0.0)")
+        lines.append("    _ONE = jnp.float64(1.0)")
         lines.append("")
 
         # Initialize init constants
@@ -360,7 +428,7 @@ class OpenVAFToJAX:
 
         # Ensure v3 exists (commonly used for zero)
         if 'v3' not in self.init_constants:
-            lines.append("    v3 = 0.0")
+            lines.append("    v3 = _ZERO")
 
         lines.append("")
 
@@ -418,8 +486,8 @@ class OpenVAFToJAX:
             if init_val in init_defined:
                 cache_vals.append(init_val)
             else:
-                # Value not computed - use 0.0 as fallback
-                cache_vals.append('0.0')
+                # Value not computed - use _ZERO as fallback
+                cache_vals.append('_ZERO')
 
         if cache_vals:
             lines.append(f"    cache = jnp.array([{', '.join(cache_vals)}])")
@@ -452,7 +520,7 @@ class OpenVAFToJAX:
                 # Value not computed - default to True (collapse) if negated, else False
                 # This handles the case where condition is always TRUE (never collapse)
                 # or always FALSE (always collapse)
-                collapse_vals.append("1.0" if negate else "0.0")
+                collapse_vals.append("_ONE" if negate else "_ZERO")
 
         if collapse_vals:
             lines.append(f"    collapse_decisions = jnp.array([{', '.join(collapse_vals)}])")
@@ -473,6 +541,10 @@ class OpenVAFToJAX:
         lines.append("def eval_fn_with_cache(inputs, cache):")
         lines.append("    import jax.numpy as jnp")
         lines.append("    from jax import lax")
+        lines.append("")
+        lines.append("    # Shared constants (defined once to reduce HLO size)")
+        lines.append("    _ZERO = jnp.float64(0.0)")
+        lines.append("    _ONE = jnp.float64(1.0)")
         lines.append("")
 
         # Initialize constants for eval function
@@ -500,7 +572,7 @@ class OpenVAFToJAX:
 
         # Ensure v3 exists
         if 'v3' not in self.constants:
-            lines.append("    v3 = 0.0")
+            lines.append("    v3 = _ZERO")
 
         lines.append("")
 
@@ -577,8 +649,8 @@ class OpenVAFToJAX:
         residual_resist_exprs = []
         residual_react_exprs = []
         for node, res in self.dae_data['residuals'].items():
-            resist_val = res['resist'] if res['resist'] in defined_vars else '0.0'
-            react_val = res['react'] if res['react'] in defined_vars else '0.0'
+            resist_val = res['resist'] if res['resist'] in defined_vars else '_ZERO'
+            react_val = res['react'] if res['react'] in defined_vars else '_ZERO'
             residual_resist_exprs.append(resist_val)
             residual_react_exprs.append(react_val)
         lines.append(f"    residuals_resist = jnp.array([{', '.join(residual_resist_exprs)}])")
@@ -587,8 +659,8 @@ class OpenVAFToJAX:
         jacobian_resist_exprs = []
         jacobian_react_exprs = []
         for entry in self.dae_data['jacobian']:
-            resist_val = entry['resist'] if entry['resist'] in defined_vars else '0.0'
-            react_val = entry['react'] if entry['react'] in defined_vars else '0.0'
+            resist_val = entry['resist'] if entry['resist'] in defined_vars else '_ZERO'
+            react_val = entry['react'] if entry['react'] in defined_vars else '_ZERO'
             jacobian_resist_exprs.append(resist_val)
             jacobian_react_exprs.append(react_val)
         lines.append(f"    jacobian_resist = jnp.array([{', '.join(jacobian_resist_exprs)}])")
@@ -596,6 +668,179 @@ class OpenVAFToJAX:
 
         lines.append("    return residuals_resist, residuals_react, jacobian_resist, jacobian_react")
         return lines
+
+    def _generate_eval_code_with_cache_split(
+        self,
+        shared_indices: List[int],
+        varying_indices: List[int]
+    ) -> List[str]:
+        """Generate eval function code that takes split shared/device params.
+
+        This optimization reduces HLO slice operations by separating:
+        - shared_params: constant across all devices (broadcast, not sliced)
+        - device_params: varies per device (sliced via vmap)
+
+        Args:
+            shared_indices: Original param indices that are constant across devices
+            varying_indices: Original param indices that vary per device (including voltages)
+
+        Returns:
+            List of code lines for the split eval function
+        """
+        # Build reverse mappings: original_idx -> (source, new_idx)
+        # source is 'shared' or 'device'
+        idx_mapping: Dict[int, Tuple[str, int]] = {}
+        for new_idx, orig_idx in enumerate(shared_indices):
+            idx_mapping[orig_idx] = ('shared', new_idx)
+        for new_idx, orig_idx in enumerate(varying_indices):
+            idx_mapping[orig_idx] = ('device', new_idx)
+
+        lines = []
+        lines.append("def eval_fn_with_cache_split(shared_params, device_params, cache):")
+        lines.append("    import jax.numpy as jnp")
+        lines.append("    from jax import lax")
+        lines.append("")
+        lines.append("    # Shared constants (defined once to reduce HLO size)")
+        lines.append("    _ZERO = jnp.float64(0.0)")
+        lines.append("    _ONE = jnp.float64(1.0)")
+        lines.append("")
+
+        # Initialize constants for eval function
+        lines.append("    # Constants (eval function)")
+        for name, value in self.constants.items():
+            if value == float('inf'):
+                lines.append(f"    {name} = jnp.inf")
+            elif value == float('-inf'):
+                lines.append(f"    {name} = -jnp.inf")
+            elif value != value:  # NaN check
+                lines.append(f"    {name} = jnp.nan")
+            else:
+                lines.append(f"    {name} = {repr(value)}")
+
+        # Boolean constants
+        lines.append("    # Boolean constants")
+        for name, value in self.bool_constants.items():
+            lines.append(f"    {name} = {_jax_bool_repr(value)}")
+
+        # Int constants
+        lines.append("    # Int constants")
+        for name, value in self.int_constants.items():
+            if name not in self.constants:
+                lines.append(f"    {name} = {repr(value)}")
+
+        # Ensure v3 exists
+        if 'v3' not in self.constants:
+            lines.append("    v3 = _ZERO")
+
+        lines.append("")
+
+        # Map function parameters from split inputs
+        lines.append("    # Input parameters (from split shared/device params)")
+        num_named_params = len(self.module.param_names)
+        for i, param in enumerate(self.params[:num_named_params]):
+            if i in idx_mapping:
+                source, new_idx = idx_mapping[i]
+                if source == 'shared':
+                    lines.append(f"    {param} = shared_params[{new_idx}]")
+                else:
+                    lines.append(f"    {param} = device_params[{new_idx}]")
+            else:
+                # Fallback - shouldn't happen if indices are complete
+                lines.append(f"    {param} = _ZERO  # unmapped index {i}")
+
+        # Derivative selector params default to 0
+        lines.append("    # Derivative selector params (default to 0)")
+        for param in self.params[num_named_params:]:
+            lines.append(f"    {param} = 0")
+
+        lines.append("")
+
+        # Map cache values to eval param slots - same as original
+        lines.append("    # Cache values from init function")
+        all_func_params = self.module.get_all_func_params()
+        param_idx_to_val = {p[0]: f"v{p[1]}" for p in all_func_params}
+
+        for cache_idx, mapping in enumerate(self.cache_mapping):
+            eval_param_idx = mapping['eval_param']
+            eval_val = param_idx_to_val.get(eval_param_idx, f"cached_{eval_param_idx}")
+            lines.append(f"    {eval_val} = cache[{cache_idx}]")
+
+        lines.append("")
+
+        # Track defined variables
+        defined_vars: Set[str] = set(self.constants.keys())
+        defined_vars.update(self.bool_constants.keys())
+        defined_vars.update(self.int_constants.keys())
+        defined_vars.update(self.params)
+        defined_vars.add('v3')
+
+        # Add cache-assigned variables to defined set
+        for mapping in self.cache_mapping:
+            eval_param_idx = mapping['eval_param']
+            eval_val = param_idx_to_val.get(eval_param_idx, f"cached_{eval_param_idx}")
+            defined_vars.add(eval_val)
+
+        # Process eval blocks in topological order (no init blocks) - same as original
+        block_order = self._topological_sort()
+        eval_by_block = self._group_eval_instructions_by_block()
+
+        lines.append("    # Eval function computation")
+        for item in block_order:
+            if isinstance(item, tuple) and item[0] == 'loop':
+                _, header, loop_blocks, exit_blocks = item
+                loop_lines = self._generate_eval_loop(
+                    header, loop_blocks, exit_blocks,
+                    eval_by_block, defined_vars
+                )
+                lines.extend(loop_lines)
+            else:
+                block_name = item
+                lines.append(f"")
+                lines.append(f"    # {block_name}")
+
+                for inst in eval_by_block.get(block_name, []):
+                    expr = self._translate_instruction(inst, defined_vars)
+                    if expr and 'result' in inst:
+                        lines.append(f"    {inst['result']} = {expr}")
+                        defined_vars.add(inst['result'])
+
+        lines.append("")
+
+        # Build array outputs - same as original
+        lines.append("    # Build output arrays (vmap-compatible)")
+
+        residual_resist_exprs = []
+        residual_react_exprs = []
+        for node, res in self.dae_data['residuals'].items():
+            resist_val = res['resist'] if res['resist'] in defined_vars else '_ZERO'
+            react_val = res['react'] if res['react'] in defined_vars else '_ZERO'
+            residual_resist_exprs.append(resist_val)
+            residual_react_exprs.append(react_val)
+        lines.append(f"    residuals_resist = jnp.array([{', '.join(residual_resist_exprs)}])")
+        lines.append(f"    residuals_react = jnp.array([{', '.join(residual_react_exprs)}])")
+
+        jacobian_resist_exprs = []
+        jacobian_react_exprs = []
+        for entry in self.dae_data['jacobian']:
+            resist_val = entry['resist'] if entry['resist'] in defined_vars else '_ZERO'
+            react_val = entry['react'] if entry['react'] in defined_vars else '_ZERO'
+            jacobian_resist_exprs.append(resist_val)
+            jacobian_react_exprs.append(react_val)
+        lines.append(f"    jacobian_resist = jnp.array([{', '.join(jacobian_resist_exprs)}])")
+        lines.append(f"    jacobian_react = jnp.array([{', '.join(jacobian_react_exprs)}])")
+
+        lines.append("    return residuals_resist, residuals_react, jacobian_resist, jacobian_react")
+
+        # Post-process: Replace 'inputs[-1]' and 'inputs[-2]' with 'device_params[-1]' and 'device_params[-2]'
+        # This is needed because _translate_instruction generates code assuming the original 'inputs' array,
+        # but in split mode, gmin and analysis_type are in device_params (as the last columns)
+        fixed_lines = []
+        for line in lines:
+            line = line.replace('inputs[-1]', 'device_params[-1]')
+            line = line.replace('inputs[-2]', 'device_params[-2]')
+            fixed_lines.append(line)
+
+        return fixed_lines
 
     def _translate_standalone_init_instruction(self, inst: dict, defined_vars: Set[str]) -> Optional[str]:
         """Translate an init instruction without init_ prefix (for standalone init function)"""
@@ -626,14 +871,14 @@ class OpenVAFToJAX:
                 cond_info = self._get_standalone_init_phi_condition(phi_block, pred_blocks)
                 if cond_info:
                     cond_var, true_block, false_block = cond_info
-                    true_val = val_by_block.get(true_block, '0.0')
-                    false_val = val_by_block.get(false_block, '0.0')
+                    true_val = val_by_block.get(true_block, '_ZERO')
+                    false_val = val_by_block.get(false_block, '_ZERO')
                     return f"jnp.where({cond_var}, {true_val}, {false_val})"
                 else:
                     return get_operand(phi_ops[0]['value'])
             elif phi_ops:
                 return get_operand(phi_ops[0]['value'])
-            return '0.0'
+            return '_ZERO'
 
         return self._translate_instruction_impl(inst, get_operand)
 
@@ -652,23 +897,23 @@ class OpenVAFToJAX:
         pred_blocks = [op['block'] for op in phi_ops]
 
         result = self._build_standalone_init_nested_where(phi_block, pred_blocks, val_by_block, blocks, branch_conds)
-        return result if result else val_by_block.get(pred_blocks[0], '0.0')
+        return result if result else val_by_block.get(pred_blocks[0], '_ZERO')
 
     def _build_standalone_init_nested_where(self, phi_block: str, pred_blocks: List[str],
                                              pred_to_val: Dict[str, str], blocks: Dict,
                                              branch_conds: Dict) -> Optional[str]:
         """Build nested where for standalone init (no prefix on conditions)"""
         if len(pred_blocks) == 1:
-            return pred_to_val.get(pred_blocks[0], '0.0')
+            return pred_to_val.get(pred_blocks[0], '_ZERO')
 
         if len(pred_blocks) == 2:
             cond_info = self._get_standalone_init_phi_condition(phi_block, pred_blocks)
             if cond_info:
                 cond_var, true_block, false_block = cond_info
-                true_val = pred_to_val.get(true_block, '0.0')
-                false_val = pred_to_val.get(false_block, '0.0')
+                true_val = pred_to_val.get(true_block, '_ZERO')
+                false_val = pred_to_val.get(false_block, '_ZERO')
                 return f"jnp.where({cond_var}, {true_val}, {false_val})"
-            return pred_to_val.get(pred_blocks[0], '0.0')
+            return pred_to_val.get(pred_blocks[0], '_ZERO')
 
         # For >2 predecessors
         for block_name in blocks:
@@ -689,7 +934,7 @@ class OpenVAFToJAX:
 
             if direct_pred and indirect_succ:
                 cond_var, is_true = branch_conds[block_name][direct_pred]
-                direct_val = pred_to_val.get(direct_pred, '0.0')
+                direct_val = pred_to_val.get(direct_pred, '_ZERO')
                 remaining_preds = [p for p in pred_blocks if p != direct_pred]
 
                 remaining_expr = self._build_standalone_init_nested_where(
@@ -870,6 +1115,10 @@ class OpenVAFToJAX:
         lines.append("    import jax.numpy as jnp")
         lines.append("    from jax import lax")
         lines.append("")
+        lines.append("    # Shared constants (defined once to reduce HLO size)")
+        lines.append("    _ZERO = jnp.float64(0.0)")
+        lines.append("    _ONE = jnp.float64(1.0)")
+        lines.append("")
 
         # Only use eval constants (init constants are prefixed separately)
         # Initialize constants for eval function
@@ -903,7 +1152,7 @@ class OpenVAFToJAX:
 
         # Ensure v3 exists (commonly used for zero)
         if 'v3' not in self.constants:
-            lines.append("    v3 = 0.0")
+            lines.append("    v3 = _ZERO")
 
         lines.append("")
 
@@ -1060,16 +1309,16 @@ class OpenVAFToJAX:
         lines.append("    # Build outputs (dict format)")
         lines.append("    residuals = {")
         for node, res in self.dae_data['residuals'].items():
-            resist_val = res['resist'] if res['resist'] in defined_vars else '0.0'
-            react_val = res['react'] if res['react'] in defined_vars else '0.0'
+            resist_val = res['resist'] if res['resist'] in defined_vars else '_ZERO'
+            react_val = res['react'] if res['react'] in defined_vars else '_ZERO'
             lines.append(f"        '{node}': {{'resist': {resist_val}, 'react': {react_val}}},")
         lines.append("    }")
 
         lines.append("    jacobian = {")
         for entry in self.dae_data['jacobian']:
             key = f"('{entry['row']}', '{entry['col']}')"
-            resist_val = entry['resist'] if entry['resist'] in defined_vars else '0.0'
-            react_val = entry['react'] if entry['react'] in defined_vars else '0.0'
+            resist_val = entry['resist'] if entry['resist'] in defined_vars else '_ZERO'
+            react_val = entry['react'] if entry['react'] in defined_vars else '_ZERO'
             lines.append(f"        {key}: {{'resist': {resist_val}, 'react': {react_val}}},")
         lines.append("    }")
 
@@ -1096,8 +1345,8 @@ class OpenVAFToJAX:
         residual_resist_exprs = []
         residual_react_exprs = []
         for node, res in self.dae_data['residuals'].items():
-            resist_val = res['resist'] if res['resist'] in defined_vars else '0.0'
-            react_val = res['react'] if res['react'] in defined_vars else '0.0'
+            resist_val = res['resist'] if res['resist'] in defined_vars else '_ZERO'
+            react_val = res['react'] if res['react'] in defined_vars else '_ZERO'
             residual_resist_exprs.append(resist_val)
             residual_react_exprs.append(react_val)
         lines.append(f"    residuals_resist = jnp.array([{', '.join(residual_resist_exprs)}])")
@@ -1107,8 +1356,8 @@ class OpenVAFToJAX:
         jacobian_resist_exprs = []
         jacobian_react_exprs = []
         for entry in self.dae_data['jacobian']:
-            resist_val = entry['resist'] if entry['resist'] in defined_vars else '0.0'
-            react_val = entry['react'] if entry['react'] in defined_vars else '0.0'
+            resist_val = entry['resist'] if entry['resist'] in defined_vars else '_ZERO'
+            react_val = entry['react'] if entry['react'] in defined_vars else '_ZERO'
             jacobian_resist_exprs.append(resist_val)
             jacobian_react_exprs.append(react_val)
         lines.append(f"    jacobian_resist = jnp.array([{', '.join(jacobian_resist_exprs)}])")
@@ -1966,7 +2215,7 @@ class OpenVAFToJAX:
         if not cond_chain:
             # Fallback: couldn't figure out the condition structure
             # Just return the first value
-            return val_by_block.get(pred_blocks[0], '0.0')
+            return val_by_block.get(pred_blocks[0], '_ZERO')
 
         # Build the expression from the condition chain
         # For a 3-way PHI (cutoff/linear/sat):
@@ -1983,7 +2232,7 @@ class OpenVAFToJAX:
             phi_block, pred_blocks, pred_to_val, blocks, branch_conds
         )
 
-        return result if result else val_by_block.get(pred_blocks[0], '0.0')
+        return result if result else val_by_block.get(pred_blocks[0], '_ZERO')
 
     def _build_nested_where_from_blocks(self, phi_block: str, pred_blocks: List[str],
                                          pred_to_val: Dict[str, str], blocks: Dict,
@@ -1993,7 +2242,7 @@ class OpenVAFToJAX:
         This traces backwards from the PHI block to find the conditions.
         """
         if len(pred_blocks) == 1:
-            return pred_to_val.get(pred_blocks[0], '0.0')
+            return pred_to_val.get(pred_blocks[0], '_ZERO')
 
         if len(pred_blocks) == 2:
             # Base case: 2 predecessors, find the branching condition
@@ -2001,11 +2250,11 @@ class OpenVAFToJAX:
             cond_info = self._get_phi_condition(phi_block, pred_blocks)
             if cond_info:
                 cond_var, true_block, false_block = cond_info
-                true_val = pred_to_val.get(true_block, '0.0')
-                false_val = pred_to_val.get(false_block, '0.0')
+                true_val = pred_to_val.get(true_block, '_ZERO')
+                false_val = pred_to_val.get(false_block, '_ZERO')
                 return f"jnp.where({cond_var}, {true_val}, {false_val})"
             else:
-                return pred_to_val.get(pred_blocks[0], '0.0')
+                return pred_to_val.get(pred_blocks[0], '_ZERO')
 
         # For >2 predecessors, find a block that branches to one of them
         # and another block that leads to the rest
@@ -2034,7 +2283,7 @@ class OpenVAFToJAX:
                 cond_var, is_true = branch_conds[block_name][direct_pred]
 
                 # Get the value for the direct path
-                direct_val = pred_to_val.get(direct_pred, '0.0')
+                direct_val = pred_to_val.get(direct_pred, '_ZERO')
 
                 # Find remaining preds (those not reached by direct path)
                 remaining_preds = [p for p in pred_blocks if p != direct_pred]
@@ -2077,7 +2326,7 @@ class OpenVAFToJAX:
 
         # logger.debug(f"_build_init_multi_way_phi: done, result={'ok' if result else 'fallback'}")
 
-        return result if result else val_by_block.get(pred_blocks[0], '0.0')
+        return result if result else val_by_block.get(pred_blocks[0], '_ZERO')
 
     def _build_init_nested_where_from_blocks(self, phi_block: str, pred_blocks: List[str],
                                               pred_to_val: Dict[str, str], blocks: Dict,
@@ -2101,18 +2350,18 @@ class OpenVAFToJAX:
         #     logger.debug(f"_build_init_nested_where: phi_block={phi_block}, num_preds={len(pred_blocks)}")
 
         if len(pred_blocks) == 1:
-            return pred_to_val.get(pred_blocks[0], '0.0')
+            return pred_to_val.get(pred_blocks[0], '_ZERO')
 
         if len(pred_blocks) == 2:
             # Base case: 2 predecessors, find the branching condition
             cond_info = self._get_init_phi_condition(phi_block, pred_blocks)
             if cond_info:
                 cond_var, true_block, false_block = cond_info
-                true_val = pred_to_val.get(true_block, '0.0')
-                false_val = pred_to_val.get(false_block, '0.0')
+                true_val = pred_to_val.get(true_block, '_ZERO')
+                false_val = pred_to_val.get(false_block, '_ZERO')
                 return f"jnp.where({cond_var}, {true_val}, {false_val})"
             else:
-                return pred_to_val.get(pred_blocks[0], '0.0')
+                return pred_to_val.get(pred_blocks[0], '_ZERO')
 
         # For >2 predecessors, find a block that branches to one of them
         # and another block that leads to the rest
@@ -2140,7 +2389,7 @@ class OpenVAFToJAX:
                 cond_var = f"init_{cond_var}"
 
                 # Get the value for the direct path
-                direct_val = pred_to_val.get(direct_pred, '0.0')
+                direct_val = pred_to_val.get(direct_pred, '_ZERO')
 
                 # Find remaining preds (those not reached by direct path)
                 remaining_preds = [p for p in pred_blocks if p != direct_pred]
@@ -2156,7 +2405,7 @@ class OpenVAFToJAX:
                 # Even if remaining_expr is None, we still return here to avoid
                 # O(n!) backtracking. Use the first remaining pred as fallback.
                 if remaining_expr is None:
-                    remaining_expr = pred_to_val.get(remaining_preds[0], '0.0')
+                    remaining_expr = pred_to_val.get(remaining_preds[0], '_ZERO')
 
                 if is_true:
                     return f"jnp.where({cond_var}, {direct_val}, {remaining_expr})"
@@ -2201,8 +2450,8 @@ class OpenVAFToJAX:
                 cond_info = self._get_init_phi_condition(phi_block, pred_blocks)
                 if cond_info:
                     cond_var, true_block, false_block = cond_info
-                    true_val = val_by_block.get(true_block, '0.0')
-                    false_val = val_by_block.get(false_block, '0.0')
+                    true_val = val_by_block.get(true_block, '_ZERO')
+                    false_val = val_by_block.get(false_block, '_ZERO')
                     return f"jnp.where({cond_var}, {true_val}, {false_val})"
                 else:
                     # Fallback: just use first value (may be incorrect)
@@ -2210,7 +2459,7 @@ class OpenVAFToJAX:
                     return val0
             elif phi_ops:
                 return get_operand(phi_ops[0]['value'])
-            return '0.0'
+            return '_ZERO'
 
         return self._translate_instruction_impl(inst, get_operand)
 
@@ -2246,7 +2495,7 @@ class OpenVAFToJAX:
         elif opcode == 'fdiv':
             ops = [get_operand(op) for op in operands]
             # Use safe division to avoid div-by-zero when conditionals are linearized
-            return f"jnp.where({ops[1]} == 0.0, 0.0, {ops[0]} / jnp.where({ops[1]} == 0.0, 1.0, {ops[1]}))"
+            return f"jnp.where({ops[1]} == _ZERO, _ZERO, {ops[0]} / jnp.where({ops[1]} == _ZERO, _ONE, {ops[1]}))"
 
         elif opcode == 'fneg':
             ops = [get_operand(op) for op in operands]
@@ -2312,7 +2561,7 @@ class OpenVAFToJAX:
         elif opcode == 'optbarrier':
             # Optimization barrier - just pass through
             ops = [get_operand(op) for op in operands]
-            return ops[0] if ops else '0.0'
+            return ops[0] if ops else '_ZERO'
 
         elif opcode == 'phi':
             # PHI node - select value based on control flow
@@ -2334,8 +2583,8 @@ class OpenVAFToJAX:
                 cond_info = self._get_phi_condition(phi_block, pred_blocks)
                 if cond_info:
                     cond_var, true_block, false_block = cond_info
-                    true_val = val_by_block.get(true_block, '0.0')
-                    false_val = val_by_block.get(false_block, '0.0')
+                    true_val = val_by_block.get(true_block, '_ZERO')
+                    false_val = val_by_block.get(false_block, '_ZERO')
                     return f"jnp.where({cond_var}, {true_val}, {false_val})"
                 else:
                     # Fallback: just use first value (may be incorrect)
@@ -2345,7 +2594,7 @@ class OpenVAFToJAX:
                 return get_operand(phi_ops[0]['value'])
             elif operands:
                 return get_operand(operands[0])
-            return '0.0'
+            return '_ZERO'
 
         elif opcode == 'call':
             # Function call - handle known functions
@@ -2373,7 +2622,7 @@ class OpenVAFToJAX:
                         # Other simparams: return the default value
                         if len(operands) >= 2:
                             return get_operand(operands[1])
-                        return '0.0'  # Default for unknown simparams
+                        return '_ZERO'  # Default for unknown simparams
 
                 elif fn_name == 'Analysis':
                     # analysis("type") - returns 1 if current analysis matches
@@ -2394,22 +2643,22 @@ class OpenVAFToJAX:
 
                 elif 'ddt' in fn_name.lower() or 'TimeDerivative' in fn_name:
                     # Time derivative - for DC analysis, return 0
-                    return '0.0'
+                    return '_ZERO'
 
                 elif 'ddx' in fn_name.lower() or 'NodeDerivative' in fn_name:
                     # Derivative with respect to a variable - return 0 for now
-                    return '0.0'
+                    return '_ZERO'
 
                 elif 'noise' in fn_name.lower():
                     # Noise functions - return 0 for DC analysis
-                    return '0.0'
+                    return '_ZERO'
 
                 elif 'collapse' in fn_name.lower():
                     # Node collapsing - side effect only
                     return None
 
             # Unknown function - return 0
-            return '0.0'
+            return '_ZERO'
 
         elif opcode == 'ifcast':
             # Integer to float cast - just pass through the operand
@@ -2417,7 +2666,7 @@ class OpenVAFToJAX:
             ops = [get_operand(op) for op in operands]
             if ops:
                 return f"jnp.float64({ops[0]})"
-            return '0.0'
+            return '_ZERO'
 
         elif opcode == 'ibcast':
             # Integer to bool cast - check if non-zero
@@ -2437,7 +2686,7 @@ class OpenVAFToJAX:
             # Float to bool cast - check if non-zero
             ops = [get_operand(op) for op in operands]
             if ops:
-                return f"({ops[0]} != 0.0)"
+                return f"({ops[0]} != _ZERO)"
             return _jax_bool_repr(False)
 
         elif opcode == 'irem':
