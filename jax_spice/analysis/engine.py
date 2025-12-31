@@ -3772,7 +3772,7 @@ class CircuitEngine:
         # First try direct NR without homotopy
         logger.info("  AC DC: Trying direct NR solver first...")
         V_new, nr_iters, is_converged, max_f, _ = nr_solve(
-            V_dc, vsource_dc_vals, isource_dc_vals, Q_prev, 0.0  # inv_dt=0 for DC
+            V_dc, vsource_dc_vals, isource_dc_vals, Q_prev, 0.0, device_arrays  # inv_dt=0 for DC
         )
 
         if is_converged:
@@ -3802,7 +3802,7 @@ class CircuitEngine:
             )
 
             result = run_homotopy_chain(
-                nr_solve, V_dc, vsource_dc_vals, isource_dc_vals, Q_prev, homotopy_config
+                nr_solve, V_dc, vsource_dc_vals, isource_dc_vals, Q_prev, device_arrays, homotopy_config
             )
 
             V_dc = result.V
