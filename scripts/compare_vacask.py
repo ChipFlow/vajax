@@ -359,28 +359,35 @@ def run_jax_spice(config: BenchmarkConfig, num_steps: int, use_scan: bool,
         if analyze and use_scan and hasattr(engine, '_cached_scan_fn'):
             print("\n  Running JAX analysis...")
             # Get example inputs for the scan function
-            # The scan function signature is: (V_init, Q_init, all_vsource, all_isource)
-            n_nodes = engine.num_nodes
-            n_unknowns = n_nodes - 1  # Exclude ground
-            n_vsources = len([d for d in engine.devices if d['model'] == 'vsource'])
-            n_isources = len([d for d in engine.devices if d['model'] == 'isource'])
+            # The scan function signature is: (V_init, Q_init, all_vsource, all_isource, device_arrays)
+            # Must use total nodes (external + internal) from transient setup cache
+            setup_cache = getattr(engine, '_transient_setup_cache', None)
+            device_arrays = getattr(engine, '_device_arrays', None)
 
-            # Create example arrays matching actual shapes
-            V_init = jnp.zeros(n_nodes, dtype=jnp.float64)
-            Q_init = jnp.zeros(n_unknowns, dtype=jnp.float64)
-            all_vsource = jnp.zeros((num_steps, n_vsources), dtype=jnp.float64)
-            all_isource = jnp.zeros((num_steps, n_isources), dtype=jnp.float64)
+            if setup_cache is None or device_arrays is None:
+                print("  Warning: transient setup cache not found - analysis skipped")
+            else:
+                n_total = setup_cache['n_total']
+                n_unknowns = setup_cache['n_unknowns']
+                n_vsources = len([d for d in engine.devices if d['model'] == 'vsource'])
+                n_isources = len([d for d in engine.devices if d['model'] == 'isource'])
 
-            # Determine output directory
-            out_dir = analyze_output_dir or Path(f"/tmp/jax-spice-analysis/{config.name}")
+                # Create example arrays matching actual shapes
+                V_init = jnp.zeros(n_total, dtype=jnp.float64)
+                Q_init = jnp.zeros(n_unknowns, dtype=jnp.float64)
+                all_vsource = jnp.zeros((num_steps, n_vsources), dtype=jnp.float64)
+                all_isource = jnp.zeros((num_steps, n_isources), dtype=jnp.float64)
 
-            # Analyze the scan function
-            analyze_compiled_function(
-                engine._cached_scan_fn,
-                (V_init, Q_init, all_vsource, all_isource),
-                f"{config.name}_scan_simulation",
-                out_dir
-            )
+                # Determine output directory
+                out_dir = analyze_output_dir or Path(f"/tmp/jax-spice-analysis/{config.name}")
+
+                # Analyze the scan function
+                analyze_compiled_function(
+                    engine._cached_scan_fn,
+                    (V_init, Q_init, all_vsource, all_isource, device_arrays),
+                    f"{config.name}_scan_simulation",
+                    out_dir
+                )
         elif analyze and use_scan:
             print("\n  Warning: _cached_scan_fn not found - analysis skipped")
 
