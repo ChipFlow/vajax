@@ -20,7 +20,7 @@ and benefits from JIT compilation and warmup of the transient solver.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Callable, Tuple
+from typing import Any, Callable, Dict, Tuple
 
 import jax.numpy as jnp
 from jax import Array
@@ -87,6 +87,7 @@ def gmin_stepping(
     vsource_vals: Array,
     isource_vals: Array,
     Q_prev: Array,
+    device_arrays: Dict[str, Any],
     source_scale: float,
     config: HomotopyConfig,
     mode: str = "gdev",
@@ -103,6 +104,7 @@ def gmin_stepping(
         vsource_vals: DC voltage source values (unscaled)
         isource_vals: DC current source values (unscaled)
         Q_prev: Previous charges (zeros for DC)
+        device_arrays: Dict of device arrays to pass to nr_solve (avoids XLA constant folding)
         source_scale: Fixed source scaling factor for this stepping
         config: Homotopy configuration
         mode: "gdev" (device GMIN) or "gshunt" (shunt to ground)
@@ -142,7 +144,7 @@ def gmin_stepping(
 
         # Run NR solver with analytic jacobians
         V_new, iters, converged, max_f, _ = nr_solve(
-            V, scaled_vsource, scaled_isource, Q_prev, 0.0, effective_gmin, gshunt
+            V, scaled_vsource, scaled_isource, Q_prev, 0.0, device_arrays, effective_gmin, gshunt
         )
         total_iterations += int(iters)
 
@@ -210,7 +212,7 @@ def gmin_stepping(
     # Final solve at original gmin
     if continuation:
         V_final, iters, converged, _, _ = nr_solve(
-            V_good, scaled_vsource, scaled_isource, Q_prev, 0.0, config.gmin, 0.0
+            V_good, scaled_vsource, scaled_isource, Q_prev, 0.0, device_arrays, config.gmin, 0.0
         )
         total_iterations += int(iters)
         homotopy_steps += 1
@@ -247,6 +249,7 @@ def source_stepping(
     vsource_vals: Array,
     isource_vals: Array,
     Q_prev: Array,
+    device_arrays: Dict[str, Any],
     config: HomotopyConfig,
 ) -> HomotopyResult:
     """VACASK-style adaptive source stepping with GMIN fallback.
@@ -261,6 +264,7 @@ def source_stepping(
         vsource_vals: DC voltage source values (unscaled)
         isource_vals: DC current source values (unscaled)
         Q_prev: Previous charges (zeros for DC)
+        device_arrays: Dict of device arrays to pass to nr_solve (avoids XLA constant folding)
         config: Homotopy configuration
 
     Returns:
@@ -279,7 +283,7 @@ def source_stepping(
     zero_vsource = vsource_vals * 0.0
     zero_isource = isource_vals * 0.0
     V_new, iters, converged, _, _ = nr_solve(
-        V, zero_vsource, zero_isource, Q_prev, 0.0, config.gmin, 0.0
+        V, zero_vsource, zero_isource, Q_prev, 0.0, device_arrays, config.gmin, 0.0
     )
     total_iterations += int(iters)
     homotopy_steps += 1
@@ -301,6 +305,7 @@ def source_stepping(
             vsource_vals,
             isource_vals,
             Q_prev,
+            device_arrays,
             source_scale=0.0,
             config=config,
             mode="gdev",
@@ -316,6 +321,7 @@ def source_stepping(
                 vsource_vals,
                 isource_vals,
                 Q_prev,
+                device_arrays,
                 source_scale=0.0,
                 config=config,
                 mode="gshunt",
@@ -345,7 +351,7 @@ def source_stepping(
         scaled_vsource = vsource_vals * new_factor
         scaled_isource = isource_vals * new_factor
         V_new, iters, converged, _, _ = nr_solve(
-            V_good, scaled_vsource, scaled_isource, Q_prev, 0.0, config.gmin, 0.0
+            V_good, scaled_vsource, scaled_isource, Q_prev, 0.0, device_arrays, config.gmin, 0.0
         )
         total_iterations += int(iters)
         homotopy_steps += 1
@@ -408,6 +414,7 @@ def run_homotopy_chain(
     vsource_vals: Array,
     isource_vals: Array,
     Q_prev: Array,
+    device_arrays: Dict[str, Any],
     config: HomotopyConfig,
 ) -> HomotopyResult:
     """Run VACASK-style homotopy chain: gdev -> gshunt -> src.
@@ -420,6 +427,7 @@ def run_homotopy_chain(
         vsource_vals: DC voltage source values (unscaled)
         isource_vals: DC current source values (unscaled)
         Q_prev: Previous charges (zeros for DC)
+        device_arrays: Dict of device arrays to pass to nr_solve (avoids XLA constant folding)
         config: Homotopy configuration
 
     Returns:
@@ -441,6 +449,7 @@ def run_homotopy_chain(
                 vsource_vals,
                 isource_vals,
                 Q_prev,
+                device_arrays,
                 source_scale=1.0,  # Full sources for GMIN-only stepping
                 config=config,
                 mode="gdev",
@@ -452,6 +461,7 @@ def run_homotopy_chain(
                 vsource_vals,
                 isource_vals,
                 Q_prev,
+                device_arrays,
                 source_scale=1.0,  # Full sources for GSHUNT-only stepping
                 config=config,
                 mode="gshunt",
@@ -463,6 +473,7 @@ def run_homotopy_chain(
                 vsource_vals,
                 isource_vals,
                 Q_prev,
+                device_arrays,
                 config,
             )
         else:

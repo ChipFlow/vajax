@@ -584,9 +584,13 @@ class CircuitEngine:
                 init_to_eval_indices.append(eval_idx)
             init_to_eval_indices = jnp.array(init_to_eval_indices, dtype=jnp.int32)
 
+            # Free MIR data after code generation - no longer needed
+            # This saves ~28MB for PSP103
+            translator.release_mir_data()
+
             compiled = {
                 'module': module,
-                'translator': translator,
+                # Note: translator not stored - MIR data released after code generation
                 'jax_fn_array': jax_fn_array,
                 'vmapped_fn': vmapped_fn,
                 'array_metadata': array_metadata,
@@ -1964,13 +1968,17 @@ class CircuitEngine:
             logger.info("Reusing cached AoT-compiled NR solver")
             nr_solve = self._cached_nr_solve
         else:
-            # Create GPU-resident build_system function (closure captures all static data)
-            build_system_fn = self._make_gpu_resident_build_system_fn(
+            # Create GPU-resident build_system function
+            # Returns (build_system_fn, device_arrays) - large arrays passed as args to avoid XLA constant folding
+            build_system_fn, device_arrays = self._make_gpu_resident_build_system_fn(
                 source_device_data, vmapped_fns, static_inputs_cache, n_unknowns, use_dense
             )
 
-            # JIT compile build_system_fn separately (layered compilation)
-            # JAX handles nested JIT naturally - inner JIT is compiled as a call
+            # Store device_arrays for passing through the solver chain
+            # These will be passed as traced arguments to avoid XLA constant folding
+            self._device_arrays = device_arrays
+
+            # JIT compile build_system_fn - device_arrays will be passed as argument
             build_system_jit = jax.jit(build_system_fn)
             logger.info("Created JIT-wrapped build_system function")
 
@@ -1987,7 +1995,7 @@ class CircuitEngine:
             if use_dense:
                 # Dense solver for small/medium circuits
                 nr_solve = self._make_jit_compiled_solver(
-                    build_system_jit, n_nodes, noi_indices=noi_indices,
+                    build_system_jit, n_nodes, device_arrays, noi_indices=noi_indices,
                     max_iterations=MAX_NR_ITERATIONS, abstol=DEFAULT_ABSTOL, max_step=1.0
                 )
             else:
@@ -1999,7 +2007,7 @@ class CircuitEngine:
                 isource_init = jnp.zeros(n_isources, dtype=jnp.float64)
                 Q_init = jnp.zeros(n_unknowns, dtype=jnp.float64)
                 # Use inv_dt=0 for DC (no reactive terms in probe)
-                J_bcoo_probe, _, _ = build_system_fn(V_init, vsource_init, isource_init, Q_init, 0.0)
+                J_bcoo_probe, _, _ = build_system_fn(V_init, vsource_init, isource_init, Q_init, 0.0, device_arrays)
 
                 # Sum duplicates to get true nse
                 unique_indices = jnp.unique(
@@ -2030,13 +2038,15 @@ class CircuitEngine:
                         build_system_jit, n_nodes, nse,
                         bcsr_indptr=J_bcsr_probe.indptr,
                         bcsr_indices=J_bcsr_probe.indices,
+                        device_arrays=device_arrays,
                         noi_indices=noi_indices,
                         max_iterations=MAX_NR_ITERATIONS, abstol=DEFAULT_ABSTOL, max_step=1.0
                     )
                 else:
                     # Fallback to JAX spsolve (QR factorization, no caching)
                     nr_solve = self._make_sparse_jit_compiled_solver(
-                        build_system_jit, n_nodes, nse, noi_indices=noi_indices,
+                        build_system_jit, n_nodes, nse, device_arrays,
+                        noi_indices=noi_indices,
                         max_iterations=MAX_NR_ITERATIONS, abstol=DEFAULT_ABSTOL, max_step=1.0
                     )
 
@@ -2066,6 +2076,7 @@ class CircuitEngine:
                 n_vsources=n_vsources,
                 n_isources=n_isources,
                 nr_solve=nr_solve,
+                device_arrays=device_arrays,
                 backend=backend,
                 use_dense=use_dense,
                 device_internal_nodes=device_internal_nodes,
@@ -2106,7 +2117,7 @@ class CircuitEngine:
                 vsource_dc = jnp.array([])
             if isource_dc.size == 0:
                 isource_dc = jnp.array([])
-            _, _, Q_prev = self._cached_build_system(V, vsource_dc, isource_dc, jnp.zeros(n_unknowns), 0.0)
+            _, _, Q_prev = self._cached_build_system(V, vsource_dc, isource_dc, jnp.zeros(n_unknowns), 0.0, device_arrays)
             Q_prev.block_until_ready()
         else:
             Q_prev = jnp.zeros(n_unknowns, dtype=jnp.float64)
@@ -2124,7 +2135,7 @@ class CircuitEngine:
 
             # GPU-resident NR solve - JIT compiled, runs on GPU via lax.while_loop
             # Backward Euler: f = f_resist + (Q - Q_prev)/dt, J = J_resist + C/dt
-            V_new, iterations, converged, max_f, Q = nr_solve(V, vsource_vals, isource_vals, Q_prev, inv_dt)
+            V_new, iterations, converged, max_f, Q = nr_solve(V, vsource_vals, isource_vals, Q_prev, inv_dt, device_arrays)
 
             # Transfer results back to Python for logging/tracking (once per timestep)
             nr_iters = int(iterations)
@@ -2212,7 +2223,9 @@ class CircuitEngine:
         return vdd_value
 
     def _compute_dc_operating_point(self, n_nodes: int, n_vsources: int, n_isources: int,
-                                     nr_solve: Callable, backend: str = "cpu",
+                                     nr_solve: Callable,
+                                     device_arrays: Dict[str, Tuple[jax.Array, jax.Array]],
+                                     backend: str = "cpu",
                                      use_dense: bool = True,
                                      max_iterations: int = 100,
                                      device_internal_nodes: Optional[Dict[str, Dict[str, int]]] = None,
@@ -2230,6 +2243,7 @@ class CircuitEngine:
             n_vsources: Number of voltage sources
             n_isources: Number of current sources
             nr_solve: The cached NR solver function (used for fallback)
+            device_arrays: Dict[model_type, (static_inputs, cache)] - passed to nr_solve
             backend: 'gpu' or 'cpu'
             use_dense: Whether using dense solver
             max_iterations: Maximum NR iterations per homotopy step
@@ -2304,7 +2318,7 @@ class CircuitEngine:
         # Uses analytic jacobians from OpenVAF via the cached nr_solve
         logger.info("  Trying direct NR solver first...")
         V_new, nr_iters, is_converged, max_f, _ = nr_solve(
-            V, vsource_dc_vals, isource_dc_vals, Q_prev, 0.0  # inv_dt=0 for DC
+            V, vsource_dc_vals, isource_dc_vals, Q_prev, 0.0, device_arrays  # inv_dt=0 for DC
         )
 
         if is_converged:
@@ -2336,7 +2350,7 @@ class CircuitEngine:
             )
 
             result = run_homotopy_chain(
-                nr_solve, V, vsource_dc_vals, isource_dc_vals, Q_prev, homotopy_config
+                nr_solve, V, vsource_dc_vals, isource_dc_vals, Q_prev, device_arrays, homotopy_config
             )
 
             if result.converged:
@@ -2490,6 +2504,7 @@ class CircuitEngine:
                 n_vsources=n_vsources,
                 n_isources=n_isources,
                 nr_solve=nr_solve,
+                device_arrays=self._device_arrays,
                 backend=backend,
                 use_dense=use_dense,
                 device_internal_nodes=device_internal_nodes,
@@ -2526,17 +2541,18 @@ class CircuitEngine:
 
             def make_scan_fn(nr_solve_fn, n_ext, inv_dt_val):
                 @jax.jit
-                def run_simulation_with_outputs(V_init, Q_init, all_vsource, all_isource):
+                def run_simulation_with_outputs(V_init, Q_init, all_vsource, all_isource, device_arrays_arg):
                     """Run simulation with time-varying sources using lax.scan.
 
                     Carry includes both V and Q for reactive term tracking.
                     Uses backward Euler: f = f_resist + (Q - Q_prev)/dt
+                    device_arrays_arg is passed through to nr_solve to avoid XLA constant folding.
                     """
                     def step_fn(carry, source_vals):
                         V, Q_prev = carry
                         vsource_vals, isource_vals = source_vals
                         V_new, iterations, converged, max_f, Q = nr_solve_fn(
-                            V, vsource_vals, isource_vals, Q_prev, inv_dt_val
+                            V, vsource_vals, isource_vals, Q_prev, inv_dt_val, device_arrays_arg
                         )
                         return (V_new, Q), (V_new[:n_ext], iterations, converged)
 
@@ -2560,7 +2576,7 @@ class CircuitEngine:
             # Use DC source values (at t=0)
             vsource_dc = all_vsource_vals[0] if all_vsource_vals.size > 0 else jnp.array([])
             isource_dc = all_isource_vals[0] if all_isource_vals.size > 0 else jnp.array([])
-            _, _, Q0 = self._cached_build_system(V0, vsource_dc, isource_dc, jnp.zeros(n_unknowns), 0.0)
+            _, _, Q0 = self._cached_build_system(V0, vsource_dc, isource_dc, jnp.zeros(n_unknowns), 0.0, self._device_arrays)
             logger.debug(f"  Initialized Q0 from DC operating point (max|Q0|={float(jnp.max(jnp.abs(Q0))):.2e})")
         else:
             Q0 = jnp.zeros(n_unknowns, dtype=jnp.float64)
@@ -2570,12 +2586,12 @@ class CircuitEngine:
         t0 = time_module.perf_counter()
         if profile_config:
             with profile_section("lax_scan_simulation", profile_config):
-                all_V, all_iters, all_converged = run_simulation_with_outputs(V0, Q0, all_vsource_vals, all_isource_vals)
+                all_V, all_iters, all_converged = run_simulation_with_outputs(V0, Q0, all_vsource_vals, all_isource_vals, self._device_arrays)
                 jax.block_until_ready(all_V)
                 # Measure time BEFORE profile_section.__exit__ (which saves trace to disk)
                 t1 = time_module.perf_counter()
         else:
-            all_V, all_iters, all_converged = run_simulation_with_outputs(V0, Q0, all_vsource_vals, all_isource_vals)
+            all_V, all_iters, all_converged = run_simulation_with_outputs(V0, Q0, all_vsource_vals, all_isource_vals, self._device_arrays)
             jax.block_until_ready(all_V)
             t1 = time_module.perf_counter()
         total_time = t1 - t0
@@ -2865,23 +2881,26 @@ class CircuitEngine:
         static_inputs_cache: Dict[str, Tuple],
         n_unknowns: int,
         use_dense: bool,
-    ) -> Callable:
+    ) -> Tuple[Callable, Dict[str, Tuple[jax.Array, jax.Array]]]:
         """Create a JIT-compilable function that builds J and f from V.
 
-        This closure captures all the static data structures (stamp indices,
-        vmapped functions) and returns a function that can be traced by JAX.
-        The returned function is suitable for use inside lax.while_loop.
+        This closure captures only small metadata (indices, vmapped functions).
+        Large arrays (static_inputs, cache) are passed as arguments to avoid
+        XLA constant folding overhead during compilation.
 
         Args:
             source_device_data: Pre-computed source device stamp templates
             vmapped_fns: Dict of vmapped OpenVAF functions per model type
             static_inputs_cache: Dict of (static_inputs, voltage_indices, stamp_indices,
-                                          voltage_node1, voltage_node2) per model type
+                                          voltage_node1, voltage_node2, cache, ...) per model type
             n_unknowns: Number of unknowns (total nodes - 1 for ground)
             use_dense: Whether to use dense or sparse matrix assembly
 
         Returns:
-            Function build_system(V, vsource_vals, isource_vals, Q_prev, inv_dt) -> (J, f, Q)
+            Tuple of:
+            - build_system function with signature:
+                build_system(V, vsource_vals, isource_vals, Q_prev, inv_dt, device_arrays) -> (J, f, Q)
+            - device_arrays: Dict[model_type, (static_inputs, cache)] to pass to build_system
 
             For DC analysis: pass inv_dt=0.0 and Q_prev=zeros (reactive terms ignored)
             For transient: pass inv_dt=1/dt and Q_prev from previous timestep
@@ -2892,8 +2911,21 @@ class CircuitEngine:
         # Capture model types as static list (unrolled at trace time)
         model_types = list(static_inputs_cache.keys())
 
+        # Split cache into metadata (captured) and arrays (passed as argument)
+        # This avoids XLA constant folding the large static_inputs arrays
+        static_metadata = {}
+        device_arrays = {}
+        for model_type in model_types:
+            static_inputs, voltage_indices, stamp_indices, voltage_node1, voltage_node2, cache, _ = \
+                static_inputs_cache[model_type]
+            # Metadata: small arrays and indices - captured in closure
+            static_metadata[model_type] = (voltage_indices, stamp_indices, voltage_node1, voltage_node2)
+            # Arrays: large arrays - passed as argument
+            device_arrays[model_type] = (static_inputs, cache)
+
         def build_system(V: jax.Array, vsource_vals: jax.Array, isource_vals: jax.Array,
                         Q_prev: jax.Array, inv_dt: float | jax.Array,
+                        device_arrays_arg: Dict[str, Tuple[jax.Array, jax.Array]],
                         gmin: float | jax.Array = 1e-12, gshunt: float | jax.Array = 0.0
                         ) -> Tuple[Any, jax.Array, jax.Array]:
             """Build Jacobian J and residual f from current voltages.
@@ -2911,6 +2943,7 @@ class CircuitEngine:
                 isource_vals: Current source values
                 Q_prev: Charges from previous timestep (shape: n_unknowns)
                 inv_dt: 1/dt for transient, 0 for DC analysis
+                device_arrays_arg: Dict[model_type, (static_inputs, cache)] - large arrays passed as args
                 gmin: GMIN conductance for device models (default 1e-12)
                 gshunt: Shunt conductance to ground for homotopy (default 0)
 
@@ -2966,8 +2999,9 @@ class CircuitEngine:
             # === OpenVAF devices contribution (unrolled at trace time) ===
             # Devices return 4 arrays: (res_resist, res_react, jac_resist, jac_react)
             for model_type in model_types:
-                static_inputs, voltage_indices, stamp_indices, voltage_node1, voltage_node2, cache, _ = \
-                    static_inputs_cache[model_type]
+                # Get metadata from closure (small) and arrays from argument (large)
+                voltage_indices, stamp_indices, voltage_node1, voltage_node2 = static_metadata[model_type]
+                static_inputs, cache = device_arrays_arg[model_type]
                 vmapped_fn = vmapped_fns[model_type]
 
                 # Vectorized voltage update
@@ -3124,12 +3158,13 @@ class CircuitEngine:
 
             return J, f, Q
 
-        return build_system
+        return build_system, device_arrays
 
     def _make_jit_compiled_solver(
         self,
         build_system_jit: Callable,
         n_nodes: int,
+        device_arrays: Dict[str, Tuple[jax.Array, jax.Array]],
         noi_indices: Optional[jax.Array] = None,
         max_iterations: int = MAX_NR_ITERATIONS,
         abstol: float = 1e-6,
@@ -3143,15 +3178,16 @@ class CircuitEngine:
         - This prevents inlining of all device evaluations into the outer trace
 
         Args:
-            build_system_jit: JIT-wrapped function (V, vsource_vals, isource_vals, Q_prev, inv_dt) -> (J, f, Q)
+            build_system_jit: JIT-wrapped function (V, vsource_vals, isource_vals, Q_prev, inv_dt, device_arrays) -> (J, f, Q)
             n_nodes: Total node count including ground (V.shape[0])
+            device_arrays: Dict[model_type, (static_inputs, cache)] - passed as traced arg to avoid XLA constant folding
             noi_indices: Optional array of NOI node indices to constrain to 0V
             max_iterations: Maximum NR iterations
             abstol: Absolute tolerance for convergence
             max_step: Maximum voltage step per iteration
 
         Returns:
-            JIT-compiled function: (V, vsource_vals, isource_vals, Q_prev, inv_dt, gmin, gshunt) -> (V, iters, converged, max_f, Q)
+            JIT-compiled function: (V, vsource_vals, isource_vals, Q_prev, inv_dt, device_arrays, gmin, gshunt) -> (V, iters, converged, max_f, Q)
             gmin and gshunt have defaults (1e-12, 0.0) for backward compatibility with transient calls.
         """
         # Pre-compute NOI indices for O(n) masking (instead of O(n²) boolean matrix ops)
@@ -3169,6 +3205,7 @@ class CircuitEngine:
 
         def nr_solve(V_init: jax.Array, vsource_vals: jax.Array, isource_vals: jax.Array,
                     Q_prev: jax.Array, inv_dt: float | jax.Array,
+                    device_arrays_arg: Dict[str, Tuple[jax.Array, jax.Array]],
                     gmin: float | jax.Array = 1e-12, gshunt: float | jax.Array = 0.0):
             # State: (V, iteration, converged, max_f, max_delta, Q)
             # Q is tracked to return the final charges
@@ -3193,7 +3230,8 @@ class CircuitEngine:
                 # Build system (J, f, Q) - calls JIT'd function
                 # Q_prev is fixed for all NR iterations within this timestep
                 # gmin/gshunt passed through for homotopy support
-                J, f, Q = build_system_jit(V, vsource_vals, isource_vals, Q_prev, inv_dt, gmin, gshunt)
+                # device_arrays passed as traced arg to avoid XLA constant folding
+                J, f, Q = build_system_jit(V, vsource_vals, isource_vals, Q_prev, inv_dt, device_arrays_arg, gmin, gshunt)
 
                 # Check residual convergence
                 # Note: f already excludes ground (has shape n_unknowns = n_nodes - 1)
@@ -3249,7 +3287,7 @@ class CircuitEngine:
 
             # Recompute Q from the converged voltage
             # The Q from body_fn was computed from V before the update, not V_new
-            _, _, Q_final = build_system_jit(V_final, vsource_vals, isource_vals, Q_prev, inv_dt)
+            _, _, Q_final = build_system_jit(V_final, vsource_vals, isource_vals, Q_prev, inv_dt, device_arrays_arg, gmin, gshunt)
 
             return V_final, iterations, converged, max_f, Q_final
 
@@ -3262,6 +3300,7 @@ class CircuitEngine:
         build_system_jit: Callable,
         n_nodes: int,
         nse: int,
+        device_arrays: Dict[str, Tuple[jax.Array, jax.Array]],
         noi_indices: Optional[jax.Array] = None,
         max_iterations: int = MAX_NR_ITERATIONS,
         abstol: float = 1e-6,
@@ -3276,13 +3315,14 @@ class CircuitEngine:
             build_system_jit: JIT-wrapped function returning (J_bcoo, f, Q)
             n_nodes: Total node count including ground
             nse: Number of stored elements after summing duplicates
+            device_arrays: Dict[model_type, (static_inputs, cache)] - passed as traced arg
             noi_indices: Optional array of NOI node indices to constrain to 0V
             max_iterations: Maximum NR iterations
             abstol: Absolute tolerance for convergence
             max_step: Maximum voltage step per iteration
 
         Returns:
-            JIT-compiled sparse solver function: (V, vsrc, isrc, Q_prev, inv_dt) -> (V, iters, converged, max_f, Q)
+            JIT-compiled sparse solver function: (V, vsrc, isrc, Q_prev, inv_dt, device_arrays) -> (V, iters, converged, max_f, Q)
         """
         from jax.experimental.sparse import BCSR
         from jax.experimental.sparse.linalg import spsolve
@@ -3298,6 +3338,7 @@ class CircuitEngine:
 
         def nr_solve(V_init: jax.Array, vsource_vals: jax.Array, isource_vals: jax.Array,
                     Q_prev: jax.Array, inv_dt: float | jax.Array,
+                    device_arrays_arg: Dict[str, Tuple[jax.Array, jax.Array]],
                     gmin: float | jax.Array = 1e-12, gshunt: float | jax.Array = 0.0):
             # Q has shape (n_unknowns,) = (n_nodes - 1,) since ground is excluded
             init_Q = jnp.zeros(n_nodes - 1, dtype=jnp.float64)
@@ -3318,7 +3359,7 @@ class CircuitEngine:
                 V, iteration, _, _, _, _ = state
 
                 # Build sparse system (J_bcoo, f, Q) with homotopy parameters
-                J_bcoo, f, Q = build_system_jit(V, vsource_vals, isource_vals, Q_prev, inv_dt, gmin, gshunt)
+                J_bcoo, f, Q = build_system_jit(V, vsource_vals, isource_vals, Q_prev, inv_dt, device_arrays_arg, gmin, gshunt)
 
                 # Check residual convergence
                 # Mask out NOI residuals (they have 1e40 conductance and would dominate max_f)
@@ -3365,7 +3406,7 @@ class CircuitEngine:
 
             # Recompute Q from the converged voltage
             # The Q from body_fn was computed from V before the update, not V_new
-            _, _, Q_final = build_system_jit(V_final, vsource_vals, isource_vals, Q_prev, inv_dt)
+            _, _, Q_final = build_system_jit(V_final, vsource_vals, isource_vals, Q_prev, inv_dt, device_arrays_arg, gmin, gshunt)
 
             return V_final, iterations, converged, max_f, Q_final
 
@@ -3379,6 +3420,7 @@ class CircuitEngine:
         nse: int,
         bcsr_indptr: jax.Array,
         bcsr_indices: jax.Array,
+        device_arrays: Dict[str, Tuple[jax.Array, jax.Array]],
         noi_indices: Optional[jax.Array] = None,
         max_iterations: int = MAX_NR_ITERATIONS,
         abstol: float = 1e-6,
@@ -3396,13 +3438,14 @@ class CircuitEngine:
             nse: Number of stored elements after summing duplicates
             bcsr_indptr: Pre-computed BCSR row pointers
             bcsr_indices: Pre-computed BCSR column indices
+            device_arrays: Dict[model_type, (static_inputs, cache)] - passed as traced arg
             noi_indices: Optional array of NOI node indices to constrain to 0V
             max_iterations: Maximum NR iterations
             abstol: Absolute tolerance for convergence
             max_step: Maximum voltage step per iteration
 
         Returns:
-            JIT-compiled sparse solver function: (V, vsrc, isrc, Q_prev, inv_dt) -> (V, iters, converged, max_f, Q)
+            JIT-compiled sparse solver function: (V, vsrc, isrc, Q_prev, inv_dt, device_arrays) -> (V, iters, converged, max_f, Q)
         """
         from jax.experimental.sparse import BCSR
         from spineax.cudss.solver import CuDSSSolver
@@ -3430,6 +3473,7 @@ class CircuitEngine:
 
         def nr_solve(V_init: jax.Array, vsource_vals: jax.Array, isource_vals: jax.Array,
                     Q_prev: jax.Array, inv_dt: float | jax.Array,
+                    device_arrays_arg: Dict[str, Tuple[jax.Array, jax.Array]],
                     gmin: float | jax.Array = 1e-12, gshunt: float | jax.Array = 0.0):
             # State: (V, iteration, converged, max_f, max_delta, Q)
             # Q is tracked to return the final charges
@@ -3451,7 +3495,7 @@ class CircuitEngine:
                 V, iteration, _, _, _, _ = state
 
                 # Build sparse system (J_bcoo, f, Q)
-                J_bcoo, f, Q = build_system_jit(V, vsource_vals, isource_vals, Q_prev, inv_dt, gmin, gshunt)
+                J_bcoo, f, Q = build_system_jit(V, vsource_vals, isource_vals, Q_prev, inv_dt, device_arrays_arg, gmin, gshunt)
 
                 # Check residual convergence
                 # Mask out NOI residuals (they have 1e40 conductance and would dominate max_f)
@@ -3496,7 +3540,7 @@ class CircuitEngine:
 
             # Recompute Q from the converged voltage
             # The Q from body_fn was computed from V before the update, not V_new
-            _, _, Q_final = build_system_jit(V_final, vsource_vals, isource_vals, Q_prev, inv_dt, gmin, gshunt)
+            _, _, Q_final = build_system_jit(V_final, vsource_vals, isource_vals, Q_prev, inv_dt, device_arrays_arg, gmin, gshunt)
 
             return V_final, iterations, converged, max_f, Q_final
 
@@ -3699,7 +3743,7 @@ class CircuitEngine:
         # Create NR solver for AC DC operating point calculation
         # This uses analytic jacobians from OpenVAF (no autodiff)
         # AC analysis uses dense solver (simpler circuits typically)
-        build_system_fn = self._make_gpu_resident_build_system_fn(
+        build_system_fn, device_arrays = self._make_gpu_resident_build_system_fn(
             source_device_data, vmapped_fns, static_inputs_cache, n_unknowns, use_dense=True
         )
         build_system_jit = jax.jit(build_system_fn)
@@ -3713,7 +3757,7 @@ class CircuitEngine:
         noi_indices = jnp.array(noi_indices, dtype=jnp.int32) if noi_indices else None
 
         nr_solve = self._make_jit_compiled_solver(
-            build_system_jit, n_total, noi_indices=noi_indices,
+            build_system_jit, n_total, device_arrays, noi_indices=noi_indices,
             max_iterations=MAX_NR_ITERATIONS, abstol=DEFAULT_ABSTOL, max_step=1.0
         )
 
