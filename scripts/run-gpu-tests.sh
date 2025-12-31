@@ -79,11 +79,13 @@ echo "Running JAX-SPICE vs VACASK benchmark comparison..."
 # generates larger output files - use for detailed GPU kernel analysis
 # Running single benchmark (ring) for faster iteration and cleaner Perfetto traces
 # Use --force-gpu to ensure GPU is used even for small circuits (ring has only 47 nodes)
+# Use --analyze to dump HLO/cost analysis for understanding XLA compilation
 uv run python scripts/compare_vacask.py \
   --benchmark ring \
   --max-steps 50 \
   --use-scan \
   --force-gpu \
+  --analyze \
   --profile-mode jax \
   --profile-dir /tmp/jax-spice-traces
 
