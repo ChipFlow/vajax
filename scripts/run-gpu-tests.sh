@@ -77,10 +77,13 @@ echo "Running JAX-SPICE vs VACASK benchmark comparison..."
 # Enable JAX profiling to capture GPU traces (Perfetto format)
 # Note: nsys-jax profiling can be enabled with --profile-mode=nsys but
 # generates larger output files - use for detailed GPU kernel analysis
+# Running single benchmark (ring) for faster iteration and cleaner Perfetto traces
+# Use --force-gpu to ensure GPU is used even for small circuits (ring has only 47 nodes)
 uv run python scripts/compare_vacask.py \
-  --benchmark rc,graetz,ring,c6288 \
+  --benchmark ring \
   --max-steps 50 \
   --use-scan \
+  --force-gpu \
   --profile-mode jax \
   --profile-dir /tmp/jax-spice-traces
 

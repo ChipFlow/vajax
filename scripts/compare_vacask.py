@@ -38,7 +38,7 @@ import time
 import re
 from pathlib import Path
 from dataclasses import dataclass
-from typing import Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 # Ensure jax-spice is importable
 sys.path.insert(0, str(Path(__file__).parent.parent))
@@ -58,6 +58,102 @@ import jax.numpy as jnp
 
 from jax_spice.analysis import CircuitEngine
 from jax_spice.profiling import enable_profiling, ProfileConfig
+
+
+def analyze_compiled_function(fn, args, name: str, output_dir: Optional[Path] = None):
+    """Dump jaxpr and cost analysis for a JIT-compiled function.
+
+    Args:
+        fn: A JAX function (JIT-compiled or not)
+        args: Example arguments to trace with
+        name: Name for output files
+        output_dir: Optional directory to save analysis files
+    """
+    print(f"\n{'='*70}")
+    print(f"JAX Analysis: {name}")
+    print(f"{'='*70}")
+
+    # Lower the function to get HLO and cost analysis
+    # For JIT-compiled functions, we use .lower() directly
+    print(f"\n--- Lowering and compiling {name} ---")
+    try:
+        # If fn is already jitted, we can lower it directly
+        # Otherwise wrap it in jit first
+        if hasattr(fn, 'lower'):
+            lowered = fn.lower(*args)
+        else:
+            lowered = jax.jit(fn).lower(*args)
+
+        # Get the HLO text (MLIR representation)
+        hlo_text = lowered.as_text()
+        hlo_lines = hlo_text.split('\n')
+        print(f"HLO text: {len(hlo_lines)} lines")
+
+        # Count operations in HLO
+        op_counts: Dict[str, int] = {}
+        for line in hlo_lines:
+            # Extract operation names from MLIR-style ops like: %0 = stablehlo.add
+            if '=' in line and '.' in line:
+                parts = line.split('=')
+                if len(parts) >= 2:
+                    op_part = parts[1].strip().split()[0] if parts[1].strip() else ''
+                    if '.' in op_part:
+                        op_name = op_part.split('(')[0]  # Remove args
+                        op_counts[op_name] = op_counts.get(op_name, 0) + 1
+
+        if op_counts:
+            print(f"Top HLO ops: {dict(sorted(op_counts.items(), key=lambda x: -x[1])[:15])}")
+
+        # Compile and get cost analysis
+        compiled = lowered.compile()
+        cost = compiled.cost_analysis()
+        print(f"\n--- Cost Analysis ---")
+        if cost:
+            for i, device_cost in enumerate(cost):
+                if device_cost and isinstance(device_cost, dict):
+                    print(f"Device {i}:")
+                    for key, val in device_cost.items():
+                        if isinstance(val, (int, float)):
+                            if val > 1e9:
+                                print(f"  {key}: {val/1e9:.2f}G")
+                            elif val > 1e6:
+                                print(f"  {key}: {val/1e6:.2f}M")
+                            elif val > 1e3:
+                                print(f"  {key}: {val/1e3:.2f}K")
+                            else:
+                                print(f"  {key}: {val}")
+                        else:
+                            print(f"  {key}: {val}")
+                elif device_cost:
+                    print(f"Device {i}: {device_cost}")
+        else:
+            print("No cost analysis available (may not be supported on this backend)")
+
+        # Save files if output_dir provided
+        if output_dir:
+            output_dir.mkdir(parents=True, exist_ok=True)
+
+            # Save HLO text
+            hlo_file = output_dir / f"{name}_hlo.txt"
+            with open(hlo_file, 'w') as f:
+                f.write(hlo_text)
+            print(f"\nHLO text saved to: {hlo_file}")
+
+            # Try to get the jaxpr as well for the underlying computation
+            try:
+                # Create jaxpr from the unwrapped function if possible
+                jaxpr_text = str(jax.make_jaxpr(fn)(*args))
+                jaxpr_file = output_dir / f"{name}_jaxpr.txt"
+                with open(jaxpr_file, 'w') as f:
+                    f.write(jaxpr_text)
+                print(f"JAXPR saved to: {jaxpr_file}")
+            except Exception:
+                pass  # JIT functions may not produce useful jaxpr
+
+    except Exception as e:
+        import traceback
+        print(f"Failed to analyze: {e}")
+        traceback.print_exc()
 
 
 @dataclass
@@ -198,8 +294,10 @@ def run_vacask(config: BenchmarkConfig, num_steps: int) -> Optional[Tuple[float,
 
 
 def run_jax_spice(config: BenchmarkConfig, num_steps: int, use_scan: bool,
-                  use_sparse: bool = False, profile_config: Optional[ProfileConfig] = None,
-                  profile_full: bool = False
+                  use_sparse: bool = False, force_gpu: bool = False,
+                  profile_config: Optional[ProfileConfig] = None,
+                  profile_full: bool = False, analyze: bool = False,
+                  analyze_output_dir: Optional[Path] = None
                   ) -> Tuple[float, float, Dict]:
     """Run JAX-SPICE and return (time_per_step_ms, wall_time_s, stats).
 
@@ -208,8 +306,11 @@ def run_jax_spice(config: BenchmarkConfig, num_steps: int, use_scan: bool,
         num_steps: Number of timesteps
         use_scan: Use lax.scan for faster execution
         use_sparse: Use sparse solver
+        force_gpu: Force GPU backend even for small circuits
         profile_config: If provided, profile the simulation
         profile_full: If True, profile entire run including warmup (helps identify overhead)
+        analyze: If True, dump jaxpr and cost analysis for compiled functions
+        analyze_output_dir: Directory to save analysis files (optional)
     """
     from jax_spice.profiling import profile_section
 
@@ -242,13 +343,46 @@ def run_jax_spice(config: BenchmarkConfig, num_steps: int, use_scan: bool,
 
         t_stop = config.dt * num_steps
 
+        # Determine backend
+        backend = "gpu" if force_gpu else None  # None = auto-select
+
         # Warmup (includes JIT compilation)
         startup_start = time.perf_counter()
         engine.run_transient(
             t_stop=t_stop, dt=config.dt,
-            use_sparse=use_sparse, use_while_loop=use_scan
+            use_sparse=use_sparse, use_while_loop=use_scan,
+            backend=backend,
         )
         startup_time = time.perf_counter() - startup_start
+
+        # Run analysis on compiled scan function if requested
+        if analyze and use_scan and hasattr(engine, '_cached_scan_fn'):
+            print("\n  Running JAX analysis...")
+            # Get example inputs for the scan function
+            # The scan function signature is: (V_init, Q_init, all_vsource, all_isource)
+            n_nodes = engine.num_nodes
+            n_unknowns = n_nodes - 1  # Exclude ground
+            n_vsources = len([d for d in engine.devices if d['model'] == 'vsource'])
+            n_isources = len([d for d in engine.devices if d['model'] == 'isource'])
+
+            # Create example arrays matching actual shapes
+            V_init = jnp.zeros(n_nodes, dtype=jnp.float64)
+            Q_init = jnp.zeros(n_unknowns, dtype=jnp.float64)
+            all_vsource = jnp.zeros((num_steps, n_vsources), dtype=jnp.float64)
+            all_isource = jnp.zeros((num_steps, n_isources), dtype=jnp.float64)
+
+            # Determine output directory
+            out_dir = analyze_output_dir or Path(f"/tmp/jax-spice-analysis/{config.name}")
+
+            # Analyze the scan function
+            analyze_compiled_function(
+                engine._cached_scan_fn,
+                (V_init, Q_init, all_vsource, all_isource),
+                f"{config.name}_scan_simulation",
+                out_dir
+            )
+        elif analyze and use_scan:
+            print("\n  Warning: _cached_scan_fn not found - analysis skipped")
 
         # Timed run - print perf_counter for correlation with Perfetto traces
         start = time.perf_counter()
@@ -256,6 +390,7 @@ def run_jax_spice(config: BenchmarkConfig, num_steps: int, use_scan: bool,
         result = engine.run_transient(
             t_stop=t_stop, dt=config.dt,
             use_sparse=use_sparse, use_while_loop=use_scan,
+            backend=backend,
             profile_config=scan_profile_config,
         )
         after_transient = time.perf_counter()
@@ -315,6 +450,11 @@ def main():
         help="Force dense solver even for large circuits (for GPU performance testing)",
     )
     parser.add_argument(
+        "--force-gpu",
+        action="store_true",
+        help="Force GPU backend even for small circuits (ignores gpu_threshold)",
+    )
+    parser.add_argument(
         "--profile",
         action="store_true",
         help="[DEPRECATED] Use --profile-mode=jax instead",
@@ -337,6 +477,11 @@ def main():
         action="store_true",
         help="Profile entire run including warmup/setup (helps identify overhead)",
     )
+    parser.add_argument(
+        "--analyze",
+        action="store_true",
+        help="Dump JAX cost analysis and jaxpr for compiled functions",
+    )
     args = parser.parse_args()
 
     print("=" * 70)
@@ -353,6 +498,7 @@ def main():
     print(f"JAX backend: {jax.default_backend()}")
     print(f"Mode: {'lax.scan' if args.use_scan else 'Python loop'}")
     print(f"Solver: {'sparse' if args.use_sparse else 'dense'}")
+    print(f"Backend: {'GPU (forced)' if args.force_gpu else 'auto-select'}")
     print(f"Max steps: {args.max_steps}")
 
     # Handle deprecated --profile flag
@@ -442,6 +588,13 @@ def main():
     # Run benchmarks
     results = []
 
+    # Memory profiling setup
+    import tracemalloc
+    import gc
+    if not tracemalloc.is_tracing():
+        tracemalloc.start()
+    prev_snapshot = tracemalloc.take_snapshot()
+
     for name in benchmark_names:
         if name not in BENCHMARKS:
             print(f"Unknown benchmark: {name}")
@@ -456,9 +609,15 @@ def main():
         # Auto-enable sparse for c6288 unless --force-dense is specified
         use_sparse = args.use_sparse or (name == 'c6288' and not args.force_dense)
         print("  JAX-SPICE warmup...", end=" ", flush=True)
+        analyze_dir = Path(args.profile_dir) / "analysis" if args.analyze else None
         jax_ms, jax_wall, stats = run_jax_spice(
-            config, num_steps, args.use_scan, use_sparse, profile_config,
-            profile_full=args.profile_full
+            config, num_steps, args.use_scan,
+            use_sparse=use_sparse,
+            force_gpu=args.force_gpu,
+            profile_config=profile_config,
+            profile_full=args.profile_full,
+            analyze=args.analyze,
+            analyze_output_dir=analyze_dir,
         )
         startup_time = stats.get('startup_time', 0)
         print(f"done")
@@ -499,6 +658,22 @@ def main():
             'vacask_wall': vacask_wall,
             'vacask_source': vacask_source,
         })
+
+        # Memory analysis after each benchmark
+        gc.collect()  # Force GC before snapshot
+        current_snapshot = tracemalloc.take_snapshot()
+        current_mem, _ = tracemalloc.get_traced_memory()
+        print(f"  Memory: {current_mem/1024/1024:.1f}MB total")
+
+        # Show top memory diffs from previous benchmark
+        top_diffs = current_snapshot.compare_to(prev_snapshot, 'lineno')
+        if top_diffs:
+            increases = [d for d in top_diffs if d.size_diff > 0]
+            if increases[:3]:
+                print(f"  Top memory increases since last benchmark:")
+                for stat in increases[:3]:
+                    print(f"    +{stat.size_diff/1024:.1f}KB: {stat.traceback.format()[0] if stat.traceback else 'unknown'}")
+        prev_snapshot = current_snapshot
         print()
 
     # Summary table
