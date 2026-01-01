@@ -164,8 +164,14 @@ class ScanStrategy(TransientStrategy):
                    f"({stats['time_per_step_ms']:.2f}ms/step, "
                    f"{total_iters} NR iters, {non_converged} non-converged)")
 
-        # Convert to dict format
-        voltages = {i: all_V[:, i] for i in range(n_external)}
+        # Convert to dict format - index by both integer and name
+        voltages: Dict[Any, jax.Array] = {}
+        for i in range(n_external):
+            voltages[i] = all_V[:, i]
+        # Add name keys (node_names maps name -> index, we want external nodes only)
+        for name, idx in self.runner.node_names.items():
+            if idx > 0 and idx <= n_external:  # Skip ground (0), only external nodes
+                voltages[name] = all_V[:, idx - 1]  # idx is 1-based, array is 0-based
 
         return times, voltages, stats
 

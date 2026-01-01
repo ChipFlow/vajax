@@ -642,7 +642,7 @@ class BenchmarkSpec:
         t_stop: Stop time for simulation
         max_rel_error: Maximum allowed relative RMS error (0.05 = 5%)
         vacask_nodes: List of VACASK node names to compare (in order of preference)
-        jax_nodes: Corresponding JAX-SPICE node indices
+        jax_nodes: Corresponding JAX-SPICE node indices or names
         xfail: If True, test is expected to fail (won't break CI)
         xfail_reason: Reason for expected failure
         node_transform: Optional function to transform node voltages before comparison
@@ -653,7 +653,7 @@ class BenchmarkSpec:
     t_stop: float
     max_rel_error: float
     vacask_nodes: list[str]
-    jax_nodes: list[int]
+    jax_nodes: list[int | str]  # Can be node index (int) or name (str)
     xfail: bool = False
     xfail_reason: str = ""
     node_transform: Callable | None = None
@@ -708,10 +708,10 @@ BENCHMARK_SPECS = {
         dt=1e-12,          # 1ps step
         t_stop=5e-12,      # 5ps (just a few steps for timing)
         max_rel_error=0.10,  # 10% allowed (large PSP103 circuit)
-        vacask_nodes=['v(p0)', 'p0'],  # Product bit 0
-        jax_nodes=[1],  # TODO: find correct JAX-SPICE node index for p0
+        vacask_nodes=['v(p0)', 'p0'],  # Product bit 0 (VACASK uses flat names)
+        jax_nodes=['top.p0'],  # Use named node lookup (JAX-SPICE uses hierarchical names)
         xfail=True,
-        xfail_reason="Node mapping between JAX-SPICE and VACASK not yet implemented for c6288",
+        xfail_reason="VACASK OSDI compilation fails on Linux CI (openvaf-r crash)",
     ),
 }
 
