@@ -2761,18 +2761,52 @@ class CircuitEngine:
                 static_inputs_cache=static_inputs_cache,
             )
         else:
-            # icmode='uic' - use zeros with VDD nodes initialized
-            V0 = jnp.zeros(n_nodes, dtype=jnp.float64)
-            # Initialize VDD nodes to supply voltage
-            vdd_value = 0.0
-            for dev in self.devices:
-                if dev['model'] == 'vsource':
-                    dc_val = dev['params'].get('dc', 0.0)
-                    if dc_val > vdd_value:
-                        vdd_value = dc_val
+            # icmode='uic' - use mid-rail initialization (better convergence than zeros)
+            # Similar to DC operating point init but without solving
+            vdd_value = self._get_vdd_value()
+            mid_rail = vdd_value / 2.0
+            V0 = jnp.full(n_nodes, mid_rail, dtype=jnp.float64)
+            V0 = V0.at[0].set(0.0)  # Ground is always 0
+
+            # Set VDD/VCC nodes to supply voltage, GND/VSS to 0
             for name, idx in self.node_names.items():
-                if 'vdd' in name.lower() or 'vcc' in name.lower():
+                name_lower = name.lower()
+                if 'vdd' in name_lower or 'vcc' in name_lower:
                     V0 = V0.at[idx].set(vdd_value)
+                elif name_lower in ('gnd', 'vss', '0'):
+                    V0 = V0.at[idx].set(0.0)
+
+            # Initialize NOI and body internal nodes for PSP103 devices
+            if device_internal_nodes:
+                noi_nodes_initialized = 0
+                body_nodes_initialized = 0
+                device_external_nodes = {dev['name']: dev.get('nodes', []) for dev in self.devices}
+
+                for dev_name, internal_nodes in device_internal_nodes.items():
+                    # NOI nodes (node4) must be 0V
+                    if 'node4' in internal_nodes:
+                        noi_idx = internal_nodes['node4']
+                        V0 = V0.at[noi_idx].set(0.0)
+                        noi_nodes_initialized += 1
+
+                    # Body internal nodes should match bulk voltage
+                    ext_nodes = device_external_nodes.get(dev_name, [])
+                    if len(ext_nodes) >= 4:
+                        b_circuit_node = ext_nodes[3]
+                        b_voltage = float(V0[b_circuit_node])
+                        for body_node_name in ['node8', 'node9', 'node10', 'node11']:
+                            if body_node_name in internal_nodes:
+                                body_idx = internal_nodes[body_node_name]
+                                if body_idx > 0:
+                                    V0 = V0.at[body_idx].set(b_voltage)
+                                    body_nodes_initialized += 1
+
+                if noi_nodes_initialized > 0:
+                    logger.debug(f"  UIC: initialized {noi_nodes_initialized} NOI nodes to 0V")
+                if body_nodes_initialized > 0:
+                    logger.debug(f"  UIC: initialized {body_nodes_initialized} body internal nodes")
+
+            logger.info(f"  UIC mode: ground=0V, VDD={vdd_value}V, others={mid_rail}V")
 
         # Cache key for the scan function
         # Note: Does NOT include num_timesteps - lax.scan handles variable-length inputs
