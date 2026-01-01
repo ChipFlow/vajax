@@ -455,7 +455,6 @@ dependencies = [
     { name = "numpy" },
     { name = "openvaf-py" },
     { name = "pytest" },
-    { name = "scikit-umfpack" },
     { name = "scipy" },
 ]
 
@@ -470,9 +469,13 @@ dev = [
     { name = "pytest" },
     { name = "pytest-cov" },
     { name = "ruff" },
+    { name = "scikit-umfpack" },
 ]
 sax = [
     { name = "sax" },
+]
+umfpack = [
+    { name = "scikit-umfpack" },
 ]
 
 [package.dev-dependencies]
@@ -498,11 +501,12 @@ requires-dist = [
     { name = "pytest-cov", marker = "extra == 'dev'" },
     { name = "ruff", marker = "extra == 'dev'" },
     { name = "sax", marker = "extra == 'sax'", specifier = ">=0.13.0" },
-    { name = "scikit-umfpack", specifier = ">=0.4.2" },
+    { name = "scikit-umfpack", marker = "extra == 'dev'", specifier = ">=0.4.2" },
+    { name = "scikit-umfpack", marker = "extra == 'umfpack'", specifier = ">=0.4.2" },
     { name = "scipy", specifier = ">=1.11.0" },
     { name = "spineax", marker = "extra == 'cuda12'", git = "https://github.com/robtaylor/spineax.git" },
 ]
-provides-extras = ["cuda12", "sax", "dev"]
+provides-extras = ["cuda12", "umfpack", "sax", "dev"]
 
 [package.metadata.requires-dev]
 dev = [{ name = "radon", specifier = ">=6.0.1" }]

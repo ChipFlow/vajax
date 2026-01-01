@@ -78,6 +78,7 @@ ENV PATH=/usr/local/cuda-12.2/bin:$PATH
 ENV LD_LIBRARY_PATH=/usr/local/cuda-12.2/lib64
 
 # Install dependencies without the workspace package
+# Note: scikit-umfpack is optional (umfpack extra) - GPU uses Spineax/cuDSS instead
 RUN --mount=type=bind,source=uv.lock,target=uv.lock \
     --mount=type=bind,source=pyproject.toml,target=pyproject.toml \
     uv sync --frozen --no-install-workspace --extra cuda12 -p 3.13
