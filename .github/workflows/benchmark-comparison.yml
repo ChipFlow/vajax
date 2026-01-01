@@ -173,12 +173,15 @@ jobs:
         env:
           JAX_PLATFORMS: cpu
           JAX_ENABLE_X64: "1"
+        timeout-minutes: 30
         run: |
           echo "Running JAX-SPICE vs VACASK comparison..."
           # Run comparison script - it handles VACASK availability gracefully
-          # c6288 uses sparse solver automatically (10k devices)
+          # NOTE: c6288 excluded from CPU CI because scipy spsolve has O(n²-n³)
+          # scaling that makes it impractically slow (~100s/solve for 25k nodes).
+          # c6288 benchmarks are meaningful on GPU with Spineax/cuDSS.
           uv run python scripts/compare_vacask.py \
-            --benchmark rc,graetz,ring,c6288 \
+            --benchmark rc,graetz,ring \
             --max-steps 200 \
             --use-scan 2>&1 | tee /tmp/benchmark-comparison.log || true
 
