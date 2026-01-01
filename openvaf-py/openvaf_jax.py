@@ -3323,6 +3323,424 @@ class OpenVAFToJAX:
 
         return None
 
+    def _generate_init_loop_ast(
+        self,
+        header: str,
+        loop_blocks: Set[str],
+        exit_blocks: List[str],
+        init_by_block: Dict[str, List[dict]],
+        init_defined: Set[str]
+    ) -> List[ast.stmt]:
+        """Generate AST statements for a loop in the init function using lax.while_loop.
+
+        Args:
+            header: The loop header block name
+            loop_blocks: Set of all blocks in the loop
+            exit_blocks: List of blocks that are exited to
+            init_by_block: Dict mapping block names to their instructions
+            init_defined: Set of already-defined variable names (will be updated)
+
+        Returns:
+            List of AST statements to add to the function body
+        """
+        stmts: List[ast.stmt] = []
+
+        # Find PHI nodes in the header - these are loop-carried values
+        header_insts = init_by_block.get(header, [])
+        phi_nodes = [inst for inst in header_insts if inst.get('opcode', '').lower() == 'phi']
+
+        # Get loop-carried variables: PHI results and their incoming values from the loop
+        loop_carried = []  # (result_var, init_value, loop_value)
+        for phi in phi_nodes:
+            result = phi.get('result', '')
+            phi_ops = phi.get('phi_operands', [])
+            init_val = None
+            loop_val = None
+            for op in phi_ops:
+                if op['block'] in loop_blocks:
+                    loop_val = op['value']
+                else:
+                    init_val = op['value']
+            if result and init_val and loop_val:
+                loop_carried.append((result, init_val, loop_val))
+
+        if not loop_carried:
+            # No loop-carried values - skip
+            return stmts
+
+        # Find the condition and body instructions
+        condition_inst = None
+        body_insts = []
+
+        for inst in header_insts:
+            op = inst.get('opcode', '').lower()
+            if op == 'br' and 'condition' in inst:
+                condition_inst = inst
+            elif op != 'phi':
+                body_insts.append(inst)
+
+        # Also get instructions from other loop blocks (the body)
+        for block in sorted(loop_blocks):
+            if block != header:
+                for inst in init_by_block.get(block, []):
+                    op = inst.get('opcode', '').lower()
+                    if op not in ('br', 'jmp'):
+                        body_insts.append(inst)
+
+        # Helper to get operand as AST with init_ prefix
+        def get_operand_ast(op: str, local_vars: Set[str]) -> ast.expr:
+            if op in local_vars:
+                return ast_name(op)
+            prefixed = f"init_{op}"
+            if prefixed in init_defined:
+                return ast_name(prefixed)
+            if op in self.init_constants:
+                value = self.init_constants[op]
+                if value == float('inf'):
+                    return jnp_inf()
+                elif value == float('-inf'):
+                    return unaryop(ast.USub(), jnp_inf())
+                elif value != value:
+                    return jnp_nan()
+                return ast_const(value)
+            if op in self.init_bool_constants:
+                return jnp_bool(ast_const(self.init_bool_constants[op]))
+            if op in self.init_int_constants:
+                return ast_const(self.init_int_constants[op])
+            return ast_name(prefixed)
+
+        # Generate initial state tuple
+        init_state_exprs = [get_operand_ast(init_val, set()) for _, init_val, _ in loop_carried]
+        stmts.append(assign('_loop_state_init', tuple_expr(init_state_exprs)))
+
+        # State variable names (unprefixed, used inside loop functions)
+        state_vars = [lc[0] for lc in loop_carried]
+
+        # Build condition function body
+        cond_body: List[ast.stmt] = []
+        # Unpack state
+        if len(state_vars) == 1:
+            cond_body.append(assign(state_vars[0], subscript(ast_name('_loop_state'), ast_const(0))))
+        else:
+            cond_body.append(assign_tuple(state_vars, ast_name('_loop_state')))
+
+        local_vars = set(state_vars)
+        # Add header instructions (excluding PHI and branch)
+        for inst in header_insts:
+            op = inst.get('opcode', '').lower()
+            if op == 'phi' or op == 'br':
+                continue
+            result = inst.get('result', '')
+            expr = self._translate_loop_instruction_ast(inst, local_vars, init_defined, is_init=True)
+            if expr and result:
+                cond_body.append(assign(result, expr))
+                local_vars.add(result)
+
+        # Return condition
+        if condition_inst:
+            cond_var = condition_inst.get('condition', '')
+            if cond_var in local_vars:
+                cond_body.append(return_stmt(ast_name(cond_var)))
+            else:
+                cond_body.append(return_stmt(get_operand_ast(cond_var, local_vars)))
+        else:
+            cond_body.append(return_stmt(ast_const(False)))
+
+        stmts.append(function_def('_loop_cond', ['_loop_state'], cond_body))
+
+        # Build body function
+        body_body: List[ast.stmt] = []
+        # Unpack state
+        if len(state_vars) == 1:
+            body_body.append(assign(state_vars[0], subscript(ast_name('_loop_state'), ast_const(0))))
+        else:
+            body_body.append(assign_tuple(state_vars, ast_name('_loop_state')))
+
+        local_vars = set(state_vars)
+        # Recompute header instructions
+        for inst in header_insts:
+            op = inst.get('opcode', '').lower()
+            if op == 'phi' or op == 'br':
+                continue
+            result = inst.get('result', '')
+            expr = self._translate_loop_instruction_ast(inst, local_vars, init_defined, is_init=True)
+            if expr and result:
+                body_body.append(assign(result, expr))
+                local_vars.add(result)
+
+        # Body instructions
+        for inst in body_insts:
+            result = inst.get('result', '')
+            expr = self._translate_loop_instruction_ast(inst, local_vars, init_defined, is_init=True)
+            if expr and result:
+                body_body.append(assign(result, expr))
+                local_vars.add(result)
+
+        # Return new state
+        new_state_exprs = []
+        for _, _, loop_val in loop_carried:
+            if loop_val in local_vars:
+                new_state_exprs.append(ast_name(loop_val))
+            else:
+                new_state_exprs.append(get_operand_ast(loop_val, local_vars))
+        body_body.append(return_stmt(tuple_expr(new_state_exprs)))
+
+        stmts.append(function_def('_loop_body', ['_loop_state'], body_body))
+
+        # Call while_loop
+        stmts.append(assign('_loop_result',
+            lax_while_loop('_loop_cond', '_loop_body', ast_name('_loop_state_init'))
+        ))
+
+        # Unpack results to prefixed variables
+        for i, (result, _, _) in enumerate(loop_carried):
+            prefixed = f"init_{result}"
+            stmts.append(assign(prefixed, subscript(ast_name('_loop_result'), ast_const(i))))
+            init_defined.add(prefixed)
+
+        return stmts
+
+    def _generate_eval_loop_ast(
+        self,
+        header: str,
+        loop_blocks: Set[str],
+        exit_blocks: List[str],
+        eval_by_block: Dict[str, List[dict]],
+        defined_vars: Set[str]
+    ) -> List[ast.stmt]:
+        """Generate AST statements for a loop in the eval function using lax.while_loop.
+
+        Args:
+            header: The loop header block name
+            loop_blocks: Set of all blocks in the loop
+            exit_blocks: List of blocks that are exited to
+            eval_by_block: Dict mapping block names to their instructions
+            defined_vars: Set of already-defined variable names (will be updated)
+
+        Returns:
+            List of AST statements to add to the function body
+        """
+        stmts: List[ast.stmt] = []
+
+        # Find PHI nodes in the header - these are loop-carried values
+        header_insts = eval_by_block.get(header, [])
+        phi_nodes = [inst for inst in header_insts if inst.get('opcode', '').lower() == 'phi']
+
+        # Get loop-carried variables
+        loop_carried = []
+        for phi in phi_nodes:
+            result = phi.get('result', '')
+            phi_ops = phi.get('phi_operands', [])
+            init_val = None
+            loop_val = None
+            for op in phi_ops:
+                if op['block'] in loop_blocks:
+                    loop_val = op['value']
+                else:
+                    init_val = op['value']
+            if result and init_val and loop_val:
+                loop_carried.append((result, init_val, loop_val))
+
+        if not loop_carried:
+            return stmts
+
+        # Find condition and body instructions
+        condition_inst = None
+        body_insts = []
+
+        for inst in header_insts:
+            op = inst.get('opcode', '').lower()
+            if op == 'br' and 'condition' in inst:
+                condition_inst = inst
+            elif op != 'phi':
+                body_insts.append(inst)
+
+        for block in sorted(loop_blocks):
+            if block != header:
+                for inst in eval_by_block.get(block, []):
+                    op = inst.get('opcode', '').lower()
+                    if op not in ('br', 'jmp'):
+                        body_insts.append(inst)
+
+        # Helper to get operand as AST
+        def get_operand_ast(op: str, local_vars: Set[str]) -> ast.expr:
+            if op in local_vars:
+                return ast_name(op)
+            if op in defined_vars:
+                return ast_name(op)
+            if op in self.constants:
+                value = self.constants[op]
+                if value == float('inf'):
+                    return jnp_inf()
+                elif value == float('-inf'):
+                    return unaryop(ast.USub(), jnp_inf())
+                elif value != value:
+                    return jnp_nan()
+                return ast_const(value)
+            if op in self.bool_constants:
+                return jnp_bool(ast_const(self.bool_constants[op]))
+            if op in self.int_constants:
+                return ast_const(self.int_constants[op])
+            return ast_name(op)
+
+        # Generate initial state tuple
+        init_state_exprs = [get_operand_ast(init_val, set()) for _, init_val, _ in loop_carried]
+        stmts.append(assign('_loop_state_init', tuple_expr(init_state_exprs)))
+
+        state_vars = [lc[0] for lc in loop_carried]
+
+        # Build condition function
+        cond_body: List[ast.stmt] = []
+        if len(state_vars) == 1:
+            cond_body.append(assign(state_vars[0], subscript(ast_name('_loop_state'), ast_const(0))))
+        else:
+            cond_body.append(assign_tuple(state_vars, ast_name('_loop_state')))
+
+        local_vars = set(state_vars)
+        for inst in header_insts:
+            op = inst.get('opcode', '').lower()
+            if op == 'phi' or op == 'br':
+                continue
+            result = inst.get('result', '')
+            expr = self._translate_loop_instruction_ast(inst, local_vars, defined_vars, is_init=False)
+            if expr and result:
+                cond_body.append(assign(result, expr))
+                local_vars.add(result)
+
+        if condition_inst:
+            cond_var = condition_inst.get('condition', '')
+            if cond_var in local_vars:
+                cond_body.append(return_stmt(ast_name(cond_var)))
+            else:
+                cond_body.append(return_stmt(get_operand_ast(cond_var, local_vars)))
+        else:
+            cond_body.append(return_stmt(ast_const(False)))
+
+        stmts.append(function_def('_loop_cond', ['_loop_state'], cond_body))
+
+        # Build body function
+        body_body: List[ast.stmt] = []
+        if len(state_vars) == 1:
+            body_body.append(assign(state_vars[0], subscript(ast_name('_loop_state'), ast_const(0))))
+        else:
+            body_body.append(assign_tuple(state_vars, ast_name('_loop_state')))
+
+        local_vars = set(state_vars)
+        for inst in header_insts:
+            op = inst.get('opcode', '').lower()
+            if op == 'phi' or op == 'br':
+                continue
+            result = inst.get('result', '')
+            expr = self._translate_loop_instruction_ast(inst, local_vars, defined_vars, is_init=False)
+            if expr and result:
+                body_body.append(assign(result, expr))
+                local_vars.add(result)
+
+        for inst in body_insts:
+            result = inst.get('result', '')
+            expr = self._translate_loop_instruction_ast(inst, local_vars, defined_vars, is_init=False)
+            if expr and result:
+                body_body.append(assign(result, expr))
+                local_vars.add(result)
+
+        new_state_exprs = []
+        for _, _, loop_val in loop_carried:
+            if loop_val in local_vars:
+                new_state_exprs.append(ast_name(loop_val))
+            else:
+                new_state_exprs.append(get_operand_ast(loop_val, local_vars))
+        body_body.append(return_stmt(tuple_expr(new_state_exprs)))
+
+        stmts.append(function_def('_loop_body', ['_loop_state'], body_body))
+
+        # Call while_loop
+        stmts.append(assign('_loop_result',
+            lax_while_loop('_loop_cond', '_loop_body', ast_name('_loop_state_init'))
+        ))
+
+        # Unpack results
+        for i, (result, _, _) in enumerate(loop_carried):
+            stmts.append(assign(result, subscript(ast_name('_loop_result'), ast_const(i))))
+            defined_vars.add(result)
+
+        return stmts
+
+    def _translate_loop_instruction_ast(
+        self,
+        inst: dict,
+        local_vars: Set[str],
+        outer_defined: Set[str],
+        is_init: bool = False
+    ) -> Optional[ast.expr]:
+        """Translate a loop instruction to AST, resolving variables from local or outer scope.
+
+        Args:
+            inst: Instruction dictionary
+            local_vars: Set of variables defined locally in the loop
+            outer_defined: Set of variables defined in outer scope
+            is_init: Whether this is for init function (uses init_ prefix)
+
+        Returns:
+            AST expression or None
+        """
+        expr_builder = ExpressionBuilder()
+
+        def get_operand_ast(op: str) -> ast.expr:
+            if op in local_vars:
+                return ast_name(op)
+            if is_init:
+                prefixed = f"init_{op}"
+                if prefixed in outer_defined:
+                    return ast_name(prefixed)
+                if op in self.init_constants:
+                    value = self.init_constants[op]
+                    if value == float('inf'):
+                        return jnp_inf()
+                    elif value == float('-inf'):
+                        return unaryop(ast.USub(), jnp_inf())
+                    elif value != value:
+                        return jnp_nan()
+                    return ast_const(value)
+                if op in self.init_bool_constants:
+                    return jnp_bool(ast_const(self.init_bool_constants[op]))
+                if op in self.init_int_constants:
+                    return ast_const(self.init_int_constants[op])
+                return ast_name(prefixed)
+            else:
+                if op in outer_defined:
+                    return ast_name(op)
+                if op in self.constants:
+                    value = self.constants[op]
+                    if value == float('inf'):
+                        return jnp_inf()
+                    elif value == float('-inf'):
+                        return unaryop(ast.USub(), jnp_inf())
+                    elif value != value:
+                        return jnp_nan()
+                    return ast_const(value)
+                if op in self.bool_constants:
+                    return jnp_bool(ast_const(self.bool_constants[op]))
+                if op in self.int_constants:
+                    return ast_const(self.int_constants[op])
+                return ast_name(op)
+
+        opcode = inst.get('opcode', '').lower()
+        operands = inst.get('operands', [])
+        op_exprs = [get_operand_ast(op) for op in operands]
+
+        result = expr_builder.translate_opcode(opcode, op_exprs)
+        if result is not None:
+            return result
+
+        # Handle PHI nodes (shouldn't happen in loop body, but just in case)
+        if opcode == 'phi':
+            phi_ops = inst.get('phi_operands', [])
+            if phi_ops:
+                return get_operand_ast(phi_ops[0]['value'])
+            return expr_builder.zero()
+
+        return None
+
     def _generate_code_array_ast(self, func_name: str = "device_eval_array") -> ast.Module:
         """Generate JAX device evaluation function as AST.
 
@@ -3420,9 +3838,13 @@ class OpenVAFToJAX:
 
         for item in init_block_order:
             if isinstance(item, tuple) and item[0] == 'loop':
-                # For now, fall back to string generation for loops
-                # TODO: Implement AST-based loop generation
-                continue
+                # Handle loop with AST-based generation
+                _, header, loop_blocks, exit_blocks = item
+                loop_stmts = self._generate_init_loop_ast(
+                    header, loop_blocks, exit_blocks,
+                    init_by_block, init_defined
+                )
+                body.extend(loop_stmts)
             else:
                 block_name = item
                 for inst in init_by_block.get(block_name, []):
@@ -3446,12 +3868,17 @@ class OpenVAFToJAX:
 
         # Process eval function blocks
         eval_block_order = self._topological_sort()
-        eval_by_block = self._group_instructions_by_block()
+        eval_by_block = self._group_eval_instructions_by_block()
 
         for item in eval_block_order:
             if isinstance(item, tuple) and item[0] == 'loop':
-                # TODO: Implement AST-based loop generation
-                continue
+                # Handle loop with AST-based generation
+                _, header, loop_blocks, exit_blocks = item
+                loop_stmts = self._generate_eval_loop_ast(
+                    header, loop_blocks, exit_blocks,
+                    eval_by_block, defined_vars
+                )
+                body.extend(loop_stmts)
             else:
                 block_name = item
                 for inst in eval_by_block.get(block_name, []):
