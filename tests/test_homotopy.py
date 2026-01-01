@@ -33,10 +33,10 @@ def create_mock_nr_solve(residual_fn_factory, max_iterations=50, abstol=1e-10):
 
     Returns:
         A function with signature:
-        nr_solve(V_init, vsource_vals, isource_vals, Q_prev, inv_dt, gmin, gshunt)
+        nr_solve(V_init, vsource_vals, isource_vals, Q_prev, inv_dt, device_arrays, gmin, gshunt)
             -> (V, iters, converged, max_f, Q)
     """
-    def nr_solve(V_init, vsource_vals, isource_vals, Q_prev, inv_dt, gmin=1e-12, gshunt=0.0):
+    def nr_solve(V_init, vsource_vals, isource_vals, Q_prev, inv_dt, device_arrays, gmin=1e-12, gshunt=0.0):
         # Build residual function with current gmin/gshunt
         res_fn = residual_fn_factory(gmin, gshunt)
         jac_fn = jax.jacfwd(res_fn)
@@ -187,6 +187,7 @@ class TestSimpleCircuits:
             vsource_vals,
             isource_vals,
             Q_prev,
+            device_arrays={},
             source_scale=1.0,
             config=config,
             mode="gdev",
@@ -219,7 +220,7 @@ class TestSimpleCircuits:
 
         # For source stepping, we need a residual that uses vsource_vals
         def create_source_stepping_nr_solve():
-            def nr_solve(V_init, vsource_vals, isource_vals, Q_prev, inv_dt, gmin=1e-12, gshunt=0.0):
+            def nr_solve(V_init, vsource_vals, isource_vals, Q_prev, inv_dt, device_arrays, gmin=1e-12, gshunt=0.0):
                 # Use the first vsource value as VDD (already scaled by homotopy)
                 scaled_vdd = vsource_vals[0] if len(vsource_vals) > 0 else vdd
 
@@ -275,7 +276,8 @@ class TestSimpleCircuits:
             vsource_vals,
             isource_vals,
             Q_prev,
-            config,
+            device_arrays={},
+            config=config,
         )
 
         assert result.converged, f"Source stepping should converge, got: {result}"
@@ -289,7 +291,7 @@ class TestSimpleCircuits:
         vdd = 1.2
 
         def create_chain_nr_solve():
-            def nr_solve(V_init, vsource_vals, isource_vals, Q_prev, inv_dt, gmin=1e-12, gshunt=0.0):
+            def nr_solve(V_init, vsource_vals, isource_vals, Q_prev, inv_dt, device_arrays, gmin=1e-12, gshunt=0.0):
                 scaled_vdd = vsource_vals[0] if len(vsource_vals) > 0 else vdd
 
                 def res_fn(V):
@@ -337,7 +339,8 @@ class TestSimpleCircuits:
             vsource_vals,
             isource_vals,
             Q_prev,
-            config,
+            device_arrays={},
+            config=config,
         )
 
         assert result.converged, f"Homotopy chain should converge, got: {result}"
@@ -363,7 +366,7 @@ class TestDifficultCircuits:
             return jnp.where(V_gs > vth, k * (V_gs - vth) ** 2, 0.0)
 
         def create_mosfet_nr_solve():
-            def nr_solve(V_init, vsource_vals, isource_vals, Q_prev, inv_dt, gmin=1e-12, gshunt=0.0):
+            def nr_solve(V_init, vsource_vals, isource_vals, Q_prev, inv_dt, device_arrays, gmin=1e-12, gshunt=0.0):
                 scaled_vdd = vsource_vals[0] if len(vsource_vals) > 0 else vdd
 
                 def res_fn(V):
@@ -411,7 +414,8 @@ class TestDifficultCircuits:
             vsource_vals,
             isource_vals,
             Q_prev,
-            config,
+            device_arrays={},
+            config=config,
         )
 
         assert result.converged, f"Homotopy chain should handle near-singular case: {result}"
