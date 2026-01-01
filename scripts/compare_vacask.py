@@ -349,6 +349,7 @@ def run_jax_spice(config: BenchmarkConfig, num_steps: int, use_scan: bool,
         backend = "gpu" if force_gpu else None  # None = auto-select
 
         # Warmup (includes JIT compilation)
+        # Step count affects JIT caching, so use same steps as timed run
         startup_start = time.perf_counter()
         engine.run_transient(
             t_stop=t_stop, dt=config.dt,
