@@ -13,9 +13,22 @@ if platform.system() == "Darwin" and platform.machine() == "arm64":
     # Apple Silicon - force CPU backend to avoid Metal/GPU issues
     os.environ.setdefault("JAX_PLATFORMS", "cpu")
 
-from typing import Dict, List, Callable, Any, Tuple, Set, Optional
+import ast
+from typing import Dict, List, Callable, Any, Tuple, Set, Optional, Union
 from dataclasses import dataclass
 import openvaf_py
+
+# Import AST builder utilities
+from openvaf_ast import (
+    name as ast_name, const as ast_const, binop, unaryop, compare,
+    call as ast_call, attr, subscript, list_expr, tuple_expr,
+    jnp_call, jnp_where, jnp_float64, jnp_bool, jnp_inf, jnp_nan,
+    lax_call, lax_while_loop, safe_divide, nested_where,
+    assign, assign_tuple, function_def, return_stmt, import_stmt,
+    import_from, expr_stmt, pass_stmt,
+    ASTBuilder, ExpressionBuilder,
+)
+from openvaf_ast.statements import build_module, fix_and_compile
 
 # Use jax_spice logger (inherits memory logging config when enabled)
 logger = logging.getLogger("jax_spice.openvaf")
@@ -3066,6 +3079,480 @@ class OpenVAFToJAX:
             return None
 
         return None
+
+    # =========================================================================
+    # AST-based translation methods (new approach)
+    # =========================================================================
+
+    def _translate_instruction_to_ast(
+        self,
+        inst: dict,
+        defined_vars: Set[str],
+        is_init: bool = False,
+        prefix: str = ""
+    ) -> Optional[ast.expr]:
+        """Translate a MIR instruction to an AST expression.
+
+        Args:
+            inst: Instruction dictionary from MIR
+            defined_vars: Set of already-defined variable names
+            is_init: Whether this is for the init function
+            prefix: Prefix for variable names (e.g., "init_")
+
+        Returns:
+            AST expression node, or None for control flow instructions
+        """
+        expr_builder = ExpressionBuilder()
+
+        def get_operand_ast(op: str) -> ast.expr:
+            """Resolve an operand name to an AST expression."""
+            # Check if it's a constant
+            if is_init:
+                if op in self.init_constants:
+                    value = self.init_constants[op]
+                    if value == float('inf'):
+                        return jnp_inf()
+                    elif value == float('-inf'):
+                        return unaryop(ast.USub(), jnp_inf())
+                    elif value != value:  # NaN
+                        return jnp_nan()
+                    return ast_const(value)
+                if op in self.init_bool_constants:
+                    return jnp_bool(ast_const(self.init_bool_constants[op]))
+                if op in self.init_int_constants:
+                    return ast_const(self.init_int_constants[op])
+            else:
+                if op in self.constants:
+                    value = self.constants[op]
+                    if value == float('inf'):
+                        return jnp_inf()
+                    elif value == float('-inf'):
+                        return unaryop(ast.USub(), jnp_inf())
+                    elif value != value:  # NaN
+                        return jnp_nan()
+                    return ast_const(value)
+                if op in self.bool_constants:
+                    return jnp_bool(ast_const(self.bool_constants[op]))
+                if op in self.int_constants:
+                    return ast_const(self.int_constants[op])
+
+            # It's a variable reference
+            var_name = f"{prefix}{op}" if prefix else op
+            return ast_name(var_name)
+
+        opcode = inst.get('opcode', '').lower()
+        operands = inst.get('operands', [])
+
+        # Get operand AST expressions
+        op_exprs = [get_operand_ast(op) for op in operands]
+
+        # Try the expression builder for standard opcodes
+        result = expr_builder.translate_opcode(opcode, op_exprs)
+        if result is not None:
+            return result
+
+        # Handle PHI nodes
+        if opcode == 'phi':
+            phi_ops = inst.get('phi_operands', [])
+            phi_block = inst.get('block', '')
+
+            if phi_ops and len(phi_ops) >= 2:
+                pred_blocks = [op['block'] for op in phi_ops]
+                val_by_block = {
+                    op['block']: get_operand_ast(op['value'])
+                    for op in phi_ops
+                }
+
+                if len(pred_blocks) > 2:
+                    # Multi-way PHI - build nested where
+                    return self._build_multi_way_phi_ast(
+                        phi_block, phi_ops, val_by_block, get_operand_ast
+                    )
+
+                # Two-way PHI
+                cond_info = self._get_phi_condition(phi_block, pred_blocks)
+                if cond_info:
+                    cond_var, true_block, false_block = cond_info
+                    true_val = val_by_block.get(true_block, expr_builder.zero())
+                    false_val = val_by_block.get(false_block, expr_builder.zero())
+                    return expr_builder.translate_phi(
+                        ast_name(cond_var), true_val, false_val
+                    )
+                else:
+                    # Fallback
+                    return get_operand_ast(phi_ops[0]['value'])
+            elif phi_ops:
+                return get_operand_ast(phi_ops[0]['value'])
+            elif operands:
+                return get_operand_ast(operands[0])
+            return expr_builder.zero()
+
+        # Handle function calls
+        if opcode == 'call':
+            func_ref = inst.get('func_ref', '')
+            func_decls = self.mir_data.get('function_decls', {})
+
+            if func_ref in func_decls:
+                fn_name = func_decls[func_ref].get('name', '')
+
+                if 'simparam' in fn_name.lower():
+                    param_name = None
+                    if len(operands) >= 1:
+                        param_name = self.str_constants.get(operands[0], None)
+
+                    if param_name == "gmin":
+                        self.uses_simparam_gmin = True
+                        return subscript(ast_name('inputs'), ast_const(-1))
+                    else:
+                        if len(operands) >= 2:
+                            return get_operand_ast(operands[1])
+                        return expr_builder.zero()
+
+                elif fn_name == 'Analysis':
+                    self.uses_analysis = True
+                    if len(operands) >= 1:
+                        analysis_type_str = self.str_constants.get(operands[0], '')
+                        if analysis_type_str:
+                            type_code = self.analysis_type_map.get(
+                                analysis_type_str.lower(), -1
+                            )
+                            if type_code >= 0:
+                                return expr_builder.analysis_comparison(type_code)
+                    return expr_builder.jax_bool(False)
+
+                elif 'ddt' in fn_name.lower() or 'TimeDerivative' in fn_name:
+                    return expr_builder.zero()
+
+                elif 'ddx' in fn_name.lower() or 'NodeDerivative' in fn_name:
+                    return expr_builder.zero()
+
+                elif 'noise' in fn_name.lower():
+                    return expr_builder.zero()
+
+                elif 'collapse' in fn_name.lower():
+                    return None
+
+            return expr_builder.zero()
+
+        return None
+
+    def _build_multi_way_phi_ast(
+        self,
+        phi_block: str,
+        phi_ops: List[dict],
+        val_by_block: Dict[str, ast.expr],
+        get_operand_ast: Callable[[str], ast.expr]
+    ) -> ast.expr:
+        """Build a multi-way PHI node as nested jnp.where (AST version).
+
+        Args:
+            phi_block: The block containing the PHI node
+            phi_ops: List of PHI operands
+            val_by_block: Mapping from block names to value AST expressions
+            get_operand_ast: Function to resolve operand names to AST
+
+        Returns:
+            Nested jnp.where AST expression
+        """
+        expr_builder = ExpressionBuilder()
+
+        # Build list of (condition, value) pairs
+        cases = []
+        default_val = expr_builder.zero()
+
+        for phi_op in phi_ops:
+            block = phi_op['block']
+            val = val_by_block.get(block, expr_builder.zero())
+
+            # Find the condition that leads to this block
+            cond = self._get_block_condition_ast(phi_block, block, get_operand_ast)
+            if cond is not None:
+                cases.append((cond, val))
+            else:
+                # If we can't find a condition, use as default
+                default_val = val
+
+        if not cases:
+            # No conditions found, return first value
+            if phi_ops:
+                return val_by_block.get(phi_ops[0]['block'], expr_builder.zero())
+            return expr_builder.zero()
+
+        return expr_builder.translate_multi_way_phi(cases, default_val)
+
+    def _get_block_condition_ast(
+        self,
+        target_block: str,
+        source_block: str,
+        get_operand_ast: Callable[[str], ast.expr]
+    ) -> Optional[ast.expr]:
+        """Get the condition that controls the edge from source to target (AST version).
+
+        Args:
+            target_block: Destination block
+            source_block: Source block with the branch
+            get_operand_ast: Function to resolve operand names to AST
+
+        Returns:
+            AST expression for the condition, or None if not found
+        """
+        # Get block instructions to find the terminator
+        blocks = self.mir_data.get('blocks', {})
+        if source_block not in blocks:
+            return None
+
+        block_data = blocks[source_block]
+        instructions = block_data.get('instructions', [])
+
+        # Find terminating branch instruction
+        for inst in reversed(instructions):
+            opcode = inst.get('opcode', '').lower()
+            if opcode == 'br':
+                # Conditional branch
+                cond_op = inst.get('operands', [None])[0]
+                true_target = inst.get('true_block', '')
+                false_target = inst.get('false_block', '')
+
+                if cond_op:
+                    cond_expr = get_operand_ast(cond_op)
+                    if true_target == target_block:
+                        return cond_expr
+                    elif false_target == target_block:
+                        return jnp_call('logical_not', cond_expr)
+                break
+
+        return None
+
+    def _generate_code_array_ast(self, func_name: str = "device_eval_array") -> ast.Module:
+        """Generate JAX device evaluation function as AST.
+
+        This is the AST-based equivalent of _generate_code_array().
+
+        Args:
+            func_name: Name of the generated function
+
+        Returns:
+            ast.Module containing the function definition
+        """
+        import time
+        t0 = time.perf_counter()
+        logger.info("      _generate_code_array_ast: starting...")
+
+        body: List[ast.stmt] = []
+
+        # Add imports
+        body.append(import_stmt([('jax.numpy', 'jnp')]))
+        body.append(import_from('jax', ['lax']))
+
+        # Add shared constants
+        body.append(assign('_ZERO', jnp_float64(ast_const(0.0))))
+        body.append(assign('_ONE', jnp_float64(ast_const(1.0))))
+
+        # Track defined variables
+        defined_vars: Set[str] = {'_ZERO', '_ONE'}
+
+        # Add eval constants
+        for var_name, value in self.constants.items():
+            if value == float('inf'):
+                body.append(assign(var_name, jnp_inf()))
+            elif value == float('-inf'):
+                body.append(assign(var_name, unaryop(ast.USub(), jnp_inf())))
+            elif value != value:  # NaN
+                body.append(assign(var_name, jnp_nan()))
+            else:
+                body.append(assign(var_name, ast_const(value)))
+            defined_vars.add(var_name)
+
+        # Boolean constants
+        for var_name, value in self.bool_constants.items():
+            body.append(assign(var_name, jnp_bool(ast_const(value))))
+            defined_vars.add(var_name)
+
+        # Int constants
+        for var_name, value in self.int_constants.items():
+            if var_name not in defined_vars:
+                body.append(assign(var_name, ast_const(value)))
+                defined_vars.add(var_name)
+
+        # Ensure v3 exists
+        if 'v3' not in defined_vars:
+            body.append(assign('v3', ast_name('_ZERO')))
+            defined_vars.add('v3')
+
+        # Map input parameters
+        num_named_params = len(self.module.param_names)
+        for i, param in enumerate(self.params[:num_named_params]):
+            body.append(assign(param, subscript(ast_name('inputs'), ast_const(i))))
+            defined_vars.add(param)
+
+        # Derivative selector params default to 0
+        for param in self.params[num_named_params:]:
+            body.append(assign(param, ast_const(0)))
+            defined_vars.add(param)
+
+        # Process init function
+        init_defined: Set[str] = set()
+
+        # Add prefixed init constants
+        for var_name, value in self.init_constants.items():
+            prefixed = f"init_{var_name}"
+            if value == float('inf'):
+                body.append(assign(prefixed, jnp_inf()))
+            elif value == float('-inf'):
+                body.append(assign(prefixed, unaryop(ast.USub(), jnp_inf())))
+            elif value != value:  # NaN
+                body.append(assign(prefixed, jnp_nan()))
+            else:
+                body.append(assign(prefixed, ast_const(value)))
+            init_defined.add(prefixed)
+
+        # Map init params from inputs
+        init_param_mapping = self._build_init_param_mapping()
+        for init_param, eval_idx in init_param_mapping.items():
+            if eval_idx is not None:
+                prefixed = f"init_{init_param}"
+                body.append(assign(prefixed, subscript(ast_name('inputs'), ast_const(eval_idx))))
+                init_defined.add(prefixed)
+
+        # Process init instructions (simplified - no loop handling for now)
+        init_block_order = self._topological_sort_init_blocks()
+        init_by_block = self._group_init_instructions_by_block()
+
+        for item in init_block_order:
+            if isinstance(item, tuple) and item[0] == 'loop':
+                # For now, fall back to string generation for loops
+                # TODO: Implement AST-based loop generation
+                continue
+            else:
+                block_name = item
+                for inst in init_by_block.get(block_name, []):
+                    expr = self._translate_instruction_to_ast(inst, init_defined, is_init=True, prefix="init_")
+                    if expr and 'result' in inst:
+                        prefixed_result = f"init_{inst['result']}"
+                        body.append(assign(prefixed_result, expr))
+                        init_defined.add(prefixed_result)
+
+        # Map cached values from init to eval params
+        all_func_params = self.module.get_all_func_params()
+        param_idx_to_val = {p[0]: f"v{p[1]}" for p in all_func_params}
+
+        for mapping in self.cache_mapping:
+            init_val = f"init_{mapping['init_value']}"
+            eval_param_idx = mapping['eval_param']
+            eval_val = param_idx_to_val.get(eval_param_idx, f"cached_{eval_param_idx}")
+            if init_val in init_defined:
+                body.append(assign(eval_val, ast_name(init_val)))
+                defined_vars.add(eval_val)
+
+        # Process eval function blocks
+        eval_block_order = self._topological_sort()
+        eval_by_block = self._group_instructions_by_block()
+
+        for item in eval_block_order:
+            if isinstance(item, tuple) and item[0] == 'loop':
+                # TODO: Implement AST-based loop generation
+                continue
+            else:
+                block_name = item
+                for inst in eval_by_block.get(block_name, []):
+                    expr = self._translate_instruction_to_ast(inst, defined_vars, is_init=False)
+                    if expr and 'result' in inst:
+                        result = inst['result']
+                        body.append(assign(result, expr))
+                        defined_vars.add(result)
+
+        # Build output arrays
+        residual_resist_exprs = []
+        residual_react_exprs = []
+        for node, res in self.dae_data['residuals'].items():
+            resist_val = res['resist'] if res['resist'] in defined_vars else '_ZERO'
+            react_val = res['react'] if res['react'] in defined_vars else '_ZERO'
+            residual_resist_exprs.append(ast_name(resist_val))
+            residual_react_exprs.append(ast_name(react_val))
+
+        jacobian_resist_exprs = []
+        jacobian_react_exprs = []
+        for jac_entry in self.dae_data['jacobian']:
+            resist_val = jac_entry['resist'] if jac_entry['resist'] in defined_vars else '_ZERO'
+            react_val = jac_entry['react'] if jac_entry['react'] in defined_vars else '_ZERO'
+            jacobian_resist_exprs.append(ast_name(resist_val))
+            jacobian_react_exprs.append(ast_name(react_val))
+
+        # Assign output arrays
+        body.append(assign('residuals_resist', jnp_call('array', list_expr(residual_resist_exprs))))
+        body.append(assign('residuals_react', jnp_call('array', list_expr(residual_react_exprs))))
+        body.append(assign('jacobian_resist', jnp_call('array', list_expr(jacobian_resist_exprs))))
+        body.append(assign('jacobian_react', jnp_call('array', list_expr(jacobian_react_exprs))))
+
+        # Return statement
+        body.append(return_stmt(tuple_expr([
+            ast_name('residuals_resist'),
+            ast_name('residuals_react'),
+            ast_name('jacobian_resist'),
+            ast_name('jacobian_react'),
+        ])))
+
+        # Create function definition
+        func = function_def(func_name, ['inputs'], body)
+
+        # Create module
+        module = build_module([func])
+
+        t1 = time.perf_counter()
+        logger.info(f"      _generate_code_array_ast: done in {t1-t0:.2f}s")
+
+        return module
+
+    def translate_array_ast(self) -> Tuple[Callable, Dict]:
+        """Generate a JAX function using AST-based generation (vmap-compatible).
+
+        This is the AST-based equivalent of translate_array().
+
+        Returns:
+            Tuple of (eval_function, metadata_dict)
+        """
+        import time
+        t0 = time.perf_counter()
+        logger.info("    translate_array_ast: generating AST...")
+
+        module = self._generate_code_array_ast()
+
+        t1 = time.perf_counter()
+        logger.info(f"    translate_array_ast: AST generated in {t1-t0:.2f}s")
+
+        # Fix missing locations and compile
+        ast.fix_missing_locations(module)
+        code = compile(module, '<generated_ast>', 'exec')
+
+        t2 = time.perf_counter()
+        logger.info(f"    translate_array_ast: compiled in {t2-t1:.2f}s")
+
+        # Execute to get the function
+        import jax.numpy as jnp
+        from jax import lax
+        local_ns = {'jnp': jnp, 'lax': lax}
+        exec(code, local_ns)
+
+        t3 = time.perf_counter()
+        logger.info(f"    translate_array_ast: exec() done in {t3-t2:.2f}s")
+
+        # Build metadata
+        metadata = {
+            'node_names': list(self.dae_data['residuals'].keys()),
+            'jacobian_keys': [(j['row'], j['col']) for j in self.dae_data['jacobian']],
+            'param_names': list(self.module.param_names),
+            'param_kinds': list(self.module.param_kinds),
+            'uses_simparam_gmin': self.uses_simparam_gmin,
+            'uses_analysis': self.uses_analysis,
+        }
+
+        return local_ns['device_eval_array'], metadata
+
+    def get_generated_code_ast(self) -> str:
+        """Get the generated JAX code from AST as a string."""
+        module = self._generate_code_array_ast()
+        ast.fix_missing_locations(module)
+        return ast.unparse(module)
 
     def get_parameter_info(self) -> List[Tuple[str, str, str]]:
         """Get parameter information
