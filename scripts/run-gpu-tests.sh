@@ -77,11 +77,11 @@ echo "Running JAX-SPICE vs VACASK benchmark comparison..."
 # Enable JAX profiling to capture GPU traces (Perfetto format)
 # Note: nsys-jax profiling can be enabled with --profile-mode=nsys but
 # generates larger output files - use for detailed GPU kernel analysis
-# Running single benchmark (ring) for faster iteration and cleaner Perfetto traces
+# Run all benchmarks on GPU - Spineax/cuDSS handles large circuits efficiently
 # Use --force-gpu to ensure GPU is used even for small circuits (ring has only 47 nodes)
 # Use --analyze to dump HLO/cost analysis for understanding XLA compilation
 uv run python scripts/compare_vacask.py \
-  --benchmark ring \
+  --benchmark rc,graetz,ring,c6288 \
   --max-steps 50 \
   --use-scan \
   --force-gpu \
