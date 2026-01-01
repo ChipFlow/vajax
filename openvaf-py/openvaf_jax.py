@@ -59,6 +59,39 @@ def _jax_bool_repr(value: bool) -> str:
 class OpenVAFToJAX:
     """Translates OpenVAF MIR to JAX functions"""
 
+    # Opcode lookup tables for fast dispatch (Optimization 1)
+    # Binary arithmetic ops: opcode -> operator string
+    _BINARY_ARITH_OPS = {
+        'fadd': '+', 'fsub': '-', 'fmul': '*',
+        'iadd': '+', 'isub': '-', 'imul': '*',
+        'irem': '%', 'idiv': '//',
+        'iand': '&', 'ior': '|', 'ixor': '^',
+    }
+
+    # Comparison ops: opcode -> operator string
+    _COMPARE_OPS = {
+        'feq': '==', 'fne': '!=', 'flt': '<', 'fgt': '>', 'fle': '<=', 'fge': '>=',
+        'ieq': '==', 'ine': '!=', 'ilt': '<', 'igt': '>', 'ile': '<=', 'ige': '>=',
+        'beq': '==', 'bne': '!=',
+    }
+
+    # Unary jnp functions: opcode -> jnp method name (same name)
+    _UNARY_JNP_SAME = {'exp', 'sqrt', 'floor', 'ceil', 'sin', 'cos', 'tan',
+                       'sinh', 'cosh', 'tanh', 'hypot'}
+
+    # Unary jnp functions: opcode -> jnp method name (different name)
+    _UNARY_JNP_MAP = {
+        'ln': 'log',
+        'asin': 'arcsin', 'acos': 'arccos', 'atan': 'arctan',
+        'asinh': 'arcsinh', 'acosh': 'arccosh', 'atanh': 'arctanh',
+    }
+
+    # Binary jnp functions: opcode -> jnp method name
+    _BINARY_JNP_MAP = {
+        'pow': 'power',
+        'atan2': 'arctan2',
+    }
+
     def __init__(self, module):
         """Initialize with a compiled VaModule from openvaf_py
 
@@ -1403,7 +1436,6 @@ class OpenVAFToJAX:
         # Initialize constants for eval function
         lines.append("    # Constants (eval function)")
         for name, value in self.constants.items():
-            # Handle special float values
             if value == float('inf'):
                 lines.append(f"    {name} = jnp.inf")
             elif value == float('-inf'):
@@ -2755,89 +2787,49 @@ class OpenVAFToJAX:
         return self._translate_instruction_impl(inst, get_operand)
 
     def _translate_instruction_impl(self, inst: dict, get_operand: Callable[[str], str]) -> Optional[str]:
-        """Implementation of instruction translation with custom operand resolver"""
+        """Implementation of instruction translation with custom operand resolver.
+
+        Uses class-level lookup tables for fast opcode dispatch (Optimization 1).
+        """
         opcode = inst.get('opcode', '').lower()
         operands = inst.get('operands', [])
 
-        if opcode == 'fadd':
+        # Fast path: binary arithmetic ops (fadd, fsub, fmul, iadd, isub, imul, etc.)
+        if opcode in self._BINARY_ARITH_OPS:
             ops = [get_operand(op) for op in operands]
-            return f"({ops[0]} + {ops[1]})"
+            return f"({ops[0]} {self._BINARY_ARITH_OPS[opcode]} {ops[1]})"
 
-        elif opcode == 'fsub':
+        # Fast path: comparison ops (feq, flt, fgt, ieq, ilt, etc.)
+        if opcode in self._COMPARE_OPS:
             ops = [get_operand(op) for op in operands]
-            return f"({ops[0]} - {ops[1]})"
+            return f"({ops[0]} {self._COMPARE_OPS[opcode]} {ops[1]})"
 
-        elif opcode == 'fmul':
+        # Fast path: unary jnp functions with same name (exp, sqrt, sin, cos, etc.)
+        if opcode in self._UNARY_JNP_SAME:
             ops = [get_operand(op) for op in operands]
-            return f"({ops[0]} * {ops[1]})"
+            return f"jnp.{opcode}({ops[0]})"
 
-        elif opcode == 'fdiv':
+        # Fast path: unary jnp functions with different name (ln->log, asin->arcsin, etc.)
+        if opcode in self._UNARY_JNP_MAP:
+            ops = [get_operand(op) for op in operands]
+            return f"jnp.{self._UNARY_JNP_MAP[opcode]}({ops[0]})"
+
+        # Fast path: binary jnp functions (pow->power, atan2->arctan2)
+        if opcode in self._BINARY_JNP_MAP:
+            ops = [get_operand(op) for op in operands]
+            return f"jnp.{self._BINARY_JNP_MAP[opcode]}({ops[0]}, {ops[1]})"
+
+        # Special cases that need custom handling
+        if opcode == 'fdiv':
             ops = [get_operand(op) for op in operands]
             # Use safe division to avoid div-by-zero when conditionals are linearized
             return f"jnp.where({ops[1]} == _ZERO, _ZERO, {ops[0]} / jnp.where({ops[1]} == _ZERO, _ONE, {ops[1]}))"
 
-        elif opcode == 'fneg':
+        if opcode == 'fneg' or opcode == 'ineg':
             ops = [get_operand(op) for op in operands]
-            return f"(-{ops[0]})"
+            return f"(-{ops[0]})" if ops else ('_ZERO' if opcode == 'fneg' else '0')
 
-        elif opcode == 'exp':
-            ops = [get_operand(op) for op in operands]
-            return f"jnp.exp({ops[0]})"
-
-        elif opcode == 'ln':
-            ops = [get_operand(op) for op in operands]
-            return f"jnp.log({ops[0]})"
-
-        elif opcode == 'sqrt':
-            ops = [get_operand(op) for op in operands]
-            return f"jnp.sqrt({ops[0]})"
-
-        elif opcode == 'pow':
-            ops = [get_operand(op) for op in operands]
-            return f"jnp.power({ops[0]}, {ops[1]})"
-
-        elif opcode in ('sin', 'cos', 'tan', 'asin', 'acos', 'atan',
-                        'sinh', 'cosh', 'tanh', 'asinh', 'acosh', 'atanh'):
-            ops = [get_operand(op) for op in operands]
-            return f"jnp.{opcode}({ops[0]})"
-
-        elif opcode == 'floor':
-            ops = [get_operand(op) for op in operands]
-            return f"jnp.floor({ops[0]})"
-
-        elif opcode == 'ceil':
-            ops = [get_operand(op) for op in operands]
-            return f"jnp.ceil({ops[0]})"
-
-        elif opcode == 'hypot':
-            ops = [get_operand(op) for op in operands]
-            return f"jnp.hypot({ops[0]}, {ops[1]})"
-
-        elif opcode == 'atan2':
-            ops = [get_operand(op) for op in operands]
-            return f"jnp.arctan2({ops[0]}, {ops[1]})"
-
-        elif opcode == 'feq':
-            ops = [get_operand(op) for op in operands]
-            return f"({ops[0]} == {ops[1]})"
-
-        elif opcode == 'flt':
-            ops = [get_operand(op) for op in operands]
-            return f"({ops[0]} < {ops[1]})"
-
-        elif opcode == 'fgt':
-            ops = [get_operand(op) for op in operands]
-            return f"({ops[0]} > {ops[1]})"
-
-        elif opcode == 'fle':
-            ops = [get_operand(op) for op in operands]
-            return f"({ops[0]} <= {ops[1]})"
-
-        elif opcode == 'fge':
-            ops = [get_operand(op) for op in operands]
-            return f"({ops[0]} >= {ops[1]})"
-
-        elif opcode == 'optbarrier':
+        if opcode == 'optbarrier':
             # Optimization barrier - just pass through
             ops = [get_operand(op) for op in operands]
             return ops[0] if ops else '_ZERO'
@@ -2968,104 +2960,15 @@ class OpenVAFToJAX:
                 return f"({ops[0]} != _ZERO)"
             return _jax_bool_repr(False)
 
-        elif opcode == 'irem':
-            # Integer remainder (modulo)
-            ops = [get_operand(op) for op in operands]
-            return f"({ops[0]} % {ops[1]})"
+        # Note: irem, idiv, ige, igt, ile, ilt, ieq, ine, fne, beq, bne,
+        # iand, ior, ixor, iadd, isub, imul are now handled by lookup tables above
 
-        elif opcode == 'idiv':
-            # Integer division
-            ops = [get_operand(op) for op in operands]
-            return f"({ops[0]} // {ops[1]})"
-
-        elif opcode == 'ige':
-            # Integer greater-than-or-equal
-            ops = [get_operand(op) for op in operands]
-            return f"({ops[0]} >= {ops[1]})"
-
-        elif opcode == 'igt':
-            # Integer greater-than
-            ops = [get_operand(op) for op in operands]
-            return f"({ops[0]} > {ops[1]})"
-
-        elif opcode == 'ile':
-            # Integer less-than-or-equal
-            ops = [get_operand(op) for op in operands]
-            return f"({ops[0]} <= {ops[1]})"
-
-        elif opcode == 'ilt':
-            # Integer less-than
-            ops = [get_operand(op) for op in operands]
-            return f"({ops[0]} < {ops[1]})"
-
-        elif opcode == 'ieq':
-            # Integer equal
-            ops = [get_operand(op) for op in operands]
-            return f"({ops[0]} == {ops[1]})"
-
-        elif opcode == 'ine':
-            # Integer not-equal
-            ops = [get_operand(op) for op in operands]
-            return f"({ops[0]} != {ops[1]})"
-
-        elif opcode == 'fne':
-            # Float not-equal
-            ops = [get_operand(op) for op in operands]
-            return f"({ops[0]} != {ops[1]})"
-
-        elif opcode == 'bnot':
+        if opcode == 'bnot':
             # Boolean not - use jnp.logical_not for JIT compatibility
             ops = [get_operand(op) for op in operands]
             if ops:
                 return f"jnp.logical_not({ops[0]})"
             return _jax_bool_repr(True)
-
-        elif opcode == 'beq':
-            # Boolean equality
-            ops = [get_operand(op) for op in operands]
-            return f"({ops[0]} == {ops[1]})"
-
-        elif opcode == 'bne':
-            # Boolean not-equal
-            ops = [get_operand(op) for op in operands]
-            return f"({ops[0]} != {ops[1]})"
-
-        elif opcode == 'iand':
-            # Integer AND
-            ops = [get_operand(op) for op in operands]
-            return f"({ops[0]} & {ops[1]})"
-
-        elif opcode == 'ior':
-            # Integer OR
-            ops = [get_operand(op) for op in operands]
-            return f"({ops[0]} | {ops[1]})"
-
-        elif opcode == 'ixor':
-            # Integer XOR
-            ops = [get_operand(op) for op in operands]
-            return f"({ops[0]} ^ {ops[1]})"
-
-        elif opcode == 'ineg':
-            # Integer negate
-            ops = [get_operand(op) for op in operands]
-            if ops:
-                return f"(-{ops[0]})"
-            return '0'
-
-        elif opcode == 'iadd':
-            # Integer add
-            ops = [get_operand(op) for op in operands]
-            return f"({ops[0]} + {ops[1]})"
-
-        elif opcode == 'isub':
-            # Integer subtract
-            ops = [get_operand(op) for op in operands]
-            return f"({ops[0]} - {ops[1]})"
-
-        elif opcode == 'imul':
-            # Integer multiply
-            ops = [get_operand(op) for op in operands]
-            return f"({ops[0]} * {ops[1]})"
 
         elif opcode == 'bicast':
             # Bool to int cast
