@@ -7,6 +7,7 @@ and JAX-SPICE, including:
 - Generating comparison reports
 """
 
+import os
 import subprocess
 import tempfile
 from dataclasses import dataclass
@@ -124,6 +125,18 @@ def run_vacask(
         output_dir = Path(tempfile.mkdtemp(prefix="vacask_"))
 
     # VACASK outputs to current directory, so we need to run from output_dir
+    # Set PYTHONPATH to include VACASK's python directory for postprocess scripts
+    # vacask_bin is typically at vendor/VACASK/build/simulator/vacask
+    # so we need parent.parent.parent to get to vendor/VACASK
+    vacask_python_dir = vacask_bin.parent.parent.parent / "python"
+    env = os.environ.copy()
+    if vacask_python_dir.exists():
+        existing_pythonpath = env.get("PYTHONPATH", "")
+        if existing_pythonpath:
+            env["PYTHONPATH"] = f"{vacask_python_dir}:{existing_pythonpath}"
+        else:
+            env["PYTHONPATH"] = str(vacask_python_dir)
+
     try:
         result = subprocess.run(
             [str(vacask_bin), str(sim_file.absolute())],
@@ -131,17 +144,20 @@ def run_vacask(
             capture_output=True,
             text=True,
             timeout=timeout,
+            env=env,
         )
 
+        # Find the .raw file - check even if returncode != 0 because
+        # postprocess scripts may fail but simulation still produces output
+        raw_files = list(output_dir.glob("*.raw"))
+        if raw_files:
+            return raw_files[0], None
+
+        # No raw file found - report the actual error
         if result.returncode != 0:
             return None, f"VACASK failed: {result.stderr}"
 
-        # Find the .raw file
-        raw_files = list(output_dir.glob("*.raw"))
-        if not raw_files:
-            return None, f"No .raw file found in {output_dir}"
-
-        return raw_files[0], None
+        return None, f"No .raw file found in {output_dir}"
 
     except subprocess.TimeoutExpired:
         return None, f"VACASK timed out after {timeout}s"
