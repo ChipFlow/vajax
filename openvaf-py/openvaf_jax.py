@@ -141,6 +141,25 @@ class OpenVAFToJAX:
         self.collapse_decision_outputs = list(module.collapse_decision_outputs)
         self.collapsible_pairs = list(module.collapsible_pairs)
 
+        # Cached maps for PHI condition lookup optimization
+        # Built lazily on first use
+        self._eval_succ_pair_map: Optional[Dict[frozenset, List[str]]] = None
+        self._init_succ_pair_map: Optional[Dict[frozenset, List[str]]] = None
+
+    def _get_eval_succ_pair_map(self) -> Dict[frozenset, List[str]]:
+        """Get cached successor pair map for eval blocks."""
+        if self._eval_succ_pair_map is None:
+            blocks = self.mir_data.get('blocks', {})
+            self._eval_succ_pair_map = self._build_succ_pair_map(blocks)
+        return self._eval_succ_pair_map
+
+    def _get_init_succ_pair_map(self) -> Dict[frozenset, List[str]]:
+        """Get cached successor pair map for init blocks."""
+        if self._init_succ_pair_map is None:
+            blocks = self.init_mir_data.get('blocks', {})
+            self._init_succ_pair_map = self._build_succ_pair_map(blocks)
+        return self._init_succ_pair_map
+
     @classmethod
     def from_file(cls, va_path: str) -> "OpenVAFToJAX":
         """Create translator from a Verilog-A file
@@ -1198,7 +1217,10 @@ class OpenVAFToJAX:
         """Get PHI condition for standalone init function (no prefix)"""
         blocks = self.init_mir_data.get('blocks', {})
         branch_conds = self._build_init_branch_conditions()
-        return self._get_phi_condition_impl(phi_block, pred_blocks, blocks, branch_conds, prefix='')
+        return self._get_phi_condition_impl(
+            phi_block, pred_blocks, blocks, branch_conds,
+            prefix='', succ_pair_map=self._get_init_succ_pair_map()
+        )
 
     def _build_standalone_init_multi_way_phi(self, phi_block: str, phi_ops: List[dict],
                                               val_by_block: Dict[str, str],
@@ -2414,7 +2436,10 @@ class OpenVAFToJAX:
         """
         blocks = self.mir_data.get('blocks', {})
         branch_conds = self._build_branch_conditions()
-        return self._get_phi_condition_impl(phi_block, pred_blocks, blocks, branch_conds, prefix='')
+        return self._get_phi_condition_impl(
+            phi_block, pred_blocks, blocks, branch_conds,
+            prefix='', succ_pair_map=self._get_eval_succ_pair_map()
+        )
 
     def _get_init_phi_condition(self, phi_block: str, pred_blocks: List[str]) -> Optional[Tuple[str, str, str]]:
         """Get the condition for a PHI node in init function
@@ -2423,15 +2448,37 @@ class OpenVAFToJAX:
         """
         blocks = self.init_mir_data.get('blocks', {})
         branch_conds = self._build_init_branch_conditions()
-        return self._get_phi_condition_impl(phi_block, pred_blocks, blocks, branch_conds, prefix='init_')
+        return self._get_phi_condition_impl(
+            phi_block, pred_blocks, blocks, branch_conds,
+            prefix='init_', succ_pair_map=self._get_init_succ_pair_map()
+        )
+
+    def _build_succ_pair_map(self, blocks: Dict) -> Dict[frozenset, List[str]]:
+        """Build a map from successor pairs to block names.
+
+        This is an optimization to avoid O(n_blocks) iteration in _get_phi_condition_impl.
+        Returns a dict mapping frozenset(successors) -> [block_names].
+        """
+        succ_to_blocks: Dict[frozenset, List[str]] = {}
+        for block_name, block_data in blocks.items():
+            succs = block_data.get('successors', [])
+            if len(succs) == 2:  # Only care about binary branches
+                key = frozenset(succs)
+                if key not in succ_to_blocks:
+                    succ_to_blocks[key] = []
+                succ_to_blocks[key].append(block_name)
+        return succ_to_blocks
 
     def _get_phi_condition_impl(self, phi_block: str, pred_blocks: List[str],
                                  blocks: Dict, branch_conds: Dict,
-                                 prefix: str = '') -> Optional[Tuple[str, str, str]]:
+                                 prefix: str = '',
+                                 succ_pair_map: Optional[Dict[frozenset, List[str]]] = None) -> Optional[Tuple[str, str, str]]:
         """Implementation of PHI condition finding
 
         Returns (condition_var, true_value_block, false_value_block) or None
         The condition_var is prefixed with prefix if provided.
+
+        Optimization: Pass succ_pair_map to avoid O(n_blocks) iteration.
         """
         if len(pred_blocks) != 2:
             return None
@@ -2462,9 +2509,19 @@ class OpenVAFToJAX:
 
         # Check if there's a common dominator that branches
         # Look for a block that is predecessor to both pred0 and pred1
-        for block_name, block_data in blocks.items():
-            succs = block_data.get('successors', [])
-            if set(succs) == set(pred_blocks) and block_name in branch_conds:
+        # Optimization: use precomputed succ_pair_map instead of iterating all blocks
+        pred_key = frozenset(pred_blocks)
+        if succ_pair_map is not None:
+            candidate_blocks = succ_pair_map.get(pred_key, [])
+        else:
+            # Fallback to iteration if map not provided
+            candidate_blocks = [
+                block_name for block_name, block_data in blocks.items()
+                if set(block_data.get('successors', [])) == set(pred_blocks)
+            ]
+
+        for block_name in candidate_blocks:
+            if block_name in branch_conds:
                 cond_info = branch_conds[block_name]
                 if pred0 in cond_info and pred1 in cond_info:
                     cond_var, is_true0 = cond_info[pred0]
