@@ -8,7 +8,7 @@ FROM python:3.13-slim-bullseye
 COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /bin/
 
 RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
-    apt update && apt install -y build-essential git curl libssl-dev software-properties-common apt-transport-https gnupg \
+    apt update && apt install -y build-essential git curl libssl-dev libsuitesparse-dev software-properties-common apt-transport-https gnupg \
     && echo "deb [signed-by=/usr/share/keyrings/cloud.google.gpg] https://packages.cloud.google.com/apt cloud-sdk main" \
        | tee -a /etc/apt/sources.list.d/google-cloud-sdk.list \
     && curl https://packages.cloud.google.com/apt/doc/apt-key.gpg \
