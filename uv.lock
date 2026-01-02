@@ -1803,7 +1803,7 @@ wheels = [
 [[package]]
 name = "spineax"
 version = "0.0.2"
-source = { git = "https://github.com/robtaylor/spineax.git#8f66984cd5c3ec497b7ec7f660e837d1a3fde9b6" }
+source = { git = "https://github.com/robtaylor/spineax.git#e78d97dce13a03717106b3b419926ab5f6984d66" }
 dependencies = [
     { name = "equinox" },
     { name = "jax", extra = ["cuda12"] },
