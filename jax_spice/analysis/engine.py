@@ -1055,7 +1055,11 @@ class CircuitEngine:
                     shared_indices, varying_indices_list, init_to_eval_list
                 )
                 # vmap with in_axes=(None, 0) - shared broadcasts, device mapped
-                vmapped_split_init = jax.jit(jax.vmap(split_init_fn, in_axes=(None, 0)))
+                # Use cached vmapped+jit to avoid repeated JIT compilation
+                code_hash = init_split_meta.get('code_hash', '')
+                vmapped_split_init = openvaf_jax.get_vmapped_jit(
+                    code_hash, split_init_fn, in_axes=(None, 0)
+                )
 
                 # Compute cache using split init (no large init_inputs array needed!)
                 logger.info(f"Computing init cache for {model_type} ({n_devices} devices) via split init...")

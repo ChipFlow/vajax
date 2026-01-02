@@ -33,6 +33,77 @@ from openvaf_ast.statements import build_module, fix_and_compile
 # Use jax_spice logger (inherits memory logging config when enabled)
 logger = logging.getLogger("jax_spice.openvaf")
 
+# Module-level cache for exec'd functions (keyed by code hash)
+# This allows JAX to reuse JIT-compiled functions across translator instances
+_exec_fn_cache: Dict[str, Callable] = {}
+
+# Module-level cache for vmapped+jit'd functions (keyed by (code_hash, in_axes))
+# This avoids repeated JIT compilation for the same function with same vmap axes
+_vmapped_jit_cache: Dict[Tuple[str, Tuple], Callable] = {}
+
+
+def _exec_with_cache(code: str, fn_name: str, return_hash: bool = False) -> Union[Callable, Tuple[Callable, str]]:
+    """Execute code and cache the resulting function by code hash.
+
+    This dramatically speeds up repeated compilations (e.g., re-parsing the same
+    circuit) by reusing previously exec'd functions. JAX can then reuse its
+    JIT-compiled versions.
+
+    Args:
+        code: Python source code to execute
+        fn_name: Name of function to extract from executed code
+        return_hash: If True, return (function, code_hash) tuple
+
+    Returns:
+        If return_hash=False: Just the function
+        If return_hash=True: Tuple of (function, code_hash)
+    """
+    import hashlib
+    import jax.numpy as jnp
+    from jax import lax
+
+    code_hash = hashlib.sha256(code.encode()).hexdigest()
+
+    if code_hash in _exec_fn_cache:
+        logger.debug(f"    {fn_name}: using cached function (hash={code_hash[:8]})")
+        fn = _exec_fn_cache[code_hash]
+        return (fn, code_hash) if return_hash else fn
+
+    local_ns = {'jnp': jnp, 'lax': lax}
+    exec(code, local_ns)
+    fn = local_ns[fn_name]
+
+    _exec_fn_cache[code_hash] = fn
+    logger.debug(f"    {fn_name}: cached new function (hash={code_hash[:8]})")
+    return (fn, code_hash) if return_hash else fn
+
+
+def get_vmapped_jit(code_hash: str, fn: Callable, in_axes: Tuple) -> Callable:
+    """Get a cached vmapped+jit'd version of a function.
+
+    This caches the entire jax.jit(jax.vmap(fn, in_axes=in_axes)) result,
+    avoiding repeated JIT compilation for the same function.
+    """
+    import jax
+
+    cache_key = (code_hash, in_axes)
+
+    if cache_key in _vmapped_jit_cache:
+        logger.debug(f"    vmapped_jit: using cached (hash={code_hash[:8]}, in_axes={in_axes})")
+        return _vmapped_jit_cache[cache_key]
+
+    vmapped_jit_fn = jax.jit(jax.vmap(fn, in_axes=in_axes))
+    _vmapped_jit_cache[cache_key] = vmapped_jit_fn
+    logger.debug(f"    vmapped_jit: cached new (hash={code_hash[:8]}, in_axes={in_axes})")
+    return vmapped_jit_fn
+
+
+def clear_exec_cache():
+    """Clear the exec function cache (useful for testing or memory management)."""
+    global _exec_fn_cache, _vmapped_jit_cache
+    _exec_fn_cache.clear()
+    _vmapped_jit_cache.clear()
+
 
 @dataclass
 class CompiledDevice:
@@ -208,15 +279,12 @@ class OpenVAFToJAX:
         code = '\n'.join(code_lines)
         logger.info(f"    translate: code size = {len(code)} chars")
 
-        # Compile and return
-        import jax.numpy as jnp
-        from jax import lax
-        local_ns = {'jnp': jnp, 'lax': lax}
+        # Compile with caching
         logger.info("    translate: exec()...")
-        exec(code, local_ns)
+        fn = _exec_with_cache(code, 'device_eval')
         t2 = time.perf_counter()
         logger.info(f"    translate: exec() done in {t2-t1:.1f}s")
-        return local_ns['device_eval']
+        return fn
 
     def translate_array(self) -> Tuple[Callable, Dict]:
         """Generate a JAX function that returns arrays (vmap-compatible)
@@ -259,12 +327,9 @@ class OpenVAFToJAX:
         code = '\n'.join(code_lines)
         logger.info(f"    translate_array: code size = {len(code)} chars")
 
-        # Compile and return
-        import jax.numpy as jnp
-        from jax import lax
-        local_ns = {'jnp': jnp, 'lax': lax}
+        # Compile with caching
         logger.info("    translate_array: exec()...")
-        exec(code, local_ns)
+        fn = _exec_with_cache(code, 'device_eval_array')
         t2 = time.perf_counter()
         logger.info(f"    translate_array: exec() done in {t2-t1:.1f}s")
 
@@ -280,7 +345,7 @@ class OpenVAFToJAX:
             'analysis_type_map': self.analysis_type_map,
         }
 
-        return local_ns['device_eval_array'], metadata
+        return fn, metadata
 
     def translate_init_array(self) -> Tuple[Callable, Dict]:
         """Generate a standalone vmappable init function.
@@ -308,12 +373,9 @@ class OpenVAFToJAX:
         code = '\n'.join(code_lines)
         logger.info(f"    translate_init_array: code size = {len(code)} chars")
 
-        # Compile and return
-        import jax.numpy as jnp
-        from jax import lax
-        local_ns = {'jnp': jnp, 'lax': lax}
+        # Compile with caching
         logger.info("    translate_init_array: exec()...")
-        exec(code, local_ns)
+        init_fn = _exec_with_cache(code, 'init_fn')
         t2 = time.perf_counter()
         logger.info(f"    translate_init_array: exec() done in {t2-t1:.1f}s")
 
@@ -334,7 +396,7 @@ class OpenVAFToJAX:
             'collapse_decision_outputs': self.collapse_decision_outputs,
         }
 
-        return local_ns['init_fn'], metadata
+        return init_fn, metadata
 
     def translate_init_array_split(
         self,
@@ -374,12 +436,9 @@ class OpenVAFToJAX:
         code = '\n'.join(code_lines)
         logger.info(f"    translate_init_array_split: code size = {len(code)} chars")
 
-        # Compile and return
-        import jax.numpy as jnp
-        from jax import lax
-        local_ns = {'jnp': jnp, 'lax': lax}
+        # Compile with caching (reuses function if code is identical)
         logger.info("    translate_init_array_split: exec()...")
-        exec(code, local_ns)
+        init_fn, code_hash = _exec_with_cache(code, 'init_fn_split', return_hash=True)
         t2 = time.perf_counter()
         logger.info(f"    translate_init_array_split: exec() done in {t2-t1:.1f}s")
 
@@ -398,9 +457,10 @@ class OpenVAFToJAX:
             'collapse_decision_outputs': self.collapse_decision_outputs,
             'shared_indices': shared_indices,
             'varying_indices': varying_indices,
+            'code_hash': code_hash,  # For vmapped+jit caching
         }
 
-        return local_ns['init_fn_split'], metadata
+        return init_fn, metadata
 
     def translate_eval_array_with_cache(self) -> Tuple[Callable, Dict]:
         """Generate a vmappable eval function that takes cache as input.
@@ -427,12 +487,9 @@ class OpenVAFToJAX:
         code = '\n'.join(code_lines)
         logger.info(f"    translate_eval_array_with_cache: code size = {len(code)} chars")
 
-        # Compile and return
-        import jax.numpy as jnp
-        from jax import lax
-        local_ns = {'jnp': jnp, 'lax': lax}
+        # Compile with caching
         logger.info("    translate_eval_array_with_cache: exec()...")
-        exec(code, local_ns)
+        eval_fn = _exec_with_cache(code, 'eval_fn_with_cache')
         t2 = time.perf_counter()
         logger.info(f"    translate_eval_array_with_cache: exec() done in {t2-t1:.1f}s")
 
@@ -452,7 +509,7 @@ class OpenVAFToJAX:
             'analysis_type_map': self.analysis_type_map,
         }
 
-        return local_ns['eval_fn_with_cache'], metadata
+        return eval_fn, metadata
 
     def translate_eval_array_with_cache_split(
         self,
@@ -504,12 +561,10 @@ class OpenVAFToJAX:
         code = '\n'.join(code_lines)
         logger.info(f"    translate_eval_array_with_cache_split: code size = {len(code)} chars")
 
-        # Compile and return
-        import jax.numpy as jnp
-        from jax import lax
-        local_ns = {'jnp': jnp, 'lax': lax}
+        # Compile with caching
+        fn_name = 'eval_fn_with_cache_split_cache' if use_cache_split else 'eval_fn_with_cache_split'
         logger.info("    translate_eval_array_with_cache_split: exec()...")
-        exec(code, local_ns)
+        eval_fn = _exec_with_cache(code, fn_name)
         t2 = time.perf_counter()
         logger.info(f"    translate_eval_array_with_cache_split: exec() done in {t2-t1:.1f}s")
 
@@ -532,8 +587,7 @@ class OpenVAFToJAX:
             'varying_cache_indices': varying_cache_indices if use_cache_split else None,
         }
 
-        fn_name = 'eval_fn_with_cache_split_cache' if use_cache_split else 'eval_fn_with_cache_split'
-        return local_ns[fn_name], metadata
+        return eval_fn, metadata
 
     def _generate_init_code_array(self) -> List[str]:
         """Generate standalone init function code returning cache array.
