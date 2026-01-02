@@ -171,6 +171,7 @@ class CircuitEngine:
         # Parsing caches for _build_devices optimization
         self._model_params_cache: Dict[str, Dict[str, float]] = {}
         self._device_type_cache: Dict[str, str] = {}
+        self._spice_number_cache: Dict[str, float] = {}
 
         # Transient setup cache (reused across multiple run_transient calls)
         self._transient_setup_cache: Dict[str, Any] | None = None
@@ -190,6 +191,7 @@ class CircuitEngine:
         self._compiled_models.clear()
         self._model_params_cache.clear()
         self._device_type_cache.clear()
+        self._spice_number_cache.clear()
         if hasattr(self, '_cached_nr_solve'):
             del self._cached_nr_solve
         if hasattr(self, '_cached_solver_key'):
@@ -226,6 +228,18 @@ class CircuitEngine:
         except ValueError:
             return 0.0
 
+    def _parse_spice_number_cached(self, s: str) -> float:
+        """Parse SPICE number with caching for repeated values."""
+        if not isinstance(s, str):
+            return float(s)
+
+        if s in self._spice_number_cache:
+            return self._spice_number_cache[s]
+
+        result = self.parse_spice_number(s)
+        self._spice_number_cache[s] = result
+        return result
+
     def parse(self):
         """Parse the sim file and extract circuit information."""
         import time
@@ -236,6 +250,7 @@ class CircuitEngine:
         self._transient_setup_key = None
         self._model_params_cache.clear()
         self._device_type_cache.clear()
+        self._spice_number_cache.clear()
 
         logger.info("parse(): starting...")
 
@@ -488,7 +503,7 @@ class CircuitEngine:
                     # Keep as string, strip quotes
                     parsed_params[k] = str(v).strip('"').strip("'")
                 else:
-                    parsed_params[k] = self.parse_spice_number(v)
+                    parsed_params[k] = self._parse_spice_number_cached(v)
 
             # Merge model params with instance params (instance overrides model)
             params = {**model_params, **parsed_params}
