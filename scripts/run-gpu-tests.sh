@@ -38,7 +38,9 @@ sccache --show-stats || echo "sccache stats not available"
 
 echo "Installing workspace packages..."
 # Install the workspace in the pre-existing venv
-uv sync --locked --extra cuda12 --extra dev
+# Note: --extra dev excluded because scikit-umfpack fails to build on Debian 11
+# pytest is in core dependencies, so tests can still run
+uv sync --locked --extra cuda12
 
 # Set up LD_LIBRARY_PATH for NVIDIA pip packages
 # JAX's pip packages install CUDA libraries to site-packages/nvidia/*/lib
