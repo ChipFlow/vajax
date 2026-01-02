@@ -406,7 +406,8 @@ def run_jax_spice(config: BenchmarkConfig, num_steps: int, use_scan: bool,
         after_transient = time.perf_counter()
         print(f"AFTER_RUN_TRANSIENT: {after_transient:.6f} (elapsed: {after_transient - start:.6f}s)")
         # Force completion of async JAX operations
-        _ = float(result.voltages[0][0])
+        first_node = next(iter(result.voltages))
+        _ = float(result.voltages[first_node][0])
         end = time.perf_counter()
         external_elapsed = end - start
         print(f"TIMED_RUN_END: {end:.6f} (elapsed: {external_elapsed:.6f}s, sync took: {end - after_transient:.6f}s)")
