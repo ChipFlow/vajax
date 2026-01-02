@@ -48,7 +48,8 @@ class Lexer:
     }
 
     # Preprocessor directives (handled specially)
-    DIRECTIVES = {'@if', '@elseif', '@else', '@endif'}
+    # Note: @end is alias for @endif in some VACASK files
+    DIRECTIVES = {'@if', '@elseif', '@else', '@endif', '@end'}
 
     def __init__(self, text: str):
         self.text = text
@@ -109,7 +110,7 @@ class Lexer:
                 while self.pos < len(self.text) and self.text[self.pos].isalpha():
                     self.pos += 1
                 word = self.text[start:self.pos]
-                if word.lower() in ('@if', '@elseif', '@else', '@endif'):
+                if word.lower() in ('@if', '@elseif', '@else', '@endif', '@end'):
                     self.tokens.append(Token('DIRECTIVE', word, self.line, self.col))
                 else:
                     self.tokens.append(Token('NAME', word, self.line, self.col))
@@ -346,6 +347,10 @@ class Parser:
         while self.current().type not in ('KW_ENDS', 'EOF'):
             if self.current().type == 'KW_PARAMETERS':
                 self.parameters_stmt()
+            elif self.current().type == 'KW_MODEL':
+                self.model_stmt()  # Models can be defined inside subcircuits
+            elif self.current().type == 'DIRECTIVE':
+                self.directive_block()  # Handle @if, @else, @endif etc.
             elif self.current().type == 'NAME':
                 self.instance_stmt()
             elif self.current().type == 'NL':
@@ -572,10 +577,10 @@ class Parser:
             self.advance()
 
     def directive_block(self):
-        """Skip @if/@elseif/@else/@endif conditional block"""
+        """Skip @if/@elseif/@else/@endif/@end conditional block"""
         tok = self.current()
-        if tok.value.lower() == '@endif':
-            # Standalone @endif - just consume it
+        if tok.value.lower() in ('@endif', '@end'):
+            # Standalone @endif/@end - just consume it
             self.advance()
             return
         if tok.value.lower() in ('@elseif', '@else'):
@@ -585,13 +590,13 @@ class Parser:
                 self.advance()
             return
 
-        # @if - skip entire conditional block until matching @endif
+        # @if - skip entire conditional block until matching @endif/@end
         self.advance()  # consume @if
         # Skip condition to end of line
         while self.current().type not in ('NL', 'EOF'):
             self.advance()
 
-        # Skip content until matching @endif (handling nested @if)
+        # Skip content until matching @endif/@end (handling nested @if)
         depth = 1
         while depth > 0 and self.current().type != 'EOF':
             self.skip_newlines()
@@ -603,7 +608,7 @@ class Parser:
                     # Skip rest of line (condition)
                     while self.current().type not in ('NL', 'EOF'):
                         self.advance()
-                elif directive == '@endif':
+                elif directive in ('@endif', '@end'):
                     depth -= 1
                     self.advance()
                 elif directive in ('@elseif', '@else'):

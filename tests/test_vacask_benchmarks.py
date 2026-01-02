@@ -394,11 +394,11 @@ class TestTbDpBenchmark:
     @pytest.fixture
     def sim_path(self):
         """Get tb_dp benchmark sim path"""
-        # tb_dp is in test/ not benchmark/ in VACASK
-        test_dir = Path(__file__).parent.parent / "vendor" / "VACASK" / "test" / "tb_dp"
+        # tb_dp is in jax_spice/benchmarks/data/tb_dp/
+        test_dir = Path(__file__).parent.parent / "jax_spice" / "benchmarks" / "data" / "tb_dp"
         path = test_dir / "tb_dp512x8_klu.sim"
         if not path.exists():
-            pytest.skip(f"tb_dp benchmark not found at {path} - requires VACASK PR #2")
+            pytest.skip(f"tb_dp benchmark not found at {path} - run runme.py to convert")
         return path
 
     def test_parse(self, sim_path):
@@ -413,7 +413,7 @@ class TestTbDpBenchmark:
         print(f"  Devices: {len(engine.devices)}")
         print(f"  Nodes: {engine.num_nodes}")
 
-    @pytest.mark.xfail(reason="tb_dp512x8 requires VACASK PR #2 to be merged")
+    @pytest.mark.xfail(reason="tb_dp512x8 requires PWL source type (not yet implemented)")
     def test_transient_sparse(self, sim_path):
         """Test tb_dp512x8 transient with sparse solver.
 
