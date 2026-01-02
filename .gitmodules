@@ -6,3 +6,6 @@
 	path = vendor/VACASK
 	url = https://codeberg.org/robtaylor/VACASK.git
 	branch = macos-fixes
+[submodule "vendor/Xyce_Regression"]
+	path = vendor/Xyce_Regression
+	url = https://github.com/Xyce/Xyce_Regression.git
