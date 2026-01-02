@@ -286,13 +286,20 @@ class CircuitEngine:
         return self
 
     def _get_device_type(self, model_name: str) -> str:
-        """Map model name to device type."""
+        """Map model name to device type (cached)."""
+        if model_name in self._device_type_cache:
+            return self._device_type_cache[model_name]
+
         model = self.circuit.models.get(model_name)
         if model:
             module = model.module.lower()
-            return self.MODULE_TO_DEVICE.get(module, module)
-        # Direct lookup for built-in types
-        return self.MODULE_TO_DEVICE.get(model_name.lower(), model_name.lower())
+            result = self.MODULE_TO_DEVICE.get(module, module)
+        else:
+            # Direct lookup for built-in types
+            result = self.MODULE_TO_DEVICE.get(model_name.lower(), model_name.lower())
+
+        self._device_type_cache[model_name] = result
+        return result
 
     def _get_model_params(self, model_name: str) -> Dict[str, float]:
         """Get parsed parameters from a model definition (cached)."""
