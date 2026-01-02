@@ -2317,14 +2317,7 @@ class CircuitEngine:
                 Q_init = jnp.zeros(n_unknowns, dtype=jnp.float64)
                 # Use inv_dt=0 for DC (no reactive terms in probe)
                 J_bcoo_probe, _, _ = build_system_fn(V_init, vsource_init, isource_init, Q_init, 0.0, device_arrays)
-
-                # Sum duplicates to get true nse
-                unique_indices = jnp.unique(
-                    J_bcoo_probe.indices[:, 0] * n_unknowns + J_bcoo_probe.indices[:, 1],
-                    size=None
-                )
-                nse = int(unique_indices.shape[0])
-                logger.info(f"Sparse matrix: {J_bcoo_probe.nse} entries -> {nse} unique (nse)")
+                n_coo_raw = J_bcoo_probe.nse
 
                 # Try Spineax (cuDSS with cached symbolic factorization) on GPU
                 use_spineax = False
@@ -2354,6 +2347,8 @@ class CircuitEngine:
 
                     # Find unique entries and inverse mapping for segment_sum
                     unique_linear, coo_to_unique = np.unique(sorted_linear, return_inverse=True)
+                    nse = len(unique_linear)
+                    logger.info(f"Sparse matrix: {n_coo_raw} entries -> {nse} unique (nse)")
 
                     # Get row/col indices for unique entries
                     unique_rows = unique_linear // n_unknowns
@@ -2406,6 +2401,8 @@ class CircuitEngine:
                     # Find unique entries and inverse mapping for segment_sum
                     # coo_to_unique maps each sorted COO entry to its unique position
                     unique_linear, coo_to_unique = np.unique(sorted_linear, return_inverse=True)
+                    nse = len(unique_linear)
+                    logger.info(f"Sparse matrix: {n_coo_raw} entries -> {nse} unique (nse)")
 
                     # Get row/col indices for unique entries
                     unique_rows = unique_linear // n_unknowns
