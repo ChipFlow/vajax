@@ -413,7 +413,6 @@ class TestTbDpBenchmark:
         print(f"  Devices: {len(engine.devices)}")
         print(f"  Nodes: {engine.num_nodes}")
 
-    @pytest.mark.xfail(reason="tb_dp512x8 requires PWL source type (not yet implemented)")
     def test_transient_sparse(self, sim_path):
         """Test tb_dp512x8 transient with sparse solver.
 

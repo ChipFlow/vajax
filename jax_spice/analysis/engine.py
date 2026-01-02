@@ -333,7 +333,8 @@ class CircuitEngine:
                 self.circuit.top_instances.append(synthetic_inst)
 
         # Parameters that should be kept as strings (not evaluated as expressions)
-        string_params = {'type'}
+        # wave is an array of time/value pairs for PWL sources
+        string_params = {'type', 'wave'}
 
         def eval_param_expr(key: str, expr: str, param_env: Dict[str, float]):
             """Evaluate a parameter expression like 'w*pfact' or '2*(w+ld)'.
@@ -447,7 +448,8 @@ class CircuitEngine:
         self.devices = []
 
         # Parameters that should be kept as strings (not parsed as numbers)
-        STRING_PARAMS = {'type'}
+        # wave is an array of time/value pairs for PWL sources
+        STRING_PARAMS = {'type', 'wave'}
 
         for inst_name, inst_terminals, inst_model, inst_params in self.flat_instances:
             model_name = inst_model.lower()
@@ -1712,6 +1714,100 @@ class CircuitEngine:
                     return dc + a * jnp.sin(2 * jnp.pi * f * t + ph)
 
                 sources[dev['name']] = sine_fn
+
+            elif source_type == 'pwl':
+                # Piecewise linear source
+                # wave format: [t1, v1, t2, v2, t3, v3, ...]
+                wave = params.get('wave', [0, 0])
+                offset = params.get('offset', 0)
+                scale = params.get('scale', 1)
+                stretch = params.get('stretch', 1)
+                pwlperiod = params.get('pwlperiod', 0)
+
+                # Parse wave if it's a string (from netlist parser)
+                if isinstance(wave, str):
+                    import ast
+                    wave = ast.literal_eval(wave)
+
+                # Convert wave to JAX arrays
+                wave_arr = jnp.array(wave, dtype=jnp.float64)
+                times = wave_arr[0::2] * stretch
+                values = wave_arr[1::2] * scale + offset
+
+                def pwl_fn(t, times=times, values=values, period=pwlperiod):
+                    # Handle periodicity
+                    if period > 0:
+                        t = t % period
+                    # Linear interpolation - jnp.interp handles edge cases
+                    return jnp.interp(t, times, values)
+
+                sources[dev['name']] = pwl_fn
+
+            elif source_type == 'exp':
+                # Exponential source (rise then fall)
+                val0 = params.get('val0', 0)
+                val1 = params.get('val1', 1)
+                delay = params.get('delay', 0)
+                td2 = params.get('td2', 1e-9)  # time to start falling
+                tau1 = params.get('tau1', 1e-10)  # rise time constant
+                tau2 = params.get('tau2', 1e-10)  # fall time constant
+
+                def exp_fn(t, v0=val0, v1=val1, d=delay, td=td2, t1=tau1, t2=tau2):
+                    t_fall = d + td  # Time when fall begins
+                    # Rising phase
+                    rising = v0 + (v1 - v0) * (1 - jnp.exp(-(t - d) / t1))
+                    # Falling phase (starts from rising value at t_fall)
+                    rising_at_fall = v0 + (v1 - v0) * (1 - jnp.exp(-td / t1))
+                    falling = rising_at_fall + (v0 - rising_at_fall) * (1 - jnp.exp(-(t - t_fall) / t2))
+
+                    return jnp.where(t < d, v0,
+                                     jnp.where(t < t_fall, rising, falling))
+
+                sources[dev['name']] = exp_fn
+
+            elif source_type == 'am':
+                # Amplitude modulation source
+                sinedc = params.get('sinedc', 0)
+                ampl = params.get('ampl', 1)
+                freq = params.get('freq', 1e3)
+                phase = params.get('phase', params.get('sinephase', 0))
+                delay = params.get('delay', 0)
+                modfreq = params.get('modfreq', 1e3)
+                modphase = params.get('modphase', 0)
+                modindex = params.get('modindex', 0.5)
+
+                def am_fn(t, dc=sinedc, a=ampl, f=freq, ph=phase, d=delay,
+                          mf=modfreq, mph=modphase, mi=modindex):
+                    # Before delay, use initial value
+                    initial = dc + a * jnp.sin(ph * jnp.pi / 180) * (1 + mi * jnp.sin(mph * jnp.pi / 180))
+                    # AM: carrier * (1 + modulation)
+                    carrier = jnp.sin(2 * jnp.pi * f * (t - d) + ph * jnp.pi / 180)
+                    modulation = 1 + mi * jnp.sin(2 * jnp.pi * mf * (t - d) + mph * jnp.pi / 180)
+                    return jnp.where(t < d, initial, dc + a * carrier * modulation)
+
+                sources[dev['name']] = am_fn
+
+            elif source_type == 'fm':
+                # Frequency modulation source
+                sinedc = params.get('sinedc', 0)
+                ampl = params.get('ampl', 1)
+                freq = params.get('freq', 1e3)
+                phase = params.get('phase', params.get('sinephase', 0))
+                delay = params.get('delay', 0)
+                modfreq = params.get('modfreq', 1e3)
+                modphase = params.get('modphase', 0)
+                modindex = params.get('modindex', 0.5)
+
+                def fm_fn(t, dc=sinedc, a=ampl, f=freq, ph=phase, d=delay,
+                          mf=modfreq, mph=modphase, mi=modindex):
+                    # Before delay, use initial value
+                    initial = dc + a * jnp.sin(ph * jnp.pi / 180 + mi * jnp.sin(mph * jnp.pi / 180))
+                    # FM: sin(carrier_phase + modulation)
+                    carrier_phase = 2 * jnp.pi * f * (t - d) + ph * jnp.pi / 180
+                    mod_contribution = mi * jnp.sin(2 * jnp.pi * mf * (t - d) + mph * jnp.pi / 180)
+                    return jnp.where(t < d, initial, dc + a * jnp.sin(carrier_phase + mod_contribution))
+
+                sources[dev['name']] = fm_fn
 
             else:
                 raise ValueError(f"Unknown source type '{source_type}' for device {dev['name']}")
