@@ -127,7 +127,8 @@ class CircuitEngine:
     The `node_names` dict maps node name strings to integer indices:
         node_names = {'0': 0, '1': 1, '2': 2, 'vdd': 3, 'out': 4, ...}
 
-    - Ground is always '0' -> 0
+    - Ground node name comes from the netlist's "ground" statement (e.g., "ground 0")
+    - Ground is always index 0
     - Other nodes get indices 1, 2, 3, ... in sorted order
 
     Two different array layouts are used internally:
@@ -310,14 +311,15 @@ class CircuitEngine:
 
         # Build node mapping from flattened instances.
         # See NODE INDEXING CONVENTIONS in class docstring for usage.
-        # Ground ('0') is always index 0; other nodes get indices 1, 2, 3, ...
-        node_set = {'0'}
+        # Ground node (from netlist's "ground" statement) is always index 0.
+        ground_name = self.circuit.ground or '0'
+        node_set = {ground_name}
         for name, terminals, model, params in self.flat_instances:
             for t in terminals:
                 node_set.add(t)
 
-        self.node_names = {'0': 0}
-        for i, name in enumerate(sorted(n for n in node_set if n != '0'), start=1):
+        self.node_names = {ground_name: 0}
+        for i, name in enumerate(sorted(n for n in node_set if n != ground_name), start=1):
             self.node_names[name] = i
         self.num_nodes = len(self.node_names)
         t3 = time.perf_counter()
