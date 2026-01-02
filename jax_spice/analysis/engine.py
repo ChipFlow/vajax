@@ -128,7 +128,7 @@ class CircuitEngine:
     MODULE_TO_DEVICE = {
         'sp_resistor': 'resistor',
         'sp_capacitor': 'capacitor',
-        'sp_diode': 'diode',  # Use simplified diode model (sp_diode model has NaN issues)
+        'sp_diode': 'diode',  # Map to simplified diode (sp_diode has complex hidden_state)
         'vsource': 'vsource',
         'isource': 'isource',
         'psp103va': 'psp103',  # PSP103 MOSFET
@@ -2597,8 +2597,8 @@ class CircuitEngine:
             voltages: Dict[Union[str, int], Array] = {i: jnp.array([]) for i in range(n_external)}
         # Add name keys (node_names maps name -> index, we want external nodes only)
         for name, idx in self.node_names.items():
-            if idx > 0 and idx <= n_external:  # Skip ground (0), only external nodes
-                voltages[name] = voltages[idx - 1]  # idx is 1-based, dict key is 0-based
+            if idx > 0 and idx < n_external:  # Skip ground (0), only external nodes
+                voltages[name] = voltages[idx]  # idx matches voltage dict key directly
 
         return TransientResult(times=times, voltages=voltages, stats=stats)
 
@@ -3098,8 +3098,8 @@ class CircuitEngine:
         voltages: Dict[Union[str, int], Array] = {i: all_V[:, i] for i in range(n_external)}
         # Add name keys (node_names maps name -> index, we want external nodes only)
         for name, idx in self.node_names.items():
-            if idx > 0 and idx <= n_external:  # Skip ground (0), only external nodes
-                voltages[name] = voltages[idx - 1]  # idx is 1-based, dict key is 0-based
+            if idx > 0 and idx < n_external:  # Skip ground (0), only external nodes
+                voltages[name] = voltages[idx]  # idx matches voltage dict key directly
 
         return TransientResult(times=times, voltages=voltages, stats=stats)
 
