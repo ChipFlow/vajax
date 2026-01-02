@@ -2362,11 +2362,10 @@ class CircuitEngine:
                     # Build CSR structure from unique entries (row-major order = CSR order)
                     csr_indices = unique_cols.astype(np.int32)
 
-                    # Build indptr: count entries per row
+                    # Build indptr: count entries per row (vectorized)
+                    row_counts = np.bincount(unique_rows.astype(np.int32), minlength=n_unknowns)
                     csr_indptr = np.zeros(n_unknowns + 1, dtype=np.int32)
-                    for row in unique_rows:
-                        csr_indptr[row + 1] += 1
-                    csr_indptr = np.cumsum(csr_indptr)
+                    csr_indptr[1:] = np.cumsum(row_counts)
 
                     # Segment IDs: coo_to_unique directly gives CSR position
                     csr_segment_ids = coo_to_unique.astype(np.int32)
@@ -2416,11 +2415,10 @@ class CircuitEngine:
                     # Since unique_linear is sorted by row*n+col, this is already CSR order
                     csr_indices = unique_cols.astype(np.int32)
 
-                    # Build indptr: count entries per row
+                    # Build indptr: count entries per row (vectorized)
+                    row_counts = np.bincount(unique_rows.astype(np.int32), minlength=n_unknowns)
                     csr_indptr = np.zeros(n_unknowns + 1, dtype=np.int32)
-                    for row in unique_rows:
-                        csr_indptr[row + 1] += 1
-                    csr_indptr = np.cumsum(csr_indptr)
+                    csr_indptr[1:] = np.cumsum(row_counts)
 
                     # Segment IDs: coo_to_unique directly gives CSR position since
                     # unique_linear is sorted in row-major order which equals CSR order
