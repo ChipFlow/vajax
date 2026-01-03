@@ -103,81 +103,6 @@ This results in:
 - [ ] Benchmark GPU vs CPU after vectorization
 - [ ] Consider using `transient_analysis_analytical()` as starting point (uses SystemBuilder)
 
-### openvaf_jax Complex Model Support
-The JAX translator now matches the MIR interpreter for all models. NaN outputs are caused by model-specific parameter requirements, not translator bugs.
-
-**Status**: JAX translator is **complete and consistent** with MIR interpreter.
-
-**Completed**:
-- [x] ~~Re-test affected models, compare against VACASK running same models~~
-- [x] ~~Update xfail markers~~
-- [x] ~~Add missing opcodes~~ (fbcast, irem, idiv)
-- [x] ~~Verified JAX output matches MIR interpreter~~
-
-**Working models** (xfail markers removed):
-- PSP102, PSP103, JUNCAP
-- diode_cmc
-- EKV
-
-**Models with NaN (same in JAX and interpreter)**:
-These models produce NaN with default parameters but work with proper model card setup:
-- BSIM3, BSIM4, BSIM6, BSIMBulk, BSIMCMG, BSIMSOI
-- HiSIM2, HiSIMHV
-- HICUM L2, MEXTRAM
-- ASMHEMT, MVSG
-
-**Note**: The NaN issues are due to model parameter requirements (e.g., division by zero in cutoff regions), not JAX translator bugs. Proper model cards (`.lib` files with device parameters) should resolve these.
-
-### Complete testing of VACASK benchmarks
-
-**Current status** (as of 2025-12):
-| Benchmark | Device Types | Status |
-|-----------|--------------|--------|
-| rc | resistor, capacitor, vsource | ✅ Passing |
-| graetz | resistor, capacitor, vsource, diode | ✅ Passing |
-| mul | resistor, capacitor, vsource, diode | ✅ Passing |
-| ring | vsource, isource, PSP103 MOSFET | ✅ Fast (~20ms/step after JIT warmup) |
-| c6288 | vsource, isource, PSP103 MOSFET | ✅ Working with sparse solver (~1s/step, 86k nodes) |
-
-**Transient solver device support**:
-- [x] Resistor
-- [x] Capacitor
-- [x] Voltage source (DC and time-varying)
-- [x] Current source (DC and pulse)
-- [x] Diode (Shockley equation with limiting)
-- [x] OpenVAF-compiled models (PSP103) - **fast with JIT compilation**
-
-**PSP103/OpenVAF Integration Status**:
-The hybrid solver is functionally complete:
-- [x] PSP103 model compilation via OpenVAF
-- [x] Model card parameters (N/P type, 280+ params) properly parsed
-- [x] Internal nodes allocated (8 per MOSFET, 144 total for ring)
-- [x] Voltage parameter mapping for internal node voltages
-- [x] Residual/Jacobian stamping into expanded system matrix
-- [x] Newton-Raphson converges (3 iterations for t=0)
-
-**Performance Optimization (2025-12)**:
-Implemented JIT-compiled vmap-based batched evaluation for OpenVAF devices:
-- [x] Added `translate_array()` method to openvaf_jax.py for vmap-compatible output
-- [x] Fixed boolean constants to use `jnp.bool_()` for JIT compatibility
-- [x] Fixed `bnot` opcode to use `jnp.logical_not()` instead of Python `not`
-- [x] Pre-computed static inputs (parameters) once per simulation
-- [x] Fast voltage-only update path for NR iterations
-- [x] JIT-compiled vmapped function for near-instant device evaluation
-
-**Performance results** (18 PSP103 MOSFETs on ring oscillator):
-| Metric | Before | After | Speedup |
-|--------|--------|-------|---------|
-| Device evaluation (18 MOSFETs) | ~2.2s | ~0ms | ∞ |
-| Input preparation | ~39ms | ~1ms | 39x |
-| Per-timestep total | ~680ms | ~20ms | **34x** |
-
-**Warmup time**: ~4.8s (includes JAX JIT compilation, done once per model)
-
-**Future optimization options**:
-1. ~~Modify openvaf_jax to use `jax.lax.cond` for JIT compatibility~~ ✅ Done
-2. Use GPU acceleration (now possible with JIT compilation)
-
 ## Low Priority
 
 ### Documentation
@@ -186,7 +111,7 @@ Implemented JIT-compiled vmap-based batched evaluation for OpenVAF devices:
 - [ ] **Document openvaf_jax API** for external users
 
 ### Code Cleanup
-- [ ] **Remove xfail markers** from PSP/JUNCAP/diode_cmc tests (they pass)
+- [x] ~~**Remove xfail markers** from PSP/JUNCAP/diode_cmc tests~~ (all pass)
 - [ ] **Consolidate test files** in `openvaf-py/tests/` (some at root level)
 
 ### Technical Debt: Code Duplication
@@ -255,6 +180,18 @@ jax_spice/benchmarks/
   - Added `test_xyce_regression.py` with PRN comparison framework
   - Added `jax_spice/io/prn_reader.py` for Xyce output parsing
   - One test added (DIODE/diode.cir) - xfail due to model parameter differences
+
+- [x] ~~openvaf_jax Complex Model Support~~ (2025-12)
+  - JAX translator matches MIR interpreter for all models
+  - Added missing opcodes: fbcast, irem, idiv
+  - Working models (no xfail): PSP102, PSP103, JUNCAP, diode_cmc, EKV
+  - NaN models need proper model cards (BSIM*, HiSIM*, HICUM, etc.)
+
+- [x] ~~VACASK benchmark testing~~ (2025-12)
+  - All 5 benchmarks passing: rc, graetz, mul, ring, c6288
+  - Device support: resistor, capacitor, vsource, isource, diode, PSP103 MOSFET
+  - PSP103 JIT-compiled vmap evaluation: 34x speedup (680ms→20ms per step)
+  - c6288 working with sparse solver (~1s/step, 86k nodes)
 
 - [x] ~~Sparse matrix support for large circuits~~ (2025-12)
   - Implemented sparse Jacobian assembly using `scipy.sparse.lil_matrix`
