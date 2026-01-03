@@ -439,20 +439,10 @@ class CircuitEngine:
             if key.lower() in string_params:
                 return stripped
 
-            # Try direct parse first
-            val = self.parse_spice_number(expr)
-            if val != 0.0 or stripped in ('0', '0.0'):
-                return val
+            # Use safe expression evaluator (no arbitrary code execution)
+            from jax_spice.utils.safe_eval import safe_eval_expr
 
-            # Simple expression evaluation with parameter substitution
-            try:
-                # Replace parameter names with values
-                eval_expr = expr
-                for name, value in sorted(param_env.items(), key=lambda x: -len(x[0])):
-                    eval_expr = eval_expr.replace(name, str(value))
-                return float(eval(eval_expr))
-            except:
-                return 0.0
+            return safe_eval_expr(expr, param_env, default=0.0)
 
         def flatten_instance(inst: Instance, prefix: str, port_map: Dict[str, str],
                            param_env: Dict[str, float]):

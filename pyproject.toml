@@ -12,6 +12,7 @@ dependencies = [
     "matplotlib>=3.7.0",
     "openvaf-py",
     "klujax>=0.4.3",
+    "simpleeval>=1.0.0",
 ]
 
 [tool.uv]
