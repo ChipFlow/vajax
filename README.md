@@ -49,50 +49,50 @@ uv sync --extra cuda12
 uv sync --extra sax
 ```
 
-## Example: Simple DC Analysis
+## Example: Transient Simulation
 
 ```python
-from jax_spice.devices import Resistor, VoltageSource
-from jax_spice.analysis import MNASystem, dc_operating_point
+from jax_spice import CircuitEngine
 
-# Create MNA system
-system = MNASystem()
+# Load and parse a VACASK circuit file
+engine = CircuitEngine("path/to/circuit.sim")
+engine.parse()
 
-# Add a voltage source and resistor
-system.add_device("V1", VoltageSource(dc=5.0), ["vdd", "gnd"])
-system.add_device("R1", Resistor(r=1000.0), ["vdd", "out"])
-system.add_device("R2", Resistor(r=1000.0), ["out", "gnd"])
+# Run transient analysis
+result = engine.run_transient(t_stop=1e-6, dt=1e-9, use_scan=True)
 
-# Solve for DC operating point
-V, info = dc_operating_point(system)
-print(f"Output voltage: {V[system.get_node_index('out')]:.3f}V")
-# Output voltage: 2.500V
+# Access results
+print(f"Simulated {len(result.times)} time points")
+for node_name, voltages in result.voltages.items():
+    print(f"  {node_name}: {voltages[-1]:.3f}V (final)")
 ```
 
 ## Architecture Overview
 
 ```
 jax_spice/
-├── devices/              # Device models (pure JAX functions)
-│   ├── base.py          # Device protocol and DeviceStamps
-│   ├── resistor.py      # Temperature-dependent resistor
-│   ├── capacitor.py     # Capacitor with companion model
-│   ├── mosfet_simple.py # Simplified BSIM-like MOSFET
-│   ├── verilog_a.py     # Verilog-A wrapper
-│   └── openvaf_device.py # OpenVAF integration
+├── analysis/             # Circuit solvers and analysis engines
+│   ├── engine.py        # CircuitEngine - main simulation API
+│   ├── solver.py        # Newton-Raphson with lax.while_loop
+│   ├── transient/       # Transient analysis (scan/loop strategies)
+│   ├── ac.py            # AC small-signal analysis
+│   ├── noise.py         # Noise analysis
+│   ├── hb.py            # Harmonic balance
+│   ├── xfer.py          # Transfer function (DCINC, DCXF, ACXF)
+│   ├── corners.py       # PVT corner analysis
+│   ├── homotopy.py      # Convergence aids (GMIN, source stepping)
+│   └── sparse.py        # JAX sparse matrix operations (BCOO/BCSR)
 │
-├── analysis/             # Circuit solvers
-│   ├── mna.py           # Modified Nodal Analysis system
-│   ├── dc.py            # DC operating point (Newton-Raphson)
-│   ├── transient.py     # Transient analysis (Backward Euler)
-│   ├── sparse.py        # Sparse matrix operations
-│   └── context.py       # Analysis context (time, temperature)
+├── devices/              # Device models
+│   ├── vsource.py       # Voltage/current source waveforms
+│   └── verilog_a.py     # OpenVAF Verilog-A wrapper
 │
 ├── netlist/              # Circuit representation
 │   ├── parser.py        # VACASK netlist parser
 │   └── circuit.py       # Circuit data structures
 │
 └── benchmarks/           # Benchmark infrastructure
+    ├── registry.py      # Auto-discovery of benchmarks
     └── runner.py        # VACASK benchmark runner
 ```
 
@@ -105,74 +105,112 @@ jax_spice/
 
 ### Device Model Interface
 
-Every device implements the `Device` protocol:
+All devices are compiled from Verilog-A sources using OpenVAF. Device models are batched
+and evaluated in parallel using `jax.vmap` for GPU efficiency.
 
 ```python
-from jax_spice.devices import DeviceStamps
+# Devices are loaded from Verilog-A via OpenVAF
+# Example from a VACASK .sim file:
+load "resistor.osdi"    # Compiled from resistor.va
+load "capacitor.osdi"   # Compiled from capacitor.va
+load "psp103.osdi"      # PSP103 MOSFET model
 
-def evaluate(terminal_voltages: Array, params: dict, context: AnalysisContext) -> DeviceStamps:
-    """Evaluate device at given terminal voltages.
-
-    Returns:
-        DeviceStamps containing:
-        - currents: Current into each terminal
-        - conductances: Conductance matrix (dI/dV)
-        - charges: (optional) Charge at each terminal for transient
-    """
+model r sp_resistor
+model c sp_capacitor
+model nmos psp103va
 ```
 
 ## Supported Devices
 
-| Device | Type | Description |
-|--------|------|-------------|
-| `Resistor` | Built-in | Temperature-dependent resistor (R, tc1, tc2) |
-| `Capacitor` | Built-in | Ideal capacitor with Backward Euler companion |
-| `VoltageSource` | Built-in | DC and time-varying (pulse, PWL) |
-| `CurrentSource` | Built-in | DC and pulse current sources |
-| `MOSFETSimple` | Built-in | Simplified BSIM-like N/PMOS model |
-| `VerilogADevice` | OpenVAF | Any Verilog-A model (PSP103, BSIM4, etc.) |
+| Device | Source | Description |
+|--------|--------|-------------|
+| Resistor | `resistor.va` | SPICE resistor with temperature coefficients |
+| Capacitor | `capacitor.va` | Ideal capacitor |
+| Diode | `diode.va` | SPICE diode model |
+| VSource | Built-in | DC, pulse, sine, PWL voltage sources |
+| ISource | Built-in | DC, pulse current sources |
+| PSP103 | `psp103.va` | Production MOSFET model (OpenVAF) |
+| Any VA | OpenVAF | Any Verilog-A model via OSDI interface |
 
 ## Analysis Types
 
-### DC Operating Point
+All analyses are accessed through `CircuitEngine`:
 
 ```python
-from jax_spice.analysis import dc_operating_point, dc_operating_point_sparse
+from jax_spice import CircuitEngine
 
-# Standard Newton-Raphson (for small circuits)
-V, info = dc_operating_point(system, max_iterations=50, abstol=1e-9)
-
-# Sparse solver (for large circuits, auto-selected >1000 nodes)
-V, info = dc_operating_point_sparse(system, vdd=1.2)
-```
-
-For difficult circuits, use homotopy methods:
-
-```python
-from jax_spice.analysis.homotopy import run_homotopy_chain, HomotopyConfig
-from jax_spice.analysis.solver import NRConfig
-
-# Build residual/jacobian functions with gmin/gshunt/source_scale parameters
-result = run_homotopy_chain(build_residual_fn, build_jacobian_fn, V_init,
-                            HomotopyConfig(), NRConfig())
+engine = CircuitEngine("circuit.sim")
+engine.parse()
 ```
 
 ### Transient Analysis
 
 ```python
-from jax_spice.analysis import transient_analysis
-from jax_spice.analysis.transient import transient_analysis_jit
+# Run transient simulation
+result = engine.run_transient(
+    t_stop=1e-6,      # Stop time
+    dt=1e-9,          # Time step
+    use_scan=True,    # Use lax.scan for GPU efficiency
+    use_sparse=True,  # Use sparse solver for large circuits
+)
 
-# Flexible Python loop
-times, solutions = transient_analysis(system, t_stop=1e-6, t_step=1e-9)
-
-# JIT-compiled for performance (preferred)
-times, solutions = transient_analysis_jit(system, t_stop=1e-6, t_step=1e-9, icmode='uic')
+# Access results
+times = result.times           # Array of time points
+voltages = result.voltages     # Dict of node_name -> voltage array
 ```
 
-**Initial condition modes:**
-- `icmode='op'`: Compute DC operating point first (good for analog)
-- `icmode='uic'`: Use Initial Conditions directly (preferred for digital)
+### AC Analysis
+
+```python
+# Small-signal frequency response
+ac_result = engine.run_ac(
+    fstart=1e3,       # Start frequency (Hz)
+    fstop=1e9,        # Stop frequency (Hz)
+    num_points=100,   # Number of frequency points
+    sweep_type='dec', # 'dec', 'lin', or 'oct'
+)
+```
+
+### Noise Analysis
+
+```python
+# Compute noise figure across frequency
+noise_result = engine.run_noise(
+    fstart=1e3,
+    fstop=1e9,
+    input_source="vin",
+    output_node="vout",
+)
+```
+
+### Corner Analysis (PVT Sweep)
+
+```python
+from jax_spice.analysis import create_pvt_corners
+
+# Create PVT corners
+corners = create_pvt_corners(
+    process=['tt', 'ff', 'ss'],
+    voltage=[0.9, 1.0, 1.1],
+    temperature=[233, 300, 398],  # Kelvin
+)
+
+# Run across all corners
+corner_results = engine.run_corners(corners)
+```
+
+### Transfer Function Analysis
+
+```python
+# DC incremental (small-signal gain)
+dcinc_result = engine.run_dcinc()
+
+# DC transfer function
+dcxf_result = engine.run_dcxf(input_source="vin", output_node="vout")
+
+# AC transfer function
+acxf_result = engine.run_acxf(input_source="vin", output_node="vout")
+```
 
 ## Verilog-A Integration
 
