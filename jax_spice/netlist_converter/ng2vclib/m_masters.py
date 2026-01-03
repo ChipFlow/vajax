@@ -147,16 +147,17 @@ class MastersMixin:
         # Pass 2 - preprocess instances, construct model usage table
         for passno in [1, 2]:
             for history, line, depth, in_control_block in traverse(deck, depth=self.cfg.get("process_depth", None)):
-                if in_control_block and passno==1:
-                    # In control block, pass 1, look for pre_osdi
-                    lnum, lws, l, eolc, annot = line
-                    l1 = l.strip()
-                    if l1.startswith("*"):
-                        l1 = l1[1:].strip()
-                        if pat_preosdi.match(ll):
-                            # Have a pre_osdi, add to list of files
-                            osdi_file = l1[8:].strip()
-                            self.data["osdi_loads"].add(osdi_file)
+                if in_control_block:
+                    # In control block - skip in both passes, except for pre_osdi in pass 1
+                    if passno == 1:
+                        lnum, lws, l, eolc, annot = line
+                        l1 = l.strip()
+                        if l1.startswith("*"):
+                            l1 = l1[1:].strip()
+                            if pat_preosdi.match(l1):
+                                # Have a pre_osdi, add to list of files
+                                osdi_file = l1[8:].strip()
+                                self.data["osdi_loads"].add(osdi_file)
                     continue
 
                 lnum, lws, l, eolc, annot = line

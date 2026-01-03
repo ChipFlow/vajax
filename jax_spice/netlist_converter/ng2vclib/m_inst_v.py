@@ -40,8 +40,35 @@ class InstanceVMixin:
             # Reconstruct the rest of the line
             rest_str = " ".join(rest)
 
+            # Handle "dc VALUE" prefix before transient source
+            # ngspice format: "dc 0 pulse 0 1 1u 1u 1u 1m 2m"
+            dc_value = None
+            rest_str_lower = rest_str.lower()
+            if rest_str_lower.startswith("dc="):
+                # dc=value format
+                dc_end = rest_str.find(" ", 3)
+                if dc_end == -1:
+                    dc_value = rest_str[3:]
+                    rest_str = ""
+                else:
+                    dc_value = rest_str[3:dc_end]
+                    rest_str = rest_str[dc_end:].strip()
+                    rest_str_lower = rest_str.lower()
+            elif rest_str_lower.startswith("dc "):
+                # dc value format
+                parts_dc = rest_str.split(None, 2)
+                if len(parts_dc) >= 2:
+                    dc_value = parts_dc[1]
+                    rest_str = parts_dc[2] if len(parts_dc) > 2 else ""
+                    rest_str_lower = rest_str.lower()
+
+            # If we extracted a DC value and there's no transient source,
+            # add the DC value to params now
+            if dc_value is not None and not rest_str:
+                params.append(("dc", self.format_value(dc_value)))
+
             # Check for PWL pattern (pwl(...) or pwl( broken by split)
-            if rest_str.lower().startswith("pwl(") or rest_str.lower().startswith("pwl "):
+            if rest_str_lower.startswith("pwl(") or rest_str_lower.startswith("pwl "):
                 # Extract PWL content
                 pwl_content = rest_str
                 if pwl_content.lower().startswith("pwl("):
@@ -58,8 +85,8 @@ class InstanceVMixin:
                 pwl_data = self.parse_pwl(pwl_content)
                 params.append(("type", '"pwl"'))
                 params.append(("wave", pwl_data))
-            elif rest_str.lower().startswith("pulse(") or rest_str.lower().startswith("pulse ") or "pulse" in rest_str.lower():
-                # PULSE source: PULSE(v1 v2 td tr tf pw per)
+            elif rest_str_lower.startswith("pulse(") or rest_str_lower.startswith("pulse ") or rest_str_lower.startswith("pulse"):
+                # PULSE source: PULSE(v1 v2 td tr tf pw per) or PULSE v1 v2 td tr tf pw per
                 # VACASK format: type="pulse" val0=v1 val1=v2 delay=td rise=tr fall=tf width=pw period=per
                 #
                 # Use raw line (before preprocessing) since preprocess removes spaces inside parens
@@ -68,7 +95,7 @@ class InstanceVMixin:
                 if pulse_match:
                     pulse_content = pulse_match.group(1).strip()
                 else:
-                    # Fallback to preprocessed content
+                    # Fallback to preprocessed content - extract after "pulse"
                     pulse_content = rest_str
                     if pulse_content.lower().startswith("pulse("):
                         pulse_content = pulse_content[6:]
@@ -93,6 +120,9 @@ class InstanceVMixin:
                 # Parameter assignment
                 p, v = rest[0].split("=", 1)
                 params.append((p.strip(), self.format_value(v.strip())))
+            elif dc_value is not None:
+                # Already handled DC value above - nothing more to do
+                pass
             else:
                 # Treat first as DC value
                 params.append(("dc", self.format_value(rest[0])))

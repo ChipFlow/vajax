@@ -253,7 +253,7 @@ class CircuitEngine:
 
         logger.info("Cleared caches and freed memory")
 
-    def parse_spice_number(self, s: str) -> float:
+    def parse_spice_number(self, s: str | float | int) -> float:
         """Parse SPICE number with suffix (e.g., 1u, 100n, 1.5k)"""
         if not isinstance(s, str):
             return float(s)
@@ -272,7 +272,7 @@ class CircuitEngine:
         except ValueError:
             return 0.0
 
-    def _parse_spice_number_cached(self, s: str) -> float:
+    def _parse_spice_number_cached(self, s: str | float | int) -> float:
         """Parse SPICE number with caching for repeated values."""
         if not isinstance(s, str):
             return float(s)
@@ -1762,13 +1762,14 @@ class CircuitEngine:
 
             elif source_type == 'pulse':
                 # Pulse source - using jnp.where for GPU compatibility
-                val0 = params.get('val0', 0)
-                val1 = params.get('val1', 1)
-                rise = params.get('rise', 1e-9)
-                fall = params.get('fall', 1e-9)
-                width = params.get('width', 1e-6)
-                period = params.get('period', 2e-6)
-                delay = params.get('delay', 0)
+                # Parse values with SI suffix support (e.g., "1u" -> 1e-6)
+                val0 = self.parse_spice_number(params.get('val0', 0))
+                val1 = self.parse_spice_number(params.get('val1', 1))
+                rise = self.parse_spice_number(params.get('rise', 1e-9))
+                fall = self.parse_spice_number(params.get('fall', 1e-9))
+                width = self.parse_spice_number(params.get('width', 1e-6))
+                period = self.parse_spice_number(params.get('period', 2e-6))
+                delay = self.parse_spice_number(params.get('delay', 0))
 
                 def pulse_fn(t, v0=val0, v1=val1, r=rise, f=fall, w=width, p=period, d=delay):
                     # Use jnp.where for GPU-friendly conditionals
@@ -1792,11 +1793,11 @@ class CircuitEngine:
                 sources[dev['name']] = pulse_fn
 
             elif source_type == 'sine':
-                # Sine source
-                ampl = params.get('ampl', 1)
-                freq = params.get('freq', 1e3)
-                sinedc = params.get('sinedc', 0)
-                phase = params.get('phase', 0)
+                # Sine source - parse values with SI suffix support
+                ampl = self.parse_spice_number(params.get('ampl', 1))
+                freq = self.parse_spice_number(params.get('freq', 1e3))
+                sinedc = self.parse_spice_number(params.get('sinedc', 0))
+                phase = self.parse_spice_number(params.get('phase', 0))
 
                 def sine_fn(t, a=ampl, f=freq, dc=sinedc, ph=phase):
                     return dc + a * jnp.sin(2 * jnp.pi * f * t + ph)
@@ -1807,10 +1808,10 @@ class CircuitEngine:
                 # Piecewise linear source
                 # wave format: [t1, v1, t2, v2, t3, v3, ...]
                 wave = params.get('wave', [0, 0])
-                offset = params.get('offset', 0)
-                scale = params.get('scale', 1)
-                stretch = params.get('stretch', 1)
-                pwlperiod = params.get('pwlperiod', 0)
+                offset = self.parse_spice_number(params.get('offset', 0))
+                scale = self.parse_spice_number(params.get('scale', 1))
+                stretch = self.parse_spice_number(params.get('stretch', 1))
+                pwlperiod = self.parse_spice_number(params.get('pwlperiod', 0))
 
                 # Parse wave if it's a string (from netlist parser)
                 if isinstance(wave, str):
@@ -1832,13 +1833,13 @@ class CircuitEngine:
                 sources[dev['name']] = pwl_fn
 
             elif source_type == 'exp':
-                # Exponential source (rise then fall)
-                val0 = params.get('val0', 0)
-                val1 = params.get('val1', 1)
-                delay = params.get('delay', 0)
-                td2 = params.get('td2', 1e-9)  # time to start falling
-                tau1 = params.get('tau1', 1e-10)  # rise time constant
-                tau2 = params.get('tau2', 1e-10)  # fall time constant
+                # Exponential source (rise then fall) - parse values with SI suffix support
+                val0 = self.parse_spice_number(params.get('val0', 0))
+                val1 = self.parse_spice_number(params.get('val1', 1))
+                delay = self.parse_spice_number(params.get('delay', 0))
+                td2 = self.parse_spice_number(params.get('td2', 1e-9))  # time to start falling
+                tau1 = self.parse_spice_number(params.get('tau1', 1e-10))  # rise time constant
+                tau2 = self.parse_spice_number(params.get('tau2', 1e-10))  # fall time constant
 
                 def exp_fn(t, v0=val0, v1=val1, d=delay, td=td2, t1=tau1, t2=tau2):
                     t_fall = d + td  # Time when fall begins
@@ -1854,15 +1855,15 @@ class CircuitEngine:
                 sources[dev['name']] = exp_fn
 
             elif source_type == 'am':
-                # Amplitude modulation source
-                sinedc = params.get('sinedc', 0)
-                ampl = params.get('ampl', 1)
-                freq = params.get('freq', 1e3)
-                phase = params.get('phase', params.get('sinephase', 0))
-                delay = params.get('delay', 0)
-                modfreq = params.get('modfreq', 1e3)
-                modphase = params.get('modphase', 0)
-                modindex = params.get('modindex', 0.5)
+                # Amplitude modulation source - parse values with SI suffix support
+                sinedc = self.parse_spice_number(params.get('sinedc', 0))
+                ampl = self.parse_spice_number(params.get('ampl', 1))
+                freq = self.parse_spice_number(params.get('freq', 1e3))
+                phase = self.parse_spice_number(params.get('phase', params.get('sinephase', 0)))
+                delay = self.parse_spice_number(params.get('delay', 0))
+                modfreq = self.parse_spice_number(params.get('modfreq', 1e3))
+                modphase = self.parse_spice_number(params.get('modphase', 0))
+                modindex = self.parse_spice_number(params.get('modindex', 0.5))
 
                 def am_fn(t, dc=sinedc, a=ampl, f=freq, ph=phase, d=delay,
                           mf=modfreq, mph=modphase, mi=modindex):
@@ -1876,15 +1877,15 @@ class CircuitEngine:
                 sources[dev['name']] = am_fn
 
             elif source_type == 'fm':
-                # Frequency modulation source
-                sinedc = params.get('sinedc', 0)
-                ampl = params.get('ampl', 1)
-                freq = params.get('freq', 1e3)
-                phase = params.get('phase', params.get('sinephase', 0))
-                delay = params.get('delay', 0)
-                modfreq = params.get('modfreq', 1e3)
-                modphase = params.get('modphase', 0)
-                modindex = params.get('modindex', 0.5)
+                # Frequency modulation source - parse values with SI suffix support
+                sinedc = self.parse_spice_number(params.get('sinedc', 0))
+                ampl = self.parse_spice_number(params.get('ampl', 1))
+                freq = self.parse_spice_number(params.get('freq', 1e3))
+                phase = self.parse_spice_number(params.get('phase', params.get('sinephase', 0)))
+                delay = self.parse_spice_number(params.get('delay', 0))
+                modfreq = self.parse_spice_number(params.get('modfreq', 1e3))
+                modphase = self.parse_spice_number(params.get('modphase', 0))
+                modindex = self.parse_spice_number(params.get('modindex', 0.5))
 
                 def fm_fn(t, dc=sinedc, a=ampl, f=freq, ph=phase, d=delay,
                           mf=modfreq, mph=modphase, mi=modindex):
@@ -1907,7 +1908,7 @@ class CircuitEngine:
 
     @profile
     def run_transient(self, t_stop: Optional[float] = None, dt: Optional[float] = None,
-                      max_steps: int = 10000, use_sparse: Optional[bool] = None,
+                      max_steps: int = 1000000, use_sparse: Optional[bool] = None,
                       backend: Optional[str] = None,
                       use_scan: bool = False,
                       use_while_loop: bool = False,
@@ -1921,7 +1922,7 @@ class CircuitEngine:
         Args:
             t_stop: Stop time (default: from analysis params or 1ms)
             dt: Time step (default: from analysis params or 1µs)
-            max_steps: Maximum number of time steps
+            max_steps: Maximum number of time steps (default: 1M)
             use_sparse: Force sparse (True) or dense (False) solver. If None, auto-detect.
             backend: 'gpu', 'cpu', or None (auto-select based on circuit size).
                      For circuits >500 nodes with GPU available, uses GPU acceleration.
@@ -1946,7 +1947,7 @@ class CircuitEngine:
         if dt is None:
             dt = self.analysis_params.get('step', 1e-6)
 
-        # Limit number of steps
+        # Limit number of steps if max_steps is specified
         num_steps = int(t_stop / dt)
         if num_steps > max_steps:
             dt = t_stop / max_steps
@@ -3171,13 +3172,14 @@ class CircuitEngine:
             return lambda t, v=dc_val: v
 
         elif source_type == 'pulse':
-            val0 = params.get('val0', 0)
-            val1 = params.get('val1', 1)
-            rise = params.get('rise', 1e-9)
-            fall = params.get('fall', 1e-9)
-            width = params.get('width', 1e-6)
-            period = params.get('period', 2e-6)
-            delay = params.get('delay', 0)
+            # Parse values with SI suffix support (e.g., "1u" -> 1e-6)
+            val0 = self.parse_spice_number(params.get('val0', 0))
+            val1 = self.parse_spice_number(params.get('val1', 1))
+            rise = self.parse_spice_number(params.get('rise', 1e-9))
+            fall = self.parse_spice_number(params.get('fall', 1e-9))
+            width = self.parse_spice_number(params.get('width', 1e-6))
+            period = self.parse_spice_number(params.get('period', 2e-6))
+            delay = self.parse_spice_number(params.get('delay', 0))
 
             def pulse_fn(t, v0=val0, v1=val1, r=rise, f=fall, w=width, p=period, d=delay):
                 t_in_period = (t - d) % p
@@ -3191,10 +3193,10 @@ class CircuitEngine:
             return pulse_fn
 
         elif source_type == 'sine':
-            sinedc = params.get('sinedc', 0)
-            ampl = params.get('ampl', 1)
-            freq = params.get('freq', 1e6)
-            phase = params.get('phase', 0)
+            sinedc = self.parse_spice_number(params.get('sinedc', 0))
+            ampl = self.parse_spice_number(params.get('ampl', 1))
+            freq = self.parse_spice_number(params.get('freq', 1e6))
+            phase = self.parse_spice_number(params.get('phase', 0))
 
             def sine_fn(t, dc=sinedc, a=ampl, f=freq, ph=phase):
                 return dc + a * jnp.sin(2 * jnp.pi * f * t + ph)
