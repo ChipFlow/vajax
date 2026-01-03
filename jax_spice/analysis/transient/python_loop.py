@@ -1,25 +1,28 @@
-"""Python loop transient analysis strategy.
+"""Python loop transient analysis strategy (DEBUGGING ONLY).
 
 This strategy uses a traditional Python for-loop over timesteps with a
-JIT-compiled Newton-Raphson solver for each step. It's the most flexible
-approach and provides full convergence tracking.
+JIT-compiled Newton-Raphson solver for each step. It provides detailed
+per-step convergence tracking at the cost of performance.
 
-Performance: ~0.5ms/step on CPU (ring benchmark)
+WARNING: This is 5x slower than the production lax.scan/while_loop versions.
+For production use, set `use_while_loop=True` in `run_transient()`.
 
-Advantages:
-- Full convergence tracking per timestep
-- Detailed logging and debugging info
-- Works with all circuit types
-- Easy to profile with standard Python tools
+Performance: ~0.5ms/step on CPU (ring benchmark) vs ~0.1ms/step with lax.scan
 
-Disadvantages:
-- Python loop overhead (~5x slower than lax.scan)
-- Not fully JIT-compiled
+Debugging features (not available in production versions):
+- Per-step (time, residual) pairs for non-converged steps
+- Per-step warning logging when convergence fails
+- Easy to add breakpoints and print statements
+- Compatible with standard Python profilers (cProfile, py-spy)
 
-Use this strategy when:
-- Debugging convergence issues
-- Need detailed per-step statistics
-- First time running a circuit
+Use this strategy ONLY when:
+- Debugging why a specific timestep fails to converge
+- Need to identify which timesteps have convergence issues
+- Profiling NR solver behavior with Python tools
+- First time running a new circuit to validate behavior
+
+For production benchmarks and normal simulation, use:
+    engine.run_transient(t_stop, dt, use_while_loop=True)
 """
 
 import time as time_module
