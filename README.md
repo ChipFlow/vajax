@@ -49,6 +49,31 @@ uv sync --extra cuda12
 uv sync --extra sax
 ```
 
+## Command-Line Interface
+
+JAX-SPICE provides an ngspice-style CLI:
+
+```bash
+# Run simulation on a circuit file
+jax-spice circuit.sim
+
+# Specify output file and format
+jax-spice circuit.sim -o results.raw
+jax-spice circuit.sim -o results.csv --format csv
+
+# Override analysis parameters
+jax-spice circuit.sim --tran 1n 100u
+jax-spice circuit.sim --ac dec 100 1k 1G
+
+# Run benchmarks
+jax-spice benchmark ring --profile
+
+# System info
+jax-spice info
+```
+
+See [docs/cli_reference.md](docs/cli_reference.md) for full documentation.
+
 ## Example: Transient Simulation
 
 ```python
@@ -253,6 +278,8 @@ JAX_PLATFORMS=cpu uv run pytest tests/test_vacask_suite.py -v
 
 ## Documentation
 
+- `docs/cli_reference.md` - Command-line interface reference
+- `docs/architecture_overview.md` - System architecture and design
 - `docs/gpu_solver_architecture.md` - Detailed solver design and optimization
 - `docs/gpu_solver_jacobian.md` - Jacobian computation details
 - `docs/vacask_osdi_inputs.md` - OpenVAF/OSDI input handling

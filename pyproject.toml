@@ -76,6 +76,7 @@ include = [
 ]
 
 [project.scripts]
+jax-spice = "jax_spice.cli:main"
 jax-spice-benchmark = "jax_spice.benchmarks.c6288:main"
 
 [tool.ruff]
