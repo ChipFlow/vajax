@@ -278,6 +278,7 @@ JAX_PLATFORMS=cpu uv run pytest tests/test_vacask_suite.py -v
 
 ## Documentation
 
+- `docs/api_reference.md` - **API Reference** (CircuitEngine, result types, I/O)
 - `docs/cli_reference.md` - Command-line interface reference
 - `docs/architecture_overview.md` - System architecture and design
 - `docs/gpu_solver_architecture.md` - Detailed solver design and optimization
