@@ -2707,6 +2707,23 @@ class OpenVAFToJAX:
                 # Get the value for the direct path
                 direct_val = pred_to_val.get(direct_pred, '_ZERO')
 
+                # Skip branches where direct_val is a constant zero
+                # (see comment in _build_init_nested_where_from_blocks for details)
+                is_const_zero = (
+                    direct_val == '_ZERO' or
+                    direct_val == '0.0' or
+                    direct_val == '0'
+                )
+                # Also check if it's a variable pointing to a constant 0
+                if not is_const_zero:
+                    if direct_val in self.constants:
+                        is_const_zero = (self.constants[direct_val] == 0.0)
+                    elif direct_val in self.int_constants:
+                        is_const_zero = (self.int_constants[direct_val] == 0)
+
+                if is_const_zero:
+                    continue  # Skip this branch, look for a better one
+
                 # Find remaining preds (those not reached by direct path)
                 remaining_preds = [p for p in pred_blocks if p != direct_pred]
 
@@ -2812,6 +2829,32 @@ class OpenVAFToJAX:
 
                 # Get the value for the direct path
                 direct_val = pred_to_val.get(direct_pred, '_ZERO')
+
+                # Skip branches where direct_val is a constant zero (_ZERO or literal 0.0)
+                # These are typically "default" paths that don't contribute meaningful values,
+                # and we want to find a branch point that captures the actual computation.
+                # This fixes the PSP103 TYPE conditional issue where SWGEO_i was incorrectly
+                # wrapped in a TYPE check, yielding 0 for NMOS instead of the computed value.
+                #
+                # Check for constant zero: either '_ZERO', literal '0.0'/'0', or a variable
+                # that's defined as init_v<N> where v<N> is a known zero constant.
+                is_const_zero = (
+                    direct_val == '_ZERO' or
+                    direct_val == '0.0' or
+                    direct_val == '0'
+                )
+                # Also check if it's a variable pointing to a constant 0
+                if not is_const_zero and direct_val.startswith('init_'):
+                    var_name = direct_val[5:]  # Remove 'init_' prefix
+                    if var_name in self.init_constants:
+                        const_val = self.init_constants[var_name]
+                        is_const_zero = (const_val == 0.0)
+                    elif var_name in self.init_int_constants:
+                        const_val = self.init_int_constants[var_name]
+                        is_const_zero = (const_val == 0)
+
+                if is_const_zero:
+                    continue  # Skip this branch, look for a better one
 
                 # Find remaining preds (those not reached by direct path)
                 remaining_preds = [p for p in pred_blocks if p != direct_pred]
