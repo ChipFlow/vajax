@@ -136,8 +136,8 @@ class FileLoaderMixin:
         try:
             with open(fp, errors='ignore') as file:
                 lines = [line.rstrip('\r\n') for line in file]
-        except:
-            raise ConverterError("Failed to open "+fp)
+        except (OSError, IOError, UnicodeDecodeError) as e:
+            raise ConverterError(f"Failed to open {fp}: {e}")
         
         # Canonical path
         fp = os.path.realpath(fp)

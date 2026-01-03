@@ -12,8 +12,8 @@ Note: For CPU-optimized circuit simulation, see VACASK which uses
 native sparse solvers. This module prioritizes code consistency
 across platforms over maximum single-platform performance.
 
-IMPORTANT: This module uses pure JAX - no numpy or scipy allowed.
-See CLAUDE.md for coding guidelines.
+Note: numpy is imported for type hints (ArrayLike) and array protocol compatibility.
+All sparse operations use JAX's BCOO/BCSR formats for GPU acceleration.
 """
 
 from typing import Tuple, Union
@@ -23,7 +23,7 @@ import jax.numpy as jnp
 from jax import Array
 from jax.experimental.sparse.linalg import spsolve as jax_spsolve
 
-# ArrayLike accepts both numpy and JAX arrays (will be converted to JAX)
+# ArrayLike accepts both numpy and JAX arrays (converted to JAX internally)
 ArrayLike = Union[Array, np.ndarray]
 
 

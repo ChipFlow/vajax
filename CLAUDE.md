@@ -1,61 +1,29 @@
 # JAX-SPICE Development Guidelines
 
-## Pure JAX Requirement
+## GPU Optimization
 
-**CRITICAL**: This is a JAX-native circuit simulator. All numerical code MUST use JAX, not numpy or scipy.
-**CRITICAL**: All functionality should be optimised to run as much on GPU as possible, minimising CPU to GPU context switching and data transfer
+**CRITICAL**: All simulation hot paths should be optimized for GPU execution, minimizing CPU-GPU context switching and data transfer.
 
-You should try to minimise the code base size:
+### Design Principles
 
- * Avoid duplication
- * Where possible unify critical paths.
- * Regularly check for duplications of code and look for any opportunities to minimise the code base without impacting the tested functionality. Conform with the user.
+1. **GPU-first simulation loops**: Use `lax.scan` or `lax.while_loop` for time-stepping
+2. **Batched device evaluation**: Use `vmap` for parallel device evaluation
+3. **Minimize host transfers**: Keep arrays on device throughout simulation
+4. **JIT everything**: Ensure simulation functions are JIT-compilable
 
-### Forbidden Patterns
+### Code Quality
 
-Do NOT use these:
-```python
-# FORBIDDEN - numpy arrays
-import numpy as np
-np.array([1, 2, 3])
-np.zeros(n)
-np.linalg.solve(A, b)
+- Avoid duplication - unify critical paths where possible
+- Keep files under ~70KB (~20,000 tokens) - split large modules
+- Regularly check for opportunities to simplify without impacting functionality
 
-# FORBIDDEN - scipy sparse
-from scipy.sparse import csr_matrix, lil_matrix, coo_matrix
-from scipy.sparse.linalg import spsolve, gmres
+### JAX vs NumPy/SciPy
 
-# FORBIDDEN - numpy linear algebra
-np.linalg.inv(A)
-np.linalg.lstsq(A, b)
-```
-
-### Required Patterns
-
-Use these JAX equivalents:
-```python
-# REQUIRED - JAX arrays
-import jax.numpy as jnp
-from jax import Array
-jnp.array([1, 2, 3])
-jnp.zeros(n)
-jax.scipy.linalg.solve(A, b)
-
-# REQUIRED - JAX sparse (BCOO/BCSR formats)
-from jax.experimental.sparse import BCOO, BCSR
-from jax.experimental.sparse.linalg import spsolve
-
-# REQUIRED - JAX linear algebra
-jax.scipy.linalg.inv(A)
-jax.scipy.linalg.lstsq(A, b)
-```
-
-### Why Pure JAX?
-
-1. **GPU Acceleration**: JAX arrays stay on GPU, avoiding host-device transfers
-2. **JIT Compilation**: All code can be traced and compiled
-3. **Autodiff**: Jacobians via `jax.jacfwd` or matrix-free `jax.jvp`
-4. **Consistency**: One API across CPU, GPU, and TPU
+Use JAX (`jnp`) for simulation hot paths that run on GPU. NumPy/SciPy are acceptable for:
+- I/O and file parsing
+- One-time setup/preprocessing
+- Test utilities and validation
+- Optional CPU-only solver backends (e.g., UMFPACK)
 
 ### Sparse Solver Strategy
 
@@ -151,14 +119,17 @@ All devices are routed through OpenVAF except voltage/current sources:
   - Time-varying behavior (pulse, sine, DC)
   - Handled separately with vectorized stamping
 
-## Migration Status: COMPLETE
+## Solver Architecture
 
-All numpy/scipy dependencies have been removed from core computation:
-- `jax_spice/analysis/sparse.py` - uses pure JAX for COO→CSR conversion via `jax.ops.segment_sum`
-- `jax_spice/benchmarks/runner.py` - returns `jax.Array` types, uses `jnp` throughout
-- `jax_spice/devices/openvaf_device.py` - uses `jax.Array` for batched inputs
+The simulation hot paths use JAX for GPU acceleration:
+- `jax_spice/analysis/sparse.py` - JAX BCOO/BCSR sparse matrix operations
+- `jax_spice/analysis/solver.py` - Newton-Raphson with `lax.while_loop`
+- `jax_spice/analysis/transient/scan.py` - Time-stepping with `lax.scan`
 
-The codebase is now pure JAX in all simulation paths.
+NumPy/SciPy are used appropriately for:
+- File I/O (`rawfile.py`, `prn_reader.py`)
+- Optional UMFPACK solver backend for CPU
+- Test utilities and waveform comparison
 
 ## OpenVAF/VACASK PSP103 Parameter Alignment
 
