@@ -60,48 +60,32 @@ Central tracking for development tasks and known issues.
 - [ ] Add tolerance override per test (some need looser tolerances)
 - [ ] Generate coverage report showing pass/fail/skip by category
 
-### Convert remaining non-JAX analysis to JAX
+### Convert Homotopy Loops to JAX
 
-**Status**: Several analysis functions still use numpy/Python loops instead of JAX.
+**Status**: Homotopy (continuation) methods use Python loops that could be JIT-compiled.
 
-**Critical (numpy in core solver path)**:
-- [ ] `transient_analysis_analytical()` in `transient.py` - uses `np.linalg.solve()` and Python `for` loops
-- [ ] `_transient_analysis_python()` in `transient.py` - deprecated but still present
+**Medium priority (outer loops, inner solves already use JAX)**:
+- [ ] `homotopy.py:132` - GMIN stepping uses `for step in range()`
+- [ ] `homotopy.py:348` - Source stepping uses `for step in range()`
 
-**Medium (outer loops, inner solves use JAX)**:
-- [ ] `dc_operating_point_with_source_stepping()` - Python `while` loop for VDD stepping
-- [ ] `dc_operating_point_with_gmin_stepping()` - Python `while` loop for GMIN stepping
+**Goal**: Convert to `lax.fori_loop` or `lax.while_loop` for full JIT compilation.
 
-**Goal**: Convert to use `jax.lax.scan` for time/source stepping and JAX linear solvers throughout.
+**Note**: These are rarely-used fallback methods for difficult convergence cases. Low priority.
 
-### GPU Performance Issue (HIGH PRIORITY)
+### Simplify Transient Analysis Paths
 
-**Root cause identified (2025-12):** GPU is slower than CPU because `transient_analysis_jit` processes devices sequentially, not in parallel.
+**Current state**: Multiple overlapping implementations exist:
+- `PythonLoopStrategy` - Python for-loop with per-step debugging
+- `ScanStrategy` - lax.scan for full JIT compilation (5x faster)
+- `_run_transient_hybrid` - another Python loop (duplicates PythonLoopStrategy)
+- `_run_transient_while_loop` - lax.while_loop version
 
-**Current implementation** (`_build_system_jit` in `transient.py`):
-```python
-# Sequential device processing - NOT GPU-friendly
-jacobian, residual = lax.fori_loop(
-    0, circuit.num_devices,
-    stamp_one_device,
-    (jacobian, residual)
-)
-```
-
-This results in:
-- Thousands of tiny GPU kernel launches (one per device)
-- No parallelism to offset kernel launch overhead
-- GPU adds overhead without speedup
-
-**Solution**: Use vectorized device evaluation (already implemented for DC analysis):
-- `build_device_groups()` groups devices by type
-- `VectorizedDeviceGroup` evaluates all same-type devices in parallel via vmap
-- Batched matrix scatter operations for Jacobian stamping
+**GPU status**: GPU is ~4x faster than CPU (working correctly).
 
 **Tasks**:
-- [ ] Refactor `transient_analysis_jit` to use `VectorizedDeviceGroup` instead of `lax.fori_loop`
-- [ ] Benchmark GPU vs CPU after vectorization
-- [ ] Consider using `transient_analysis_analytical()` as starting point (uses SystemBuilder)
+- [ ] Change default from `use_while_loop=False` to `use_while_loop=True`
+- [ ] Remove duplicated Python loop code in `_run_transient_hybrid`
+- [ ] Keep `PythonLoopStrategy` as opt-in debugging mode only
 
 ## Low Priority
 
