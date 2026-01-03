@@ -6,39 +6,45 @@ This document provides a high-level overview of JAX-SPICE's architecture for dev
 
 JAX-SPICE is built on three core principles:
 
-1. **Functional Device Models**: Devices are pure functions, not stateful objects
-2. **Automatic Differentiation**: Jacobians computed via JAX, no explicit derivatives
-3. **Vectorization**: Same-type devices evaluated in parallel
+1. **Functional Device Models**: Devices are pure JAX functions compiled from Verilog-A
+2. **Automatic Differentiation**: Jacobians computed via JAX autodiff, no explicit derivatives
+3. **Vectorization**: Same-type devices evaluated in parallel via `jax.vmap`
 
 ## System Architecture
 
 ```
 ┌─────────────────────────────────────────────────────────────────────┐
 │                           User Code                                  │
-│   (Define circuit, run analysis, process results)                    │
+│   from jax_spice import CircuitEngine                               │
+│   engine = CircuitEngine("circuit.sim")                             │
+│   engine.parse()                                                     │
+│   result = engine.run_transient(...)                                │
 └─────────────────────────────────────────────────────────────────────┘
                                    │
                                    ▼
 ┌─────────────────────────────────────────────────────────────────────┐
-│                         Analysis Layer                               │
+│                    CircuitEngine (analysis/engine.py)                │
 │  ┌─────────────┐  ┌──────────────────┐  ┌───────────────────────┐  │
-│  │   dc.py     │  │  transient.py    │  │      mna.py           │  │
-│  │ DC solver   │  │ Transient solver │  │ Modified Nodal        │  │
-│  │ Newton-     │  │ Backward Euler   │  │ Analysis system       │  │
-│  │ Raphson     │  │ time integration │  │ Device groups         │  │
+│  │ run_transient│ │     run_ac       │  │    run_noise         │  │
+│  │ (lax.scan)  │  │ (AC analysis)    │  │  (noise analysis)    │  │
+│  └─────────────┘  └──────────────────┘  └───────────────────────┘  │
+│  ┌─────────────┐  ┌──────────────────┐  ┌───────────────────────┐  │
+│  │ run_corners │  │   run_dcinc      │  │    run_hb            │  │
+│  │ (PVT sweep) │  │ (transfer funcs) │  │ (harmonic balance)   │  │
 │  └─────────────┘  └──────────────────┘  └───────────────────────┘  │
 └─────────────────────────────────────────────────────────────────────┘
                                    │
                                    ▼
 ┌─────────────────────────────────────────────────────────────────────┐
 │                          Device Layer                                │
-│  ┌───────────┐ ┌───────────┐ ┌───────────┐ ┌─────────────────────┐ │
-│  │ Resistor  │ │ Capacitor │ │ MOSFET    │ │ VerilogADevice      │ │
-│  │           │ │           │ │ Simple    │ │ (OpenVAF models)    │ │
-│  └───────────┘ └───────────┘ └───────────┘ └─────────────────────┘ │
-│                          │                                          │
-│                          ▼                                          │
-│              DeviceStamps (currents, conductances)                  │
+│  ┌───────────────────────────────────────────────────────────────┐  │
+│  │              OpenVAF Compiled Verilog-A Models                │  │
+│  │    resistor.va  capacitor.va  diode.va  psp103.va  ...       │  │
+│  └───────────────────────────────────────────────────────────────┘  │
+│  ┌───────────────────────────────────────────────────────────────┐  │
+│  │              Built-in Sources (vsource.py)                    │  │
+│  │    DC, Pulse, Sine, PWL voltage/current sources               │  │
+│  └───────────────────────────────────────────────────────────────┘  │
 └─────────────────────────────────────────────────────────────────────┘
                                    │
                                    ▼
@@ -46,198 +52,210 @@ JAX-SPICE is built on three core principles:
 │                           JAX Runtime                                │
 │     ┌──────────────┐  ┌─────────────┐  ┌────────────────────┐      │
 │     │     JIT      │  │    vmap     │  │   Autodiff         │      │
-│     │ Compilation  │  │ Vectorize   │  │ (Jacobians)        │      │
+│     │ Compilation  │  │ Batched     │  │ (Jacobians via     │      │
+│     │ (lax.scan)   │  │ Device Eval │  │  jacfwd/jvp)       │      │
 │     └──────────────┘  └─────────────┘  └────────────────────┘      │
 └─────────────────────────────────────────────────────────────────────┘
 ```
 
-## Data Flow: DC Operating Point
+## Data Flow: Circuit Parsing and Setup
 
 ```
-1. Circuit Definition
-   └── MNASystem.add_device(name, device, nodes)
+1. Load Circuit File
+   └── engine = CircuitEngine("circuit.sim")
+       └── engine.parse()
 
-2. System Preparation
-   └── MNASystem.build_device_groups()
-       └── VectorizedDeviceGroup (per device type)
-           ├── node_indices: Array[n_devices, n_terminals]
-           └── params: Dict[str, Array[n_devices]]
+2. Netlist Processing
+   ├── Parse VACASK .sim file or SPICE netlist
+   ├── Load device models (.osdi files via OpenVAF)
+   ├── Build node map (node name → index)
+   └── Flatten hierarchical instances
 
-3. Newton-Raphson Loop
-   │
-   ├── build_jacobian_and_residual(V)
-   │   ├── For each VectorizedDeviceGroup:
-   │   │   ├── Extract terminal voltages: V[node_indices]
-   │   │   ├── Evaluate devices: vmap(device_fn)(V_terminals, params)
-   │   │   └── Stamp into matrix/vector
-   │   │
-   │   └── Compute Jacobian via JAX autodiff
-   │
-   ├── Solve: delta_V = J^(-1) * (-residual)
-   │   ├── Dense solve (small circuits)
-   │   └── Sparse solve (>1000 nodes)
-   │
-   ├── Update: V = V + delta_V (with limiting)
-   │
-   └── Check convergence: max(|residual|) < abstol?
+3. Device Compilation
+   ├── Compile Verilog-A models with OpenVAF
+   ├── Generate JAX-compatible device functions
+   └── Batch devices by type for vmap evaluation
 
-4. Return solution V
+4. System Builder
+   └── _make_gpu_resident_build_system_fn()
+       ├── Creates JIT-compiled residual/Jacobian builder
+       ├── Batches device evaluations via vmap
+       └── Handles sparse vs dense matrix assembly
 ```
 
 ## Data Flow: Transient Analysis
 
 ```
 1. Initial Conditions
-   ├── icmode='op': Run DC operating point
-   └── icmode='uic': Use zeros + supply voltages
+   └── Run DC operating point via Newton-Raphson
 
-2. Time Loop (t = 0 to t_stop)
+2. Time Integration (lax.scan)
    │
-   ├── Build companion models for reactive elements
-   │   └── Capacitor: I_eq = C/dt * V_prev, G_eq = C/dt
+   ├── For each time step t = dt, 2*dt, ..., t_stop:
+   │   │
+   │   ├── Update source waveforms (pulse, sine, PWL)
+   │   │
+   │   ├── Build system (residual f, Jacobian J)
+   │   │   ├── Evaluate all devices via batched vmap
+   │   │   ├── Stamp currents → residual vector
+   │   │   └── Stamp conductances → Jacobian matrix
+   │   │
+   │   ├── Newton-Raphson iteration (lax.while_loop):
+   │   │   ├── Solve: delta_V = solve(J, -f)
+   │   │   │   ├── Dense: jax.scipy.linalg.solve()
+   │   │   │   └── Sparse: jax.experimental.sparse.linalg.spsolve()
+   │   │   ├── Update: V = V + delta_V
+   │   │   └── Check: max(|f|) < abstol?
+   │   │
+   │   └── Store solution: V[t] appended to trajectory
    │
-   ├── Newton-Raphson (same as DC but with companion models)
-   │
-   ├── Store solution: solutions[t] = V
-   │
-   └── Advance time: t += dt, V_prev = V
+   └── Return TransientResult(times, voltages)
 
-3. Return times, solutions arrays
+3. GPU Efficiency
+   └── lax.scan enables full GPU execution without Python callbacks
 ```
 
 ## Key Classes
 
-### MNASystem (`analysis/mna.py`)
+### CircuitEngine (`analysis/engine.py`)
 
-The central orchestrator that manages devices and builds circuit equations.
+The central class that manages circuit parsing, device compilation, and analysis.
 
 ```python
-class MNASystem:
+class CircuitEngine:
     # Core data
-    devices: List[DeviceInfo]        # All devices in circuit
-    node_map: Dict[str, int]         # Node name → index
-    device_groups: Dict[type, VectorizedDeviceGroup]
+    circuit_file: str                  # Path to .sim or SPICE file
+    node_map: Dict[str, int]           # Node name → index
+    models: Dict[str, CompiledModel]   # OpenVAF compiled models
+    device_data: Dict[str, DeviceInfo] # Device instances and parameters
 
-    # Main methods
-    def add_device(name, device, nodes): ...
-    def build_device_groups(): ...           # Prepare for vectorized eval
-    def build_jacobian_and_residual(V): ...  # Core evaluation
-    def get_node_index(name) -> int: ...
+    # Parsing
+    def parse() -> None                # Parse netlist, compile models
+
+    # Analysis methods
+    def run_transient(t_stop, dt, ...) -> TransientResult
+    def run_ac(fstart, fstop, ...) -> ACResult
+    def run_noise(fstart, fstop, ...) -> NoiseResult
+    def run_corners(corners) -> List[CornerResult]
+    def run_dcinc() -> DCINCResult
+    def run_dcxf(input_source, output_node) -> DCXFResult
+    def run_acxf(input_source, output_node) -> ACXFResult
+    def run_hb(...) -> HBResult
+
+    # Internal system building
+    def _make_gpu_resident_build_system_fn() -> Callable
 ```
 
-### VectorizedDeviceGroup (`analysis/mna.py`)
+### TransientResult
 
-Groups same-type devices for efficient parallel evaluation.
-
-```python
-class VectorizedDeviceGroup:
-    device_type: type                  # e.g., Resistor, MOSFETSimple
-    device_names: List[str]            # ["R1", "R2", ...]
-    node_indices: Array                # Shape: (n_devices, n_terminals)
-    params: Dict[str, Array]           # {"r": [1000, 2000, ...], ...}
-
-    def evaluate(V, context) -> DeviceStamps:
-        # Vectorized evaluation using vmap
-        V_terminals = V[self.node_indices]  # Shape: (n_devices, n_terminals)
-        return jax.vmap(device_fn)(V_terminals, self.params, context)
-```
-
-### DeviceStamps (`devices/base.py`)
-
-The output of device evaluation, used for MNA stamping.
+The output of transient analysis.
 
 ```python
 @dataclass
-class DeviceStamps:
-    currents: Array      # Shape: (n_terminals,) - current into each terminal
-    conductances: Array  # Shape: (n_terminals, n_terminals) - dI/dV
-    charges: Array       # Optional: for transient analysis
+class TransientResult:
+    times: Array                       # Shape: (n_steps,) time points
+    voltages: Dict[str, Array]         # node_name → voltage array
+    currents: Dict[str, Array]         # Optional: device currents
+    converged: bool                    # True if all steps converged
 ```
 
-### AnalysisContext (`analysis/context.py`)
+### OpenVAF Device Interface
 
-Runtime context passed to device evaluation.
+Devices are compiled from Verilog-A and evaluated in batches:
 
 ```python
-@dataclass
-class AnalysisContext:
-    time: float              # Current simulation time
-    timestep: float          # dt for transient
-    temperature: float       # Circuit temperature (K)
-    iteration: int           # Newton-Raphson iteration number
-    gmin: float              # GMIN for numerical stability
-    integration_coeff: float # Backward Euler coefficient (1/dt)
+# OpenVAF compiles Verilog-A to JAX-compatible functions
+model = compile_va("resistor.va")
+
+# Device evaluation function signature (simplified):
+def device_fn(
+    voltages: Array,     # Terminal voltages [n_devices, n_terminals]
+    params: Array,       # Device parameters [n_devices, n_params]
+    temperature: float,  # Operating temperature
+) -> Tuple[Array, Array]:
+    # Returns (currents, conductances) for MNA stamping
+    ...
+
+# Batched evaluation via vmap
+currents, G = jax.vmap(device_fn)(V_terminals, params_batch, temp)
 ```
 
 ## Device Model Interface
 
-### Pure Function Pattern
+### OpenVAF Compilation Pipeline
 
-Devices are implemented as pure functions for JAX compatibility:
+All devices are compiled from Verilog-A source:
 
-```python
-def resistor(
-    V: Array,                    # [V_pos, V_neg]
-    params: dict,                # {"r": 1000.0, "tc1": 0.0, "tc2": 0.0}
-    context: AnalysisContext
-) -> DeviceStamps:
-    """Temperature-dependent resistor."""
-    r = params["r"]
-    tc1, tc2 = params.get("tc1", 0.0), params.get("tc2", 0.0)
-
-    # Temperature adjustment
-    dT = context.temperature - 300.0
-    r_eff = r * (1 + tc1*dT + tc2*dT**2)
-
-    # Current and conductance
-    G = 1.0 / r_eff
-    V_diff = V[0] - V[1]
-    I = G * V_diff
-
-    return DeviceStamps(
-        currents=jnp.array([I, -I]),
-        conductances=jnp.array([[G, -G], [-G, G]])
-    )
+```
+resistor.va  →  OpenVAF Compiler  →  MIR/OSDI  →  JAX Function
 ```
 
-### Why Pure Functions?
+Example Verilog-A source (`resistor.va`):
+```verilog
+module resistor(p, n);
+    inout p, n;
+    electrical p, n;
+    parameter real r = 1k;
+    parameter real tc1 = 0.0;
+    parameter real tc2 = 0.0;
 
-1. **JIT Compilation**: JAX can compile and optimize pure functions
-2. **Automatic Differentiation**: Gradients computed correctly
-3. **Vectorization**: `vmap` works on pure functions
-4. **Parallelization**: GPU execution requires pure functions
+    analog begin
+        I(p, n) <+ V(p, n) / r * (1 + tc1*dT + tc2*dT*dT);
+    end
+endmodule
+```
+
+OpenVAF compiles this to a pure JAX function that:
+- Takes terminal voltages and parameters as input
+- Returns currents and conductance matrix
+- Is automatically differentiable for Jacobian computation
+- Can be batched with `jax.vmap` for parallel evaluation
+
+### Why Verilog-A + OpenVAF?
+
+1. **PDK Compatibility**: Use production models (PSP103, BSIM4) directly
+2. **Standardization**: Industry-standard compact model format
+3. **Validation**: Models tested against commercial simulators
+4. **Maintainability**: One source for all backends (JAX, VACASK, ngspice)
 
 ## Sparse Matrix Support
 
-For large circuits (>1000 nodes), JAX-SPICE uses sparse matrices:
+For large circuits (>1000 nodes), JAX-SPICE uses JAX's native sparse formats:
 
 ```python
-# Jacobian assembly using scipy.sparse.lil_matrix
-def assemble_sparse_jacobian(system, V, context):
-    n = len(V)
-    J = scipy.sparse.lil_matrix((n, n))
+from jax.experimental.sparse import BCOO, BCSR
+from jax.experimental.sparse.linalg import spsolve
 
-    for group in system.device_groups.values():
-        stamps = group.evaluate(V, context)
-        for i, device_name in enumerate(group.device_names):
-            nodes = group.node_indices[i]
-            for row, col in product(range(len(nodes)), repeat=2):
-                J[nodes[row], nodes[col]] += stamps.conductances[i, row, col]
+# Build sparse Jacobian from COO triplets
+def build_sparse_jacobian(rows, cols, values, shape):
+    # Use pure JAX for COO→CSR conversion
+    data, indices, indptr = build_csr_arrays(rows, cols, values, shape)
+    return data, indices, indptr
 
-    return J.tocsr()  # Convert to CSR for efficient solve
-
-# Linear solve
-delta_V = scipy.sparse.linalg.spsolve(J, -residual)
+# Solve sparse system
+# JAX spsolve works on CPU and GPU (via cuSOLVER)
+delta_V = spsolve(data, indices, indptr, -residual, tol=0)
 ```
+
+### Sparse Formats
+
+| Format | Usage | Notes |
+|--------|-------|-------|
+| BCOO | Matrix construction | JAX native COO, efficient for building |
+| BCSR | Linear solve | CSR required by spsolve |
 
 ### When Sparse is Used
 
 | Circuit Size | Solver | Reason |
 |--------------|--------|--------|
-| < 1000 nodes | Dense | Lower overhead |
-| ≥ 1000 nodes | Sparse | Memory efficiency, faster solve |
+| < 1000 nodes | Dense | Lower overhead, `jax.scipy.linalg.solve()` |
+| ≥ 1000 nodes | Sparse | Memory efficiency, `spsolve()` |
 
-The switch is automatic in `dc_operating_point()`.
+The switch is controlled by `use_sparse=True` in analysis methods:
+
+```python
+result = engine.run_transient(t_stop=1e-6, dt=1e-9, use_sparse=True)
+```
 
 ## OpenVAF Integration
 
@@ -355,61 +373,90 @@ Prevents floating nodes and improves conditioning.
 
 ## File Reference
 
-| File | LOC | Purpose |
-|------|-----|---------|
-| `analysis/mna.py` | ~1000 | MNA system, device groups, matrix assembly |
-| `analysis/dc.py` | ~800 | DC solvers (Newton-Raphson, source stepping) |
-| `analysis/transient.py` | ~600 | Transient solver (Backward Euler) |
-| `devices/mosfet_simple.py` | ~300 | Simplified BSIM-like MOSFET |
-| `devices/openvaf_device.py` | ~300 | OpenVAF wrapper |
-| `netlist/parser.py` | ~400 | VACASK netlist parser |
-| `benchmarks/runner.py` | ~500 | Benchmark infrastructure |
+| File | Purpose |
+|------|---------|
+| `analysis/engine.py` | CircuitEngine - main simulation API, parsing, all analyses |
+| `analysis/solver.py` | Newton-Raphson solver with `lax.while_loop` |
+| `analysis/transient/` | Transient analysis (scan/loop strategies) |
+| `analysis/ac.py` | AC small-signal analysis |
+| `analysis/noise.py` | Noise analysis |
+| `analysis/hb.py` | Harmonic balance analysis |
+| `analysis/xfer.py` | Transfer function (DCINC, DCXF, ACXF) |
+| `analysis/corners.py` | PVT corner analysis |
+| `analysis/homotopy.py` | Convergence aids (GMIN, source stepping) |
+| `analysis/sparse.py` | JAX sparse utilities (BCOO/BCSR, spsolve) |
+| `devices/vsource.py` | Voltage/current source waveforms |
+| `devices/verilog_a.py` | OpenVAF Verilog-A device wrapper |
+| `netlist/parser.py` | VACASK netlist parser |
+| `benchmarks/runner.py` | VACASK benchmark runner |
+| `benchmarks/registry.py` | Auto-discovery of benchmark circuits |
 
 ## Common Patterns
 
-### Adding Devices to MNA
+### Loading and Running a Circuit
 
 ```python
-system = MNASystem()
+from jax_spice import CircuitEngine
 
-# Add with node names (string)
-system.add_device("R1", Resistor(r=1000), ["vdd", "out"])
+# Load circuit from VACASK .sim file
+engine = CircuitEngine("vendor/VACASK/sim/ring.sim")
+engine.parse()
 
-# Node 0 is always ground
-system.add_device("V1", VoltageSource(dc=5.0), ["vdd", "gnd"])
-```
-
-### Running Analysis
-
-```python
-# DC
-V, info = dc_operating_point(system)
-# For difficult circuits, use homotopy methods from jax_spice.analysis.homotopy
-
-# Transient
-times, solutions = transient_analysis_jit(
-    system,
+# Run transient analysis
+result = engine.run_transient(
     t_stop=1e-6,
-    t_step=1e-9,
-    icmode='uic'  # Skip DC for digital
+    dt=1e-9,
+    use_scan=True,     # GPU-efficient
+    use_sparse=True,   # For large circuits
 )
 ```
 
 ### Extracting Results
 
 ```python
-# Get node voltage
-vout = V[system.get_node_index("out")]
+# Get all node voltages at final time
+for node_name, voltages in result.voltages.items():
+    print(f"{node_name}: {voltages[-1]:.3f}V")
 
-# Get voltage over time
-vout_transient = solutions[:, system.get_node_index("out")]
+# Get specific node over time
+vout = result.voltages["out"]  # Array of voltages
+
+# Time array
+times = result.times
+```
+
+### Running Multiple Analysis Types
+
+```python
+# Transient
+tran_result = engine.run_transient(t_stop=1e-6, dt=1e-9)
+
+# AC analysis
+ac_result = engine.run_ac(fstart=1e3, fstop=1e9, num_points=100)
+
+# Noise analysis
+noise_result = engine.run_noise(
+    fstart=1e3, fstop=1e9,
+    input_source="vin", output_node="vout"
+)
+
+# PVT corners
+from jax_spice.analysis import create_pvt_corners
+corners = create_pvt_corners(
+    process=['tt', 'ff', 'ss'],
+    voltage=[0.9, 1.0, 1.1],
+    temperature=[233, 300, 398],
+)
+corner_results = engine.run_corners(corners)
 ```
 
 ## Debugging Entry Points
 
 When investigating issues, start here:
 
-1. **Device evaluation**: Set breakpoint in device's `evaluate()` method
-2. **Jacobian assembly**: Check `MNASystem.build_jacobian_and_residual()`
-3. **Convergence**: Look at `dc_operating_point()` iteration loop
-4. **OpenVAF models**: Verify `openvaf_jax.translate()` output
+1. **Parsing issues**: Check `CircuitEngine.parse()` in `engine.py`
+2. **Device compilation**: Check OpenVAF model loading in `_compile_openvaf_models()`
+3. **System building**: Check `_make_gpu_resident_build_system_fn()` for J/f construction
+4. **Convergence issues**: Look at Newton-Raphson loop in `solver.py`
+5. **Sparse solver**: Check `sparse.py` for BCOO/BCSR operations
+6. **Source waveforms**: Check `vsource.py` for pulse/sine/PWL evaluation
