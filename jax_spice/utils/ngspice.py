@@ -23,7 +23,56 @@ __all__ = [
     'parse_control_section',
     'run_ngspice',
     'NgspiceError',
+    'validate_path_safe',
 ]
+
+
+def validate_path_safe(path: Path, allowed_parent: Optional[Path] = None) -> bool:
+    """Validate that a path is safe (no directory traversal attacks).
+
+    Checks that:
+    1. Path resolves to an absolute path without '..' components
+    2. If allowed_parent is specified, path must be within that directory
+
+    Args:
+        path: Path to validate
+        allowed_parent: Optional parent directory that path must be within
+
+    Returns:
+        True if path is safe, False otherwise
+
+    Example:
+        >>> validate_path_safe(Path("circuit.sim"))
+        True
+        >>> validate_path_safe(Path("../../../etc/passwd"))
+        False
+        >>> validate_path_safe(Path("sub/circuit.sim"), Path("/project"))
+        True  # if sub/circuit.sim is within /project
+    """
+    try:
+        resolved = path.resolve()
+
+        # Check for suspicious path components in original path string
+        path_str = str(path)
+        if '..' in path_str:
+            logger.warning(f"Path contains '..': {path}")
+            return False
+
+        if allowed_parent is not None:
+            parent_resolved = allowed_parent.resolve()
+            try:
+                resolved.relative_to(parent_resolved)
+            except ValueError:
+                logger.warning(
+                    f"Path {resolved} is not within allowed parent {parent_resolved}"
+                )
+                return False
+
+        return True
+
+    except (OSError, ValueError) as e:
+        logger.warning(f"Path validation failed for {path}: {e}")
+        return False
 
 
 class NgspiceError(Exception):
@@ -258,6 +307,10 @@ def run_ngspice(
         - raw_file_path: Path to generated raw file, or None on failure
         - error: Error message, or None on success
     """
+    # Validate netlist path (no directory traversal)
+    if not validate_path_safe(netlist_path):
+        return None, f"Invalid netlist path: {netlist_path}"
+
     if ngspice_bin is None:
         ngspice_bin = find_ngspice_binary()
         if ngspice_bin is None:
@@ -375,12 +428,15 @@ def _copy_includes(
 ) -> None:
     """Copy .include files to output directory.
 
+    Only copies files that are within the source directory tree
+    to prevent path traversal attacks.
+
     Args:
         netlist_path: Original netlist path
         output_dir: Destination directory
         content: Netlist content
     """
-    source_dir = netlist_path.parent
+    source_dir = netlist_path.parent.resolve()
 
     # Find .include directives
     for match in re.finditer(r'\.include\s+["\']?([^"\'\s]+)["\']?', content, re.IGNORECASE):
@@ -391,6 +447,17 @@ def _copy_includes(
             src_file = source_dir / include_path
         else:
             src_file = Path(include_path)
+
+        # Validate path is safe (within source directory or absolute path exists)
+        if not validate_path_safe(src_file, allowed_parent=source_dir):
+            # For absolute paths, just check they don't have traversal
+            if Path(include_path).is_absolute():
+                if not validate_path_safe(src_file):
+                    logger.warning(f"Skipping unsafe include path: {include_path}")
+                    continue
+            else:
+                logger.warning(f"Skipping include path outside source dir: {include_path}")
+                continue
 
         if src_file.exists():
             dst_file = output_dir / src_file.name
