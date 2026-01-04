@@ -34,11 +34,16 @@ from jax_spice.utils.waveform_compare import compare_waveforms, WaveformComparis
 from jax_spice.netlist_converter import Converter
 from tests.ngspice_test_registry import (
     NgspiceTestCase,
-    CURATED_TESTS,
     get_compatible_tests,
+    discover_ngspice_tests,
+    SUPPORTED_DEVICES,
     PROJECT_ROOT,
     NGSPICE_TESTS,
 )
+
+# Get ALL discovered tests at module load time for parametrization
+# No device filtering - we want to see how we do against the full suite
+ALL_TESTS = {t.name: t for t in discover_ngspice_tests()}
 
 
 def parse_si_value(s: str) -> float:
@@ -258,7 +263,11 @@ def compare_results(
 
 
 class TestNgspiceRegression:
-    """ngspice regression tests against JAX-SPICE."""
+    """ngspice regression tests against JAX-SPICE.
+
+    Auto-discovers all compatible tests from vendor/ngspice/tests/.
+    Tests are filtered to only include those using supported devices.
+    """
 
     @pytest.fixture
     def ngspice_bin(self):
@@ -272,25 +281,19 @@ class TestNgspiceRegression:
 
     @pytest.mark.parametrize(
         "test_name",
-        list(CURATED_TESTS.keys()),
-        ids=list(CURATED_TESTS.keys()),
+        list(ALL_TESTS.keys()),
+        ids=list(ALL_TESTS.keys()),
     )
-    def test_curated(self, ngspice_bin, test_name):
-        """Run curated ngspice test cases known to work with JAX-SPICE."""
-        test_case = CURATED_TESTS[test_name]
-
-        if test_case.skip:
-            pytest.skip(test_case.skip_reason)
-
-        if test_case.xfail:
-            pytest.xfail(test_case.xfail_reason)
+    def test_ngspice(self, ngspice_bin, test_name):
+        """Run auto-discovered ngspice test against JAX-SPICE."""
+        test_case = ALL_TESTS[test_name]
 
         if not test_case.netlist_path.exists():
             pytest.skip(f"Netlist not found: {test_case.netlist_path}")
 
-        # Only run transient tests for now
+        # Skip non-transient tests for now
         if test_case.analysis_type != 'tran':
-            pytest.skip(f"Analysis type {test_case.analysis_type} not supported yet")
+            pytest.skip(f"Analysis type {test_case.analysis_type} not yet supported")
 
         # Parse control section
         control_params = parse_control_section(test_case.netlist_path)

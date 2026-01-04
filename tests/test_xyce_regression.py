@@ -1,11 +1,7 @@
 """Xyce regression test runner.
 
-Runs selected tests from the Xyce_Regression suite against JAX-SPICE.
-Tests must be compatible with our supported devices and analysis types.
-
-Supported:
-- Devices: R, C, D, V, I (via OpenVAF VA models)
-- Analysis: .TRAN (transient)
+Runs tests from the Xyce_Regression suite against JAX-SPICE.
+Auto-discovers all tests and runs them without filtering.
 
 The test workflow:
 1. Convert SPICE .cir to VACASK .sim format
@@ -23,12 +19,15 @@ import pytest
 
 from jax_spice.io.prn_reader import read_prn, get_column
 from jax_spice.analysis.engine import CircuitEngine
+from tests.xyce_test_registry import (
+    XyceTestCase,
+    discover_xyce_tests,
+    XYCE_NETLISTS,
+    XYCE_OUTPUT,
+)
 
-
-# Base paths
-XYCE_REGRESSION = Path(__file__).parent.parent / "vendor" / "Xyce_Regression"
-NETLISTS = XYCE_REGRESSION / "Netlists"
-OUTPUT_DATA = XYCE_REGRESSION / "OutputData"
+# Get ALL discovered tests at module load time for parametrization
+ALL_TESTS = {t.name: t for t in discover_xyce_tests()}
 
 
 def convert_spice_to_vacask(cir_path: Path, sim_path: Path) -> None:
@@ -128,8 +127,8 @@ def run_xyce_test(
     Returns:
         Dict of computed values from JAX-SPICE
     """
-    cir_path = NETLISTS / test_name / cir_file
-    prn_path = OUTPUT_DATA / test_name / f"{cir_file}.prn"
+    cir_path = XYCE_NETLISTS / test_name / cir_file
+    prn_path = XYCE_OUTPUT / test_name / f"{cir_file}.prn"
 
     if not cir_path.exists():
         pytest.skip(f"Netlist not found: {cir_path}")
@@ -221,34 +220,34 @@ def run_xyce_test(
 class TestXyceRegression:
     """Tests from Xyce_Regression suite.
 
-    Converter and engine support:
-    - PULSE/PWL source parameters: WORKING
-    - Inline resistor/capacitor values: WORKING
-    - SI unit suffixes (ms, ns, fa, etc.): WORKING
-
-    Known model differences:
-    - Diode forward voltage differs from Xyce (~0.89V vs ~0.62V)
-      due to different default model parameters (n, rs, etc.)
+    Auto-discovers all tests from vendor/Xyce_Regression/Netlists/.
+    Tests are run without device filtering to see full suite coverage.
     """
 
-    @pytest.mark.xfail(
-        reason="Diode model parameters differ from Xyce (Vf=0.89V vs 0.62V)"
+    @pytest.mark.parametrize(
+        "test_name",
+        list(ALL_TESTS.keys()),
+        ids=list(ALL_TESTS.keys()),
     )
-    def test_diode_transient(self):
-        """DIODE/diode.cir - Forward biased diode with pulse source.
+    def test_xyce(self, test_name):
+        """Run auto-discovered Xyce test against JAX-SPICE."""
+        test_case = ALL_TESTS[test_name]
 
-        Expected behavior:
-        - VIN = PULSE(5V, -1V, 0.05ms delay, 100ns rise/fall, 0.1ms width, 0.2ms period)
-        - Diode forward voltage Vd ≈ 0.616V (Xyce)
-        - Our simulation gives Vd ≈ 0.89V due to different model defaults
+        if not test_case.netlist_path.exists():
+            pytest.skip(f"Netlist not found: {test_case.netlist_path}")
 
-        Passing criteria:
-        - Reverse bias behavior matches (-1V)
-        - Qualitative forward bias behavior correct (diode conducts)
-        """
+        # Skip non-transient tests for now
+        if test_case.analysis_type != 'tran':
+            pytest.skip(f"Analysis type {test_case.analysis_type} not yet supported")
+
+        # Skip tests without expected output
+        if test_case.output_path is None:
+            pytest.skip(f"No expected output file for {test_name}")
+
         run_xyce_test(
-            "DIODE",
-            "diode.cir",
-            check_columns=["V(3)"],
-            rtol=0.50,  # 50% tolerance due to model differences
+            test_case.category,
+            test_case.netlist_path.name,
+            check_columns=test_case.expected_nodes if test_case.expected_nodes else None,
+            rtol=test_case.rtol,
+            atol=test_case.atol,
         )
