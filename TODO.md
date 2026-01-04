@@ -41,6 +41,22 @@ JAX-SPICE's `TransientResult` only contains `voltages` dict, not branch currents
 
 **Fix needed**: Compute and return branch currents through voltage sources.
 
+### Analysis Type Support
+
+**Current**: Only transient (`.tran`) analysis is implemented.
+
+**Missing analysis types** (test counts):
+| Type | ngspice | Xyce | Notes |
+|------|---------|------|-------|
+| `.dc` | 25 | 792 | DC sweep - vary source, measure response |
+| `.ac` | 5 | 80 | AC small-signal frequency analysis |
+| `.op` | 9 | 70 | DC operating point (we have this internally) |
+
+**Priority**:
+1. **DC sweep** - High value, 817 tests blocked. Relatively simple: loop over source values, solve DC each time.
+2. **AC analysis** - Linearize around DC OP, solve `(G + jωC)V = I` for each frequency.
+3. **OP** - Already implemented internally, just need to expose in test framework.
+
 ### External Simulator Regression Suites
 
 **Goal**: Compare JAX-SPICE against ngspice and Xyce reference implementations to validate correctness.
