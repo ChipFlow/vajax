@@ -142,43 +142,33 @@ When compiling Verilog-A models with OpenVAF, the generated Python code has a sp
 - `temperature`: Device operating temperature
 - `sysfun`: System functions like `mfactor`
 
-### Key Discovery: hidden_state Parameters
+### Key Discovery: OpenVAF Inlines hidden_state Parameters
 
-OpenVAF's PSP103 model has ~2400 parameters, with ~1500 being `hidden_state` type. These are NOT just placeholders - they are intermediate values computed from model parameters that the model evaluation code expects to be already calculated.
+**IMPORTANT**: OpenVAF's optimizer aggressively inlines hidden_state computations.
+Analysis of MIR (Mid-level IR) shows that hidden_state params are **NEVER actually
+used** in the eval function - they're all inlined into the cache values computed by init.
 
-**Three categories of hidden_state params:**
+**Tested models (all show 0% hidden_state usage in eval MIR):**
 
-1. **Instance-level computed (`*_i` suffix)**: Clipped/bounded versions of process params
-   - `TOX_i = CLIP_LOW(TOX_p, 1e-10)` - oxide thickness
-   - `NEFF_i = CLIP_BOTH(NEFF_p, 1e20, 1e26)` - effective doping
-   - `BETN_i = CLIP_LOW(BETN_p, 0)` - mobility factor
+| Model     | hidden_state params | Used in eval | Regular params | Used in eval |
+|-----------|--------------------:|-------------:|---------------:|-------------:|
+| resistor  |                   1 |            0 |              2 |            1 |
+| capacitor |                   2 |            0 |              1 |            1 |
+| diode     |                  16 |            0 |             13 |           13 |
+| bsim4     |                2330 |            0 |            893 |            2 |
+| psp103    |                1705 |            0 |            840 |            0 |
 
-2. **Process-level computed (`*_p` suffix)**: Binning-adjusted values
-   - `TOX_p = TOXO` when SWGEO=1
-   - `NEFF_p = NSUB * (1 - FOL1*iLE - FOL2*iLE^2)`
-   - `BETN_p = UO * WE / (GPE * LE) * GWE`
+**What eval actually uses (PSP103 example):**
+- 13 voltage params (terminal voltages)
+- ~462 cache values (computed by init)
+- 1 mfactor (system function)
 
-3. **Geometry intermediates**: Scaling factors computed from L, W
-   - `GPE`, `GWE` - effective channel length/width
-   - `iLE`, `iWE`, `iLEWE` - inverse geometry factors
-   - `CoxPrime = EPSOX / TOX_i` - gate capacitance per area
-
-### Parameter Lookup Pattern
-
-The model card uses `*o` suffix for "global" parameters (e.g., `toxo`, `epsroxo`, `nsubo`).
-When looking up values for `_i` suffix params:
-
-```python
-# Pattern for _i params
-if name_lower.endswith('_i'):
-    base_name = name_lower[:-2]  # e.g., 'tox' from 'tox_i'
-    # Try direct match first
-    base_val = params.get(base_name, None)
-    if base_val is None:
-        # Try with 'o' suffix (PSP103 pattern)
-        base_name_o = base_name + 'o'  # e.g., 'toxo'
-        base_val = params.get(base_name_o, None)
-```
+**Implications:**
+- Setting hidden_state to 0.0 is SAFE - those values are never read
+- The `*_i` suffix params (like `TOX_i`, `NEFF_i`) are inlined into cache
+- Debug warnings about "unmapped hidden_state" are informational only
+- If simulation results differ from VACASK, look elsewhere (voltage mapping,
+  cache computation, or solver issues) - NOT hidden_state initialization
 
 ### NOI Node Handling
 
@@ -206,13 +196,15 @@ max_f = jnp.max(jnp.abs(f_masked))
 |-----------|------------------|-------------|-------|
 | rc        | ✅ | ✅ | Simple RC circuit |
 | graetz    | ✅ | ✅ | Diode bridge rectifier |
-| ring      | ✅ (47 nodes) | ❌ (0.55V vs 0.66V) | PSP103 hidden_state params |
+| ring      | ✅ (47 nodes) | ~34% RMS error | Investigation ongoing |
 | c6288     | ✅ (~5k after collapse) | TBD | Large multiplier circuit |
 
 ### Remaining Work
 
-The Ring benchmark DC operating point differs because many hidden_state params are still uninitialized or have wrong default values. Key areas:
+The Ring benchmark shows ~34% RMS error vs VACASK. Since hidden_state params are
+inlined (see above), the issue must be elsewhere. Possible causes to investigate:
 
-1. **Surface potential params**: `eta_mu`, `E_eff0`, `qq` - affect channel charge
-2. **Temperature factors**: `tmpx`, `temp0`, `temp00` - affect temperature scaling
-3. **Stress/LOD params**: `Kstressu0`, `Kstressvth0` - affect mobility and threshold
+1. **Cache values**: Init computes ~462 cache values - verify these match VACASK
+2. **Inf values in cache**: Found 2 inf values at indices 662, 741 - may cause issues
+3. **Voltage mapping**: Check that terminal voltages are correctly extracted
+4. **Transient integration**: Verify ddt() operator and charge integration

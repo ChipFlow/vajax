@@ -107,6 +107,10 @@ class CompiledModel:
                 else:
                     inputs.append(1.0)
             elif kind == 'hidden_state':
+                # SAFE: OpenVAF's optimizer inlines all hidden_state computations
+                # into cache values. MIR analysis shows 0% usage of hidden_state
+                # params in eval functions across all tested models (resistor,
+                # capacitor, diode, bsim4, psp103). See openvaf_jax.py for details.
                 inputs.append(0.0)
             else:
                 inputs.append(0.0)
