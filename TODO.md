@@ -41,24 +41,30 @@ JAX-SPICE's `TransientResult` only contains `voltages` dict, not branch currents
 
 **Fix needed**: Compute and return branch currents through voltage sources.
 
-### Analysis Type Support in Test Runners
+### Analysis Type Support
 
-**Engine capabilities** (in `CircuitEngine`):
+**Implemented in `CircuitEngine`**:
 - `run_transient()` - transient analysis ✅
-- `run_ac()` - AC small-signal analysis ✅
-- `run_dcinc()` - DC incremental ✅
+- `run_ac()` - AC small-signal frequency sweep ✅
+- `run_dcinc()` - DC incremental (small-signal) ✅
 - `run_dcxf()` / `run_acxf()` - transfer functions ✅
 - `run_noise()` - noise analysis ✅
 - `run_corners()` - corner/monte-carlo ✅
+- DC operating point - internal, used by other analyses ✅
 
-**Test runner gaps** (tests skip because runners only call `run_transient`):
-| Type | ngspice | Xyce | Fix needed |
-|------|---------|------|------------|
-| `.dc` | 25 | 792 | Parse `.dc` params, call appropriate engine method |
-| `.ac` | 5 | 80 | Parse `.ac` params, call `run_ac()` |
-| `.op` | 9 | 70 | Call DC solve, compare operating point |
+**Missing API**:
+- `run_dc_sweep()` - Sweep a source value, re-solve DC at each step
+  - ngspice: `.dc Vsource START STOP STEP`
+  - Different from `run_dcinc()` which is small-signal around one OP
+  - 817 tests blocked (25 ngspice + 792 Xyce)
 
-**Task**: Update `test_ngspice_regression.py` and `test_xyce_regression.py` to dispatch to correct analysis based on `test_case.analysis_type`.
+**Test runner integration needed**:
+| Type | Tests | Status |
+|------|-------|--------|
+| `.tran` | 1018 | ✅ Integrated |
+| `.ac` | 85 | API exists, runner needs to call `run_ac()` |
+| `.op` | 79 | API exists internally, expose to runner |
+| `.dc` | 817 | **Missing `run_dc_sweep()` API** |
 
 ### External Simulator Regression Suites
 
