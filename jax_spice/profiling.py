@@ -41,7 +41,7 @@ from typing import Any, Callable, Optional, TypeVar, Union
 
 import jax
 
-from jax_spice.logging import logger
+from jax_spice._logging import logger
 
 F = TypeVar('F', bound=Callable[..., Any])
 

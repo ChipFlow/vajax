@@ -11,7 +11,7 @@ from typing import TYPE_CHECKING, Any, Callable, Dict, List, Tuple, Optional
 import jax
 import jax.numpy as jnp
 
-from jax_spice.logging import logger
+from jax_spice._logging import logger
 
 if TYPE_CHECKING:
     from jax_spice.analysis.engine import CircuitEngine

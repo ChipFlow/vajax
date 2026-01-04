@@ -41,7 +41,7 @@ from jax_spice.analysis.solver_factories import (
 )
 # Note: solver.py contains standalone NR solvers (newton_solve) used by tests
 # The engine uses its own nr_solve with analytic jacobians from OpenVAF
-from jax_spice.logging import logger
+from jax_spice._logging import logger
 from jax_spice.profiling import profile, profile_section, ProfileConfig
 
 # Try to import OpenVAF support
@@ -984,9 +984,10 @@ class CircuitEngine:
             for model_node, global_idx in internal_nodes.items():
                 node_map[model_node] = global_idx
 
-            # Also map sim_node names
-            for i, model_node in enumerate(model_nodes[:-1]):
-                node_map[f'sim_{model_node}'] = node_map.get(model_node, ground)
+            # Also map sim_node{i} names (DAE residuals use sequential indices)
+            # This includes branch currents which have names like 'br[Branch(BranchId(0))]'
+            for i, model_node in enumerate(model_nodes):
+                node_map[f'sim_node{i}'] = node_map.get(model_node, ground)
 
             # Pre-compute voltage node pairs for fast update
             voltage_node_pairs = []
@@ -1502,9 +1503,21 @@ class CircuitEngine:
                                  ground: int) -> Tuple[jax.Array, List[Dict]]:
         """Prepare batched inputs for all devices of a given OpenVAF model type.
 
-        This is the original method kept for backwards compatibility.
-        For better performance, use _prepare_static_inputs + _update_voltage_inputs.
+        DEPRECATED: This legacy method is no longer used. The split_eval path in
+        _prepare_split_eval_inputs handles device setup with proper hidden_state
+        handling via the init function cache.
+
+        This method has a bug: hidden_state params are set to 0.0 instead of
+        being computed by the init function, causing transistor models to
+        produce zero current.
         """
+        import warnings
+        warnings.warn(
+            "_prepare_batched_inputs is deprecated and has bugs (hidden_state=0.0). "
+            "Use _prepare_split_eval_inputs instead.",
+            DeprecationWarning,
+            stacklevel=2
+        )
         compiled = self._compiled_models.get(model_type)
         if not compiled:
             raise ValueError(f"OpenVAF model {model_type} not compiled")
@@ -1536,9 +1549,10 @@ class CircuitEngine:
             for model_node, global_idx in internal_nodes.items():
                 node_map[model_node] = global_idx
 
-            # Also map sim_node names
-            for i, model_node in enumerate(model_nodes[:-1]):
-                node_map[f'sim_{model_node}'] = node_map.get(model_node, ground)
+            # Also map sim_node{i} names (DAE residuals use sequential indices)
+            # This includes branch currents which have names like 'br[Branch(BranchId(0))]'
+            for i, model_node in enumerate(model_nodes):
+                node_map[f'sim_node{i}'] = node_map.get(model_node, ground)
 
             # Build input array for this device
             inputs = []
@@ -2379,16 +2393,11 @@ class CircuitEngine:
                     except Exception as e:
                         logger.info(f"Spineax not available ({type(e).__name__}: {e}) - using JAX spsolve")
                 elif backend_name == 'iree_metal':
-                    # Try baspacho solver for Metal backend
-                    try:
-                        from spineax import baspacho_solve
-                        if baspacho_solve.is_metal_available():
-                            use_spineax = True
-                            logger.info("Spineax/BaSpaCho available - will use Metal sparse solver")
-                        else:
-                            logger.info("BaSpaCho Metal backend not available - using JAX spsolve")
-                    except Exception as e:
-                        logger.info(f"Spineax/BaSpaCho not available ({type(e).__name__}: {e}) - using JAX spsolve")
+                    # IREE Metal cannot use Spineax's FFI custom_calls - they don't compile.
+                    # Use JAX's built-in spsolve which compiles through IREE's standard path.
+                    # Note: IREE has baspacho-based sparse solver support in its VM modules,
+                    # but JAX's spsolve may use a different lowering path.
+                    logger.info("IREE Metal backend - using JAX spsolve (Spineax FFI not supported)")
 
                 if use_spineax:
                     # Pre-compute BCSR pattern and COO→CSR mapping for Spineax

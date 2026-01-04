@@ -645,6 +645,7 @@ class OpenVAFToJAX:
         # We output values in the order they appear in cache_mapping
         lines.append("    # Build cache array from computed values")
         cache_vals = []
+        unmapped_cache_vals = []
         for mapping in self.cache_mapping:
             init_val = mapping['init_value']  # e.g., 'v123'
             if init_val in init_defined:
@@ -652,18 +653,47 @@ class OpenVAFToJAX:
             else:
                 # Value not computed - use _ZERO as fallback
                 cache_vals.append('_ZERO')
+                unmapped_cache_vals.append((init_val, mapping.get('eval_param', '?')))
+
+        if unmapped_cache_vals:
+            logger.warning(
+                f"translate_init_array: {len(unmapped_cache_vals)} cache values not computed by init! "
+                f"These will be 0.0. First 5: {unmapped_cache_vals[:5]}"
+            )
 
         # Also include hidden_state values that init computes
         # These are values where init computes vN that eval expects as hidden_state
         lines.append("    # Add hidden_state values (computed by init, expected by eval)")
         hidden_state_vals = []
+        unmapped_hidden_state = []
         param_kinds = list(self.module.param_kinds)
+        param_names = list(self.module.param_names)
         for idx, kind in enumerate(param_kinds):
             if kind == 'hidden_state' and idx < len(self.params):
                 eval_var = self.params[idx]  # e.g., 'v177' for TOXO_i
                 # Init computes same var ID directly (no prefix)
                 if eval_var in init_defined:
                     hidden_state_vals.append((eval_var, idx))
+                else:
+                    # Track unmapped hidden_state - will get 0.0 from shared_params!
+                    pname = param_names[idx] if idx < len(param_names) else f'param_{idx}'
+                    unmapped_hidden_state.append((idx, pname, eval_var))
+
+        # Warn about unmapped hidden_state params - these are a common source of bugs
+        if unmapped_hidden_state:
+            # Log critical _i params that are unmapped
+            critical_unmapped = [(idx, name) for idx, name, _ in unmapped_hidden_state
+                                 if name.endswith('_i')]
+            if critical_unmapped:
+                logger.warning(
+                    f"CRITICAL: {len(critical_unmapped)} instance-computed params (_i suffix) "
+                    f"not computed by init! These will be 0.0. "
+                    f"Examples: {[name for _, name in critical_unmapped[:5]]}"
+                )
+            logger.debug(
+                f"hidden_state params: {len(hidden_state_vals)} mapped, "
+                f"{len(unmapped_hidden_state)} unmapped (will be 0.0)"
+            )
 
         # Store hidden_state mapping for eval to use
         self._hidden_state_cache_mapping = hidden_state_vals
@@ -826,24 +856,52 @@ class OpenVAFToJAX:
         # Build cache output array
         lines.append("    # Build cache array from computed values")
         cache_vals = []
+        unmapped_cache_vals = []
         for mapping in self.cache_mapping:
             init_val = mapping['init_value']
             if init_val in init_defined:
                 cache_vals.append(init_val)
             else:
                 cache_vals.append('_ZERO')
+                unmapped_cache_vals.append((init_val, mapping.get('eval_param', '?')))
+
+        if unmapped_cache_vals:
+            logger.warning(
+                f"translate_init_array_split: {len(unmapped_cache_vals)} cache values not computed! "
+                f"These will be 0.0. First 5: {unmapped_cache_vals[:5]}"
+            )
 
         # Also include hidden_state values that init computes
         # These are values where init computes vN that eval expects as hidden_state
         lines.append("    # Add hidden_state values (computed by init, expected by eval)")
         hidden_state_vals = []
+        unmapped_hidden_state = []
         param_kinds = list(self.module.param_kinds)
+        param_names = list(self.module.param_names)
         for idx, kind in enumerate(param_kinds):
             if kind == 'hidden_state' and idx < len(self.params):
                 eval_var = self.params[idx]  # e.g., 'v177' for TOXO_i
                 # Init computes same var ID directly (no prefix)
                 if eval_var in init_defined:
                     hidden_state_vals.append((eval_var, idx))
+                else:
+                    pname = param_names[idx] if idx < len(param_names) else f'param_{idx}'
+                    unmapped_hidden_state.append((idx, pname, eval_var))
+
+        # Warn about unmapped hidden_state params
+        if unmapped_hidden_state:
+            critical_unmapped = [(idx, name) for idx, name, _ in unmapped_hidden_state
+                                 if name.endswith('_i')]
+            if critical_unmapped:
+                logger.warning(
+                    f"CRITICAL: {len(critical_unmapped)} instance-computed params (_i suffix) "
+                    f"not computed by init! These will be 0.0. "
+                    f"Examples: {[name for _, name in critical_unmapped[:5]]}"
+                )
+            logger.debug(
+                f"hidden_state params: {len(hidden_state_vals)} mapped, "
+                f"{len(unmapped_hidden_state)} unmapped (will be 0.0)"
+            )
 
         # Store hidden_state mapping for eval to use
         self._hidden_state_cache_mapping = hidden_state_vals
@@ -970,10 +1028,18 @@ class OpenVAFToJAX:
         lines.append("")
 
         # Map function parameters from split inputs
+        # IMPORTANT: Skip hidden_state params here - they're computed by inline init
         lines.append("    # Input parameters (from split shared/device params)")
+        param_kinds = list(self.module.param_kinds)
         num_named_params = len(self.module.param_names)
+        hidden_state_indices = set()  # Track which indices are hidden_state
         for i, param in enumerate(self.params[:num_named_params]):
-            if i in idx_mapping:
+            kind = param_kinds[i] if i < len(param_kinds) else None
+            if kind == 'hidden_state':
+                # Skip - will be assigned from init computation later
+                hidden_state_indices.add(i)
+                lines.append(f"    # {param} = hidden_state (assigned from init below)")
+            elif i in idx_mapping:
                 source, new_idx = idx_mapping[i]
                 if source == 'shared':
                     lines.append(f"    {param} = shared_params[{new_idx}]")
@@ -1738,11 +1804,9 @@ class OpenVAFToJAX:
         Hidden_state params are computed by the init function (via CLIP_LOW macros
         that expand to max(value, min_val) patterns) and need to flow to eval.
 
-        We use VALUE NUMBER matching: if eval uses vN for a hidden_state param,
-        and init has computed init_vN, we add the assignment vN = init_vN.
-
-        This works because OpenVAF often uses the same value numbers in init
-        and eval for the same semantic parameter.
+        Uses multiple matching strategies:
+        1. Direct value number match: init_vN for eval vN
+        2. Name-based match: MULT_i in eval corresponds to MULT computed in init
 
         Args:
             init_defined: Set of init variables that have been defined
@@ -1751,24 +1815,68 @@ class OpenVAFToJAX:
             List of (eval_var, init_var) tuples for assignments
         """
         assignments = []
+        assigned_eval_vars = set()
 
-        # Get hidden_state params from eval (indices and value names)
+        # Get metadata
         eval_param_kinds = list(self.module.param_kinds)
+        eval_param_names = list(self.module.param_names)
+        init_param_names = list(self.module.init_param_names)
+        init_param_kinds = list(self.module.init_param_kinds)
 
+        # Strategy 1: Direct value number matching
         for idx, kind in enumerate(eval_param_kinds):
             if kind == 'hidden_state' and idx < len(self.params):
-                eval_var = self.params[idx]  # e.g., 'v177' for TOXO_i
+                eval_var = self.params[idx]
 
                 # Try direct value number match: init_v177 for eval v177
                 init_var = f"init_{eval_var}"
 
                 if init_var in init_defined:
                     assignments.append((eval_var, init_var))
+                    assigned_eval_vars.add(idx)
+
+        value_number_count = len(assignments)
+
+        # Strategy 2: Name-based matching for unassigned hidden_state params
+        # Match by stripping _i, _p, _e, _m, _t, _n suffixes
+        # Build a map from init param names to their variable names
+        init_name_to_var = {}
+        for i, init_name in enumerate(init_param_names):
+            if i < len(self.init_params):
+                init_var = self.init_params[i]
+                init_name_lower = init_name.lower()
+                # Prefer params with kind='param' over 'param_given'
+                if init_name_lower not in init_name_to_var:
+                    init_name_to_var[init_name_lower] = f"init_{init_var}"
+                elif i < len(init_param_kinds) and init_param_kinds[i] == 'param':
+                    # Replace param_given with param
+                    init_name_to_var[init_name_lower] = f"init_{init_var}"
+
+        for idx, kind in enumerate(eval_param_kinds):
+            if kind == 'hidden_state' and idx < len(self.params) and idx not in assigned_eval_vars:
+                eval_var = self.params[idx]
+                eval_name = eval_param_names[idx] if idx < len(eval_param_names) else None
+
+                if eval_name:
+                    # Strip common suffixes to get base name
+                    base_name = eval_name.lower()
+                    for suffix in ['_i', '_p', '_e', '_m', '_t', '_n']:
+                        if base_name.endswith(suffix):
+                            base_name = base_name[:-len(suffix)]
+                            break
+
+                    # Look for matching init param
+                    init_var = init_name_to_var.get(base_name)
+                    if init_var and init_var in init_defined:
+                        assignments.append((eval_var, init_var))
+                        assigned_eval_vars.add(idx)
+
+        name_match_count = len(assignments) - value_number_count
 
         # Log statistics
-        if assignments:
-            logger.debug(f"Built {len(assignments)} hidden_state assignments "
-                        f"(direct value number matching)")
+        total_hidden_state = sum(1 for k in eval_param_kinds if k == 'hidden_state')
+        logger.info(f"    Hidden state assignments: {len(assignments)}/{total_hidden_state} "
+                    f"(value_number={value_number_count}, name_match={name_match_count})")
 
         return assignments
 

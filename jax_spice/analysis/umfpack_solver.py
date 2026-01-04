@@ -20,7 +20,7 @@ import jax.numpy as jnp
 from jax import Array
 from scipy.sparse import csc_matrix
 
-from jax_spice.logging import logger
+from jax_spice._logging import logger
 
 # Check if scikit-umfpack is available
 _UMFPACK_AVAILABLE = False

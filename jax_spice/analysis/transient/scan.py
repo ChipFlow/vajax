@@ -33,7 +33,7 @@ import jax
 import jax.numpy as jnp
 
 from .base import TransientStrategy
-from jax_spice.logging import logger
+from jax_spice._logging import logger
 
 
 class ScanStrategy(TransientStrategy):

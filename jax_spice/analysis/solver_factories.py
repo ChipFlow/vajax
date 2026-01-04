@@ -19,7 +19,7 @@ import jax.numpy as jnp
 from jax import lax, Array
 import numpy as np
 
-from jax_spice.logging import logger
+from jax_spice._logging import logger
 
 # Newton-Raphson solver constants
 MAX_NR_ITERATIONS = 100

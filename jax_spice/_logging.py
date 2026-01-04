@@ -5,7 +5,7 @@ Provides two logging modes:
 - Performance tracing: INFO level with flush and memory stats (for Cloud Run visibility)
 
 Usage:
-    from jax_spice.logging import logger, enable_performance_logging
+    from jax_spice._logging import logger, enable_performance_logging
 
     # Default - only warnings
     logger.warning("This will show")

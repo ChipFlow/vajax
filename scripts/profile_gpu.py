@@ -46,7 +46,7 @@ import numpy as np
 # Import jax_spice first to auto-configure precision based on backend
 # (Metal/TPU use f32, CPU/CUDA use f64)
 from jax_spice.analysis import CircuitEngine
-from jax_spice.logging import enable_performance_logging, logger
+from jax_spice._logging import enable_performance_logging, logger
 from scripts.benchmark_utils import BenchmarkResult, get_vacask_benchmarks
 
 # Enable verbose logging with flush and memory stats for profiling visibility
