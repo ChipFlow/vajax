@@ -46,7 +46,7 @@ class TestResistorAnalytical:
         jax_residuals, _ = resistor.jax_fn(jax_inputs)
 
         expected_current = voltage / resistance
-        actual_current = float(jax_residuals['sim_node0']['resist'])
+        actual_current = float(jax_residuals['A']['resist'])
 
         assert_allclose(actual_current, expected_current, rtol=1e-6,
                        err_msg=f"V={voltage}, R={resistance}")
@@ -62,7 +62,7 @@ class TestResistorAnalytical:
         _, jax_jacobian = resistor.jax_fn(jax_inputs)
 
         expected_conductance = 1.0 / resistance
-        actual_conductance = float(jax_jacobian[('sim_node0', 'sim_node0')]['resist'])
+        actual_conductance = float(jax_jacobian[('A', 'A')]['resist'])
 
         assert_allclose(actual_conductance, expected_conductance, rtol=1e-6,
                        err_msg=f"R={resistance}")
@@ -85,7 +85,7 @@ class TestResistorAnalytical:
         jax_inputs = [voltage, voltage, R_nominal, temperature, tnom, zeta, R_eff, 1.0]
 
         jax_residuals, _ = resistor.jax_fn(jax_inputs)
-        actual_current = float(jax_residuals['sim_node0']['resist'])
+        actual_current = float(jax_residuals['A']['resist'])
 
         assert_allclose(actual_current, expected_current, rtol=1e-6,
                        err_msg=f"T={temperature}, zeta={zeta}")

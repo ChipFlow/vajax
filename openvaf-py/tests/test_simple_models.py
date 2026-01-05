@@ -29,7 +29,7 @@ class TestResistor:
         residuals, jacobian = resistor_model.jax_fn(inputs)
 
         expected_current = voltage / resistance
-        actual_current = float(residuals['sim_node0']['resist'])
+        actual_current = float(residuals['A']['resist'])
 
         assert_allclose(
             actual_current, expected_current,
@@ -53,7 +53,7 @@ class TestResistor:
         residuals, jacobian = resistor_model.jax_fn(inputs)
 
         expected_conductance = 1.0 / resistance
-        actual_conductance = float(jacobian[('sim_node0', 'sim_node0')]['resist'])
+        actual_conductance = float(jacobian[('A', 'A')]['resist'])
 
         assert_allclose(
             actual_conductance, expected_conductance,
@@ -80,7 +80,7 @@ class TestResistor:
         # R(T) = R0 * (T/Tnom)^zeta
         effective_resistance = resistance * (temperature / tnom) ** zeta
         expected_current = voltage / effective_resistance
-        actual_current = float(residuals['sim_node0']['resist'])
+        actual_current = float(residuals['A']['resist'])
 
         assert_allclose(
             actual_current, expected_current,
@@ -102,7 +102,7 @@ class TestResistor:
         residuals, jacobian = resistor_model.jax_fn(inputs)
 
         expected_current = mfactor * voltage / resistance
-        actual_current = float(residuals['sim_node0']['resist'])
+        actual_current = float(residuals['A']['resist'])
 
         assert_allclose(
             actual_current, expected_current,

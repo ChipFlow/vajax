@@ -94,7 +94,7 @@ class TestResistorDetailed:
         interp_residuals, interp_jacobian = resistor.module.run_init_eval(interp_params)
 
         expected_current = voltage / resistance
-        jax_current = float(jax_residuals['sim_node0']['resist'])
+        jax_current = float(jax_residuals['A']['resist'])
         interp_current = interp_residuals[0][0]
 
         # Use 1e-6 tolerance for floating point comparisons
@@ -132,7 +132,7 @@ class TestResistorDetailed:
         jax_residuals, _ = resistor.jax_fn(jax_inputs)
         interp_residuals, _ = resistor.module.run_init_eval(interp_params)
 
-        jax_current = float(jax_residuals['sim_node0']['resist'])
+        jax_current = float(jax_residuals['A']['resist'])
         interp_current = interp_residuals[0][0]
 
         assert_allclose(jax_current, interp_current, rtol=1e-6,
@@ -197,17 +197,18 @@ class TestEkvMosfet:
         jax_residuals, jax_jacobian = ekv.jax_fn(jax_inputs)
         interp_residuals, interp_jacobian = ekv.module.run_init_eval(interp_params)
 
-        # Compare residuals
+        # Compare residuals - iterate over JAX keys which are clean VA names
+        jax_nodes = list(jax_residuals.keys())
         for i, (resist, react) in enumerate(interp_residuals):
-            node_name = f"sim_node{i}"
-            if node_name in jax_residuals:
+            if i < len(jax_nodes):
+                node_name = jax_nodes[i]
                 jax_resist = float(jax_residuals[node_name]['resist'])
 
                 if abs(resist) > 1e-20 or abs(jax_resist) > 1e-20:
                     assert_allclose(
                         jax_resist, resist,
                         rtol=1e-4, atol=1e-12,
-                        err_msg=f"EKV residual[{i}] mismatch"
+                        err_msg=f"EKV residual[{node_name}] ({i}) mismatch"
                     )
 
 

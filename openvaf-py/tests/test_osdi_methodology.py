@@ -254,7 +254,7 @@ class TestSimpleResistorOSDI:
         # Compare
         expected_current = voltage / resistance
         interp_current = interp_residuals[0][0]
-        jax_current = float(jax_residuals['sim_node0']['resist'])
+        jax_current = float(jax_residuals['A']['resist'])
 
         rtol = 1e-6
         assert abs(interp_current - expected_current) / max(abs(expected_current), 1e-15) < rtol, \
@@ -299,7 +299,7 @@ class TestSimpleResistorOSDI:
         expected_conductance = 1.0 / resistance
         interp_jac_dict = {(r, c): resist for r, c, resist, _ in interp_jacobian}
         interp_gd = interp_jac_dict.get((0, 0), 0.0)
-        jax_gd = float(jax_jacobian[('sim_node0', 'sim_node0')]['resist'])
+        jax_gd = float(jax_jacobian[('A', 'A')]['resist'])
 
         rtol = 1e-5
         assert abs(interp_gd - expected_conductance) / expected_conductance < rtol, \

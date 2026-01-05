@@ -126,7 +126,7 @@ class TestResistorJaxInterpreter:
         interp_residuals, interp_jacobian = resistor_model.module.run_init_eval(interp_params)
 
         # Compare residual
-        jax_I = float(jax_residuals['sim_node0']['resist'])
+        jax_I = float(jax_residuals['A']['resist'])
         interp_I = interp_residuals[0][0]  # First node, resist component
 
         assert_allclose(
@@ -162,7 +162,7 @@ class TestResistorJaxInterpreter:
         interp_residuals, interp_jacobian = resistor_model.module.run_init_eval(interp_params)
 
         # Compare jacobian entry (0,0)
-        jax_jac_00 = float(jax_jacobian[('sim_node0', 'sim_node0')]['resist'])
+        jax_jac_00 = float(jax_jacobian[('A', 'A')]['resist'])
         interp_jac_00 = interp_jacobian[0][2]  # row=0, col=0, resist component
 
         assert_allclose(

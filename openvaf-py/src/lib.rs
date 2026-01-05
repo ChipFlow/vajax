@@ -682,49 +682,9 @@ impl VaModule {
         })
     }
 
-    /// Export DAE system (residuals and Jacobian) for JAX translation
-    fn get_dae_system(&self) -> std::collections::HashMap<String, pyo3::PyObject> {
-        use pyo3::types::{PyDict, PyList};
-
-        Python::with_gil(|py| {
-            let mut result = std::collections::HashMap::new();
-
-            // Unknowns (node mapping)
-            let unknowns = PyDict::new(py);
-            for (i, node) in self.nodes.iter().enumerate() {
-                unknowns.set_item(format!("sim_node{}", i), node.clone()).unwrap();
-            }
-            result.insert("unknowns".to_string(), unknowns.into());
-
-            // Residuals
-            let residuals = PyDict::new(py);
-            for i in 0..self.num_residuals {
-                let res = PyDict::new(py);
-                res.set_item("resist", format!("v{}", self.residual_resist_indices[i])).unwrap();
-                res.set_item("react", format!("v{}", self.residual_react_indices[i])).unwrap();
-                residuals.set_item(format!("sim_node{}", i), res).unwrap();
-            }
-            result.insert("residuals".to_string(), residuals.into());
-
-            // Jacobian
-            let jacobian = PyList::empty(py);
-            for i in 0..self.num_jacobian {
-                let entry = PyDict::new(py);
-                entry.set_item("row", format!("sim_node{}", self.jacobian_rows[i])).unwrap();
-                entry.set_item("col", format!("sim_node{}", self.jacobian_cols[i])).unwrap();
-                entry.set_item("resist", format!("v{}", self.jacobian_resist_indices[i])).unwrap();
-                entry.set_item("react", format!("v{}", self.jacobian_react_indices[i])).unwrap();
-                jacobian.append(entry).unwrap();
-            }
-            result.insert("jacobian".to_string(), jacobian.into());
-
-            result
-        })
-    }
-
-    /// Export DAE system (residuals and Jacobian) with clear naming - V2 API
+    /// Export DAE system (residuals and Jacobian) with clear naming
     ///
-    /// This is the preferred API over get_dae_system(). It uses:
+    /// Uses:
     /// - Direct node indices and names (no synthetic sim_node{} names)
     /// - mir_{} prefix for MIR SSA values (clear that these are compiler intermediates)
     /// - Explicit node information including terminal/internal classification
@@ -737,7 +697,7 @@ impl VaModule {
     ///   - 'internal_nodes': List of internal node names
     ///   - 'num_terminals': Number of terminal nodes
     ///   - 'num_internal': Number of internal nodes
-    fn get_dae_system_v2(&self) -> std::collections::HashMap<String, pyo3::PyObject> {
+    fn get_dae_system(&self) -> std::collections::HashMap<String, pyo3::PyObject> {
         use pyo3::types::{PyDict, PyList};
 
         Python::with_gil(|py| {

@@ -172,8 +172,7 @@ class OpenVAFToJAX:
         """
         self.module = module
         self.mir_data = module.get_mir_instructions()
-        self.dae_data = module.get_dae_system()  # Legacy v1 format
-        self.dae_data_v2 = module.get_dae_system_v2()  # New v2 format with clean names
+        self.dae_data = module.get_dae_system()  # v2 format with clean names
         self.init_mir_data = module.get_init_mir_instructions()
 
         # Build value tracking
@@ -337,15 +336,15 @@ class OpenVAFToJAX:
 
         # Build metadata using v2 API for clean node names
         # V2 format: list of dicts with node_name, node_idx, etc.
-        node_names = [res['node_name'] for res in self.dae_data_v2['residuals']]
-        node_indices = [res['node_idx'] for res in self.dae_data_v2['residuals']]
+        node_names = [res['node_name'] for res in self.dae_data['residuals']]
+        node_indices = [res['node_idx'] for res in self.dae_data['residuals']]
         jacobian_keys = [
             (entry['row_node_name'], entry['col_node_name'])
-            for entry in self.dae_data_v2['jacobian']
+            for entry in self.dae_data['jacobian']
         ]
         jacobian_indices = [
             (entry['row_node_idx'], entry['col_node_idx'])
-            for entry in self.dae_data_v2['jacobian']
+            for entry in self.dae_data['jacobian']
         ]
 
         metadata = {
@@ -353,10 +352,10 @@ class OpenVAFToJAX:
             'node_indices': node_indices,  # Indices: [0, 1, 2, 3, 4, ...]
             'jacobian_keys': jacobian_keys,  # Clean: [('D', 'D'), ('D', 'DI'), ...]
             'jacobian_indices': jacobian_indices,  # Indices: [(0, 0), (0, 7), ...]
-            'terminals': self.dae_data_v2['terminals'],  # ['D', 'G', 'S', 'B']
-            'internal_nodes': self.dae_data_v2['internal_nodes'],  # ['NOI', 'GP', ...]
-            'num_terminals': self.dae_data_v2['num_terminals'],
-            'num_internal': self.dae_data_v2['num_internal'],
+            'terminals': self.dae_data['terminals'],  # ['D', 'G', 'S', 'B']
+            'internal_nodes': self.dae_data['internal_nodes'],  # ['NOI', 'GP', ...]
+            'num_terminals': self.dae_data['num_terminals'],
+            'num_internal': self.dae_data['num_internal'],
             'uses_simparam_gmin': self.uses_simparam_gmin,
             'uses_analysis': self.uses_analysis,
             'analysis_type_map': self.analysis_type_map,
@@ -547,15 +546,15 @@ class OpenVAFToJAX:
         logger.info(f"    translate_eval_array_with_cache_split: exec() done in {t2-t1:.1f}s")
 
         # Build metadata using v2 API for clean node names
-        node_names = [res['node_name'] for res in self.dae_data_v2['residuals']]
-        node_indices = [res['node_idx'] for res in self.dae_data_v2['residuals']]
+        node_names = [res['node_name'] for res in self.dae_data['residuals']]
+        node_indices = [res['node_idx'] for res in self.dae_data['residuals']]
         jacobian_keys = [
             (entry['row_node_name'], entry['col_node_name'])
-            for entry in self.dae_data_v2['jacobian']
+            for entry in self.dae_data['jacobian']
         ]
         jacobian_indices = [
             (entry['row_node_idx'], entry['col_node_idx'])
-            for entry in self.dae_data_v2['jacobian']
+            for entry in self.dae_data['jacobian']
         ]
         cache_to_param = [m['eval_param'] for m in self.cache_mapping]
 
@@ -564,10 +563,10 @@ class OpenVAFToJAX:
             'node_indices': node_indices,  # Indices: [0, 1, 2, 3, 4, ...]
             'jacobian_keys': jacobian_keys,  # Clean: [('D', 'D'), ('D', 'DI'), ...]
             'jacobian_indices': jacobian_indices,  # Indices: [(0, 0), (0, 7), ...]
-            'terminals': self.dae_data_v2['terminals'],
-            'internal_nodes': self.dae_data_v2['internal_nodes'],
-            'num_terminals': self.dae_data_v2['num_terminals'],
-            'num_internal': self.dae_data_v2['num_internal'],
+            'terminals': self.dae_data['terminals'],
+            'internal_nodes': self.dae_data['internal_nodes'],
+            'num_terminals': self.dae_data['num_terminals'],
+            'num_internal': self.dae_data['num_internal'],
             'cache_to_param_mapping': cache_to_param,
             'uses_simparam_gmin': self.uses_simparam_gmin,
             'uses_analysis': self.uses_analysis,
@@ -1255,9 +1254,11 @@ class OpenVAFToJAX:
 
         residual_resist_exprs = []
         residual_react_exprs = []
-        for node, res in self.dae_data['residuals'].items():
-            resist_val = res['resist'] if res['resist'] in defined_vars else '_ZERO'
-            react_val = res['react'] if res['react'] in defined_vars else '_ZERO'
+        for res in self.dae_data['residuals']:
+            resist_var = self._mir_to_code_var(res['resist_var'])
+            react_var = self._mir_to_code_var(res['react_var'])
+            resist_val = resist_var if resist_var in defined_vars else '_ZERO'
+            react_val = react_var if react_var in defined_vars else '_ZERO'
             residual_resist_exprs.append(resist_val)
             residual_react_exprs.append(react_val)
         lines.append(f"    residuals_resist = jnp.array([{', '.join(residual_resist_exprs)}])")
@@ -1266,8 +1267,10 @@ class OpenVAFToJAX:
         jacobian_resist_exprs = []
         jacobian_react_exprs = []
         for entry in self.dae_data['jacobian']:
-            resist_val = entry['resist'] if entry['resist'] in defined_vars else '_ZERO'
-            react_val = entry['react'] if entry['react'] in defined_vars else '_ZERO'
+            resist_var = self._mir_to_code_var(entry['resist_var'])
+            react_var = self._mir_to_code_var(entry['react_var'])
+            resist_val = resist_var if resist_var in defined_vars else '_ZERO'
+            react_val = react_var if react_var in defined_vars else '_ZERO'
             jacobian_resist_exprs.append(resist_val)
             jacobian_react_exprs.append(react_val)
         lines.append(f"    jacobian_resist = jnp.array([{', '.join(jacobian_resist_exprs)}])")
@@ -1747,6 +1750,12 @@ class OpenVAFToJAX:
 
         return lines, defined_vars
 
+    def _mir_to_code_var(self, mir_var: str) -> str:
+        """Convert mir_XX to vXX for code generation lookup."""
+        if mir_var.startswith('mir_'):
+            return 'v' + mir_var[4:]
+        return mir_var
+
     def _generate_code(self) -> List[str]:
         """Generate JAX function code with dict outputs."""
         lines, defined_vars = self._generate_core_code("device_eval")
@@ -1754,17 +1763,22 @@ class OpenVAFToJAX:
         # Build dict output expressions
         lines.append("    # Build outputs (dict format)")
         lines.append("    residuals = {")
-        for node, res in self.dae_data['residuals'].items():
-            resist_val = res['resist'] if res['resist'] in defined_vars else '_ZERO'
-            react_val = res['react'] if res['react'] in defined_vars else '_ZERO'
+        for res in self.dae_data['residuals']:
+            node = res['node_name']
+            resist_var = self._mir_to_code_var(res['resist_var'])
+            react_var = self._mir_to_code_var(res['react_var'])
+            resist_val = resist_var if resist_var in defined_vars else '_ZERO'
+            react_val = react_var if react_var in defined_vars else '_ZERO'
             lines.append(f"        '{node}': {{'resist': {resist_val}, 'react': {react_val}}},")
         lines.append("    }")
 
         lines.append("    jacobian = {")
         for entry in self.dae_data['jacobian']:
-            key = f"('{entry['row']}', '{entry['col']}')"
-            resist_val = entry['resist'] if entry['resist'] in defined_vars else '_ZERO'
-            react_val = entry['react'] if entry['react'] in defined_vars else '_ZERO'
+            key = f"('{entry['row_node_name']}', '{entry['col_node_name']}')"
+            resist_var = self._mir_to_code_var(entry['resist_var'])
+            react_var = self._mir_to_code_var(entry['react_var'])
+            resist_val = resist_var if resist_var in defined_vars else '_ZERO'
+            react_val = react_var if react_var in defined_vars else '_ZERO'
             lines.append(f"        {key}: {{'resist': {resist_val}, 'react': {react_val}}},")
         lines.append("    }")
 
@@ -1790,9 +1804,11 @@ class OpenVAFToJAX:
         # Residuals arrays - one entry per node (resistive and reactive)
         residual_resist_exprs = []
         residual_react_exprs = []
-        for node, res in self.dae_data['residuals'].items():
-            resist_val = res['resist'] if res['resist'] in defined_vars else '_ZERO'
-            react_val = res['react'] if res['react'] in defined_vars else '_ZERO'
+        for res in self.dae_data['residuals']:
+            resist_var = self._mir_to_code_var(res['resist_var'])
+            react_var = self._mir_to_code_var(res['react_var'])
+            resist_val = resist_var if resist_var in defined_vars else '_ZERO'
+            react_val = react_var if react_var in defined_vars else '_ZERO'
             residual_resist_exprs.append(resist_val)
             residual_react_exprs.append(react_val)
         lines.append(f"    residuals_resist = jnp.array([{', '.join(residual_resist_exprs)}])")
@@ -1802,8 +1818,10 @@ class OpenVAFToJAX:
         jacobian_resist_exprs = []
         jacobian_react_exprs = []
         for entry in self.dae_data['jacobian']:
-            resist_val = entry['resist'] if entry['resist'] in defined_vars else '_ZERO'
-            react_val = entry['react'] if entry['react'] in defined_vars else '_ZERO'
+            resist_var = self._mir_to_code_var(entry['resist_var'])
+            react_var = self._mir_to_code_var(entry['react_var'])
+            resist_val = resist_var if resist_var in defined_vars else '_ZERO'
+            react_val = react_var if react_var in defined_vars else '_ZERO'
             jacobian_resist_exprs.append(resist_val)
             jacobian_react_exprs.append(react_val)
         lines.append(f"    jacobian_resist = jnp.array([{', '.join(jacobian_resist_exprs)}])")
