@@ -2277,11 +2277,28 @@ class CircuitEngine:
                         noi_indices.append(internal_nodes['node4'])
             noi_indices = jnp.array(noi_indices, dtype=jnp.int32) if noi_indices else None
 
+            # Collect vsource residual indices to exclude from convergence check
+            # Vsources use G=1e12 high-conductance stamps, creating ~1kA residual per 1nV error
+            # By masking these, we can use a tight abstol that responds to µA perturbations
+            vsource_res_indices = []
+            if 'vsource' in source_device_data:
+                f_indices = source_device_data['vsource']['f_indices']
+                # f_indices is shape [n_vsources, 2] - positive and negative node residual indices
+                # Extract non-ground indices (>= 0)
+                for idx_pair in np.asarray(f_indices):
+                    for idx in idx_pair:
+                        if idx >= 0:
+                            vsource_res_indices.append(int(idx))
+            vsource_res_indices = jnp.array(vsource_res_indices, dtype=jnp.int32) if vsource_res_indices else None
+            if vsource_res_indices is not None:
+                logger.info(f"Masking {len(vsource_res_indices)} vsource residual indices from convergence check")
+
             # Create JIT-compiled NR solver
             if use_dense:
                 # Dense solver for small/medium circuits
                 nr_solve = make_dense_solver(
                     build_system_jit, n_nodes, noi_indices=noi_indices,
+                    vsource_res_indices=vsource_res_indices,
                     max_iterations=MAX_NR_ITERATIONS, abstol=DEFAULT_ABSTOL, max_step=1.0
                 )
             else:
@@ -2359,6 +2376,7 @@ class CircuitEngine:
                         bcsr_indptr=jnp.array(csr_indptr, dtype=jnp.int32),
                         bcsr_indices=jnp.array(csr_indices, dtype=jnp.int32),
                         noi_indices=noi_indices,
+                        vsource_res_indices=vsource_res_indices,
                         max_iterations=MAX_NR_ITERATIONS, abstol=DEFAULT_ABSTOL, max_step=1.0,
                         coo_sort_perm=jnp.array(coo_sort_perm, dtype=jnp.int32),
                         csr_segment_ids=jnp.array(csr_segment_ids, dtype=jnp.int32),
@@ -2416,6 +2434,7 @@ class CircuitEngine:
                             bcsr_indptr=jnp.array(csr_indptr, dtype=jnp.int32),
                             bcsr_indices=jnp.array(csr_indices, dtype=jnp.int32),
                             noi_indices=noi_indices,
+                            vsource_res_indices=vsource_res_indices,
                             max_iterations=MAX_NR_ITERATIONS, abstol=DEFAULT_ABSTOL, max_step=1.0,
                             coo_sort_perm=jnp.array(coo_sort_perm, dtype=jnp.int32),
                             csr_segment_ids=jnp.array(csr_segment_ids, dtype=jnp.int32),
@@ -2426,6 +2445,7 @@ class CircuitEngine:
                         nr_solve = make_sparse_solver(
                             build_system_jit, n_nodes, nse,
                             noi_indices=noi_indices,
+                            vsource_res_indices=vsource_res_indices,
                             max_iterations=MAX_NR_ITERATIONS, abstol=DEFAULT_ABSTOL, max_step=1.0,
                             coo_sort_perm=jnp.array(coo_sort_perm, dtype=jnp.int32),
                             csr_segment_ids=jnp.array(csr_segment_ids, dtype=jnp.int32),
@@ -3646,6 +3666,7 @@ class CircuitEngine:
                 flat_res_react_val = batch_res_react.ravel()
                 flat_res_react_masked = jnp.where(valid_res, flat_res_react_val, 0.0)
                 flat_res_react_masked = jnp.where(jnp.isnan(flat_res_react_masked), 0.0, flat_res_react_masked)
+
                 f_react_parts.append((flat_res_idx_masked, flat_res_react_masked))
 
                 # === Resistive Jacobian (conductances) ===
@@ -3667,6 +3688,7 @@ class CircuitEngine:
                 flat_jac_react_vals = batch_jac_react.ravel()
                 flat_jac_react_masked = jnp.where(valid_jac, flat_jac_react_vals, 0.0)
                 flat_jac_react_masked = jnp.where(jnp.isnan(flat_jac_react_masked), 0.0, flat_jac_react_masked)
+
                 j_react_parts.append((
                     flat_jac_rows_masked,
                     flat_jac_cols_masked,
@@ -4010,8 +4032,19 @@ class CircuitEngine:
                     noi_indices.append(internal_nodes['node4'])
         noi_indices = jnp.array(noi_indices, dtype=jnp.int32) if noi_indices else None
 
+        # Collect vsource residual indices to exclude from convergence check
+        vsource_res_indices = []
+        if 'vsource' in source_device_data:
+            f_indices = source_device_data['vsource']['f_indices']
+            for idx_pair in np.asarray(f_indices):
+                for idx in idx_pair:
+                    if idx >= 0:
+                        vsource_res_indices.append(int(idx))
+        vsource_res_indices = jnp.array(vsource_res_indices, dtype=jnp.int32) if vsource_res_indices else None
+
         nr_solve = make_dense_solver(
             build_system_jit, n_total, noi_indices=noi_indices,
+            vsource_res_indices=vsource_res_indices,
             max_iterations=MAX_NR_ITERATIONS, abstol=DEFAULT_ABSTOL, max_step=1.0
         )
 

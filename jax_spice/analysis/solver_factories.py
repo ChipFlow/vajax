@@ -23,23 +23,32 @@ from jax_spice._logging import logger
 
 # Newton-Raphson solver constants
 MAX_NR_ITERATIONS = 100
-DEFAULT_ABSTOL = 1e4  # Corresponds to ~10nV voltage accuracy with G=1e12
+# With vsource residuals masked, we can use a tighter tolerance that responds
+# to µA-level current perturbations (like the 10µA pulse in ring oscillator)
+DEFAULT_ABSTOL = 1e-6  # 1µA - allows detection of small perturbations
 
 
-def _compute_noi_masks(
+def _compute_convergence_masks(
     noi_indices: Optional[Array],
+    vsource_res_indices: Optional[Array],
     n_nodes: int,
     bcsr_indptr: Optional[Array] = None,
     bcsr_indices: Optional[Array] = None,
 ) -> Dict:
-    """Pre-compute masks for NOI node constraint enforcement.
+    """Pre-compute masks for convergence checking and NOI constraint enforcement.
 
-    NOI (noise correlation) nodes have extremely high conductance (1e40) which
-    causes numerical instability. We enforce delta[noi] = 0 by modifying the
-    linear system before solving.
+    This function creates masks for two purposes:
+    1. Exclude high-conductance nodes (NOI, vsource) from residual convergence check
+    2. Enforce NOI delta = 0 by modifying the linear system
+
+    NOI nodes have 1e40 conductance to ground. Voltage sources use G=1e12 high-
+    conductance stamps. Both create huge residuals from tiny voltage errors that
+    would dominate the convergence check. By masking these, we can use a tight
+    abstol that responds to µA-level perturbations.
 
     Args:
         noi_indices: Array of NOI node indices (in full V vector)
+        vsource_res_indices: Array of vsource residual indices (already 0-based)
         n_nodes: Total node count including ground
         bcsr_indptr: CSR row pointers (for sparse solvers)
         bcsr_indices: CSR column indices (for sparse solvers)
@@ -47,7 +56,7 @@ def _compute_noi_masks(
     Returns:
         Dict with pre-computed masks:
         - noi_res_idx: NOI residual indices (noi_indices - 1)
-        - residual_mask: Boolean mask for convergence check
+        - residual_mask: Boolean mask for convergence check (excludes NOI + vsource)
         - noi_row_mask: CSR indices for NOI rows (sparse only)
         - noi_col_mask: CSR indices for NOI columns (sparse only)
         - noi_diag_indices: CSR indices for NOI diagonals (sparse only)
@@ -62,21 +71,31 @@ def _compute_noi_masks(
         'noi_res_indices_arr': None,
     }
 
-    if noi_indices is None or len(noi_indices) == 0:
+    n_unknowns = n_nodes - 1
+    has_noi = noi_indices is not None and len(noi_indices) > 0
+    has_vsource = vsource_res_indices is not None and len(vsource_res_indices) > 0
+
+    if not has_noi and not has_vsource:
         return result
 
-    n_unknowns = n_nodes - 1
-    noi_res_idx = noi_indices - 1  # Convert to residual indices
-
-    # Residual mask for convergence check
+    # Build residual mask for convergence check (exclude both NOI and vsource)
     residual_mask = jnp.ones(n_unknowns, dtype=jnp.bool_)
-    residual_mask = residual_mask.at[noi_res_idx].set(False)
 
-    result['noi_res_idx'] = noi_res_idx
+    noi_res_idx = None
+    if has_noi:
+        noi_res_idx = noi_indices - 1  # Convert to residual indices
+        residual_mask = residual_mask.at[noi_res_idx].set(False)
+        result['noi_res_idx'] = noi_res_idx
+
+    if has_vsource:
+        # vsource_res_indices are already 0-based residual indices
+        residual_mask = residual_mask.at[vsource_res_indices].set(False)
+
     result['residual_mask'] = residual_mask
 
-    # CSR masks for sparse solvers
-    if bcsr_indptr is not None and bcsr_indices is not None:
+    # CSR masks for NOI constraint enforcement in sparse solvers
+    # (vsource doesn't need Jacobian modification - just residual masking)
+    if has_noi and bcsr_indptr is not None and bcsr_indices is not None:
         row_mask_list = []
         col_mask_list = []
         diag_list = []
@@ -112,6 +131,7 @@ def make_dense_solver(
     build_system_jit: Callable,
     n_nodes: int,
     noi_indices: Optional[Array] = None,
+    vsource_res_indices: Optional[Array] = None,
     max_iterations: int = MAX_NR_ITERATIONS,
     abstol: float = DEFAULT_ABSTOL,
     max_step: float = 1.0,
@@ -128,6 +148,8 @@ def make_dense_solver(
             -> (J, f, Q)
         n_nodes: Total node count including ground
         noi_indices: Optional array of NOI node indices to constrain to 0V
+        vsource_res_indices: Optional array of vsource residual indices to exclude
+            from convergence check (high-conductance G=1e12 creates large residuals)
         max_iterations: Maximum NR iterations
         abstol: Absolute tolerance for convergence
         max_step: Maximum voltage step per iteration
@@ -135,7 +157,7 @@ def make_dense_solver(
     Returns:
         JIT-compiled solver function
     """
-    masks = _compute_noi_masks(noi_indices, n_nodes)
+    masks = _compute_convergence_masks(noi_indices, vsource_res_indices, n_nodes)
     noi_res_idx = masks['noi_res_idx']
     residual_mask = masks['residual_mask']
 
@@ -215,7 +237,9 @@ def make_dense_solver(
 
         return V_final, iterations, converged, max_f, Q_final
 
-    logger.info(f"Creating dense NR solver: V({n_nodes}), NOI: {noi_indices is not None}")
+    n_noi = len(noi_indices) if noi_indices is not None else 0
+    n_vs = len(vsource_res_indices) if vsource_res_indices is not None else 0
+    logger.info(f"Creating dense NR solver: V({n_nodes}), NOI: {n_noi}, vsource_masked: {n_vs}")
     return jax.jit(nr_solve)
 
 
@@ -224,6 +248,7 @@ def make_sparse_solver(
     n_nodes: int,
     nse: int,
     noi_indices: Optional[Array] = None,
+    vsource_res_indices: Optional[Array] = None,
     max_iterations: int = MAX_NR_ITERATIONS,
     abstol: float = DEFAULT_ABSTOL,
     max_step: float = 1.0,
@@ -241,6 +266,8 @@ def make_sparse_solver(
         n_nodes: Total node count including ground
         nse: Number of stored elements after summing duplicates
         noi_indices: Optional array of NOI node indices
+        vsource_res_indices: Optional array of vsource residual indices to exclude
+            from convergence check (high-conductance G=1e12 creates large residuals)
         max_iterations: Maximum NR iterations
         abstol: Absolute tolerance for convergence
         max_step: Maximum voltage step per iteration
@@ -258,7 +285,7 @@ def make_sparse_solver(
     use_precomputed = (coo_sort_perm is not None and csr_segment_ids is not None
                        and bcsr_indices is not None and bcsr_indptr is not None)
 
-    masks = _compute_noi_masks(noi_indices, n_nodes, bcsr_indptr, bcsr_indices)
+    masks = _compute_convergence_masks(noi_indices, vsource_res_indices, n_nodes, bcsr_indptr, bcsr_indices)
     residual_mask = masks['residual_mask']
     noi_row_mask = masks['noi_row_mask']
     noi_col_mask = masks['noi_col_mask']
@@ -357,7 +384,9 @@ def make_sparse_solver(
 
         return V_final, iterations, converged, max_f, Q_final
 
-    logger.info(f"Creating sparse NR solver: V({n_nodes}), precomputed={use_precomputed}")
+    n_noi = len(noi_indices) if noi_indices is not None else 0
+    n_vs = len(vsource_res_indices) if vsource_res_indices is not None else 0
+    logger.info(f"Creating sparse NR solver: V({n_nodes}), NOI: {n_noi}, vsource_masked: {n_vs}, precomputed={use_precomputed}")
     return jax.jit(nr_solve)
 
 
@@ -368,6 +397,7 @@ def make_spineax_solver(
     bcsr_indptr: Array,
     bcsr_indices: Array,
     noi_indices: Optional[Array] = None,
+    vsource_res_indices: Optional[Array] = None,
     max_iterations: int = MAX_NR_ITERATIONS,
     abstol: float = DEFAULT_ABSTOL,
     max_step: float = 1.0,
@@ -386,6 +416,8 @@ def make_spineax_solver(
         bcsr_indptr: Pre-computed BCSR row pointers
         bcsr_indices: Pre-computed BCSR column indices
         noi_indices: Optional array of NOI node indices
+        vsource_res_indices: Optional array of vsource residual indices to exclude
+            from convergence check (high-conductance G=1e12 creates large residuals)
         max_iterations: Maximum NR iterations
         abstol: Absolute tolerance for convergence
         max_step: Maximum voltage step per iteration
@@ -401,7 +433,7 @@ def make_spineax_solver(
     n_unknowns = n_nodes - 1
     use_precomputed = coo_sort_perm is not None and csr_segment_ids is not None
 
-    masks = _compute_noi_masks(noi_indices, n_nodes, bcsr_indptr, bcsr_indices)
+    masks = _compute_convergence_masks(noi_indices, vsource_res_indices, n_nodes, bcsr_indptr, bcsr_indices)
     residual_mask = masks['residual_mask']
     noi_row_mask = masks['noi_row_mask']
     noi_col_mask = masks['noi_col_mask']
@@ -497,7 +529,9 @@ def make_spineax_solver(
 
         return V_final, iterations, converged, max_f, Q_final
 
-    logger.info(f"Creating Spineax NR solver: V({n_nodes})")
+    n_noi = len(noi_indices) if noi_indices is not None else 0
+    n_vs = len(vsource_res_indices) if vsource_res_indices is not None else 0
+    logger.info(f"Creating Spineax NR solver: V({n_nodes}), NOI: {n_noi}, vsource_masked: {n_vs}")
     return jax.jit(nr_solve)
 
 
@@ -508,6 +542,7 @@ def make_umfpack_solver(
     bcsr_indptr: Array,
     bcsr_indices: Array,
     noi_indices: Optional[Array] = None,
+    vsource_res_indices: Optional[Array] = None,
     max_iterations: int = MAX_NR_ITERATIONS,
     abstol: float = DEFAULT_ABSTOL,
     max_step: float = 1.0,
@@ -525,6 +560,8 @@ def make_umfpack_solver(
         bcsr_indptr: Pre-computed BCSR row pointers
         bcsr_indices: Pre-computed BCSR column indices
         noi_indices: Optional array of NOI node indices
+        vsource_res_indices: Optional array of vsource residual indices to exclude
+            from convergence check (high-conductance G=1e12 creates large residuals)
         max_iterations: Maximum NR iterations
         abstol: Absolute tolerance for convergence
         max_step: Maximum voltage step per iteration
@@ -540,7 +577,7 @@ def make_umfpack_solver(
     n_unknowns = n_nodes - 1
     use_precomputed = coo_sort_perm is not None and csr_segment_ids is not None
 
-    masks = _compute_noi_masks(noi_indices, n_nodes, bcsr_indptr, bcsr_indices)
+    masks = _compute_convergence_masks(noi_indices, vsource_res_indices, n_nodes, bcsr_indptr, bcsr_indices)
     residual_mask = masks['residual_mask']
     noi_row_mask = masks['noi_row_mask']
     noi_col_mask = masks['noi_col_mask']
@@ -630,5 +667,7 @@ def make_umfpack_solver(
 
         return V_final, iterations, converged, max_f, Q_final
 
-    logger.info(f"Creating UMFPACK NR solver: V({n_nodes})")
+    n_noi = len(noi_indices) if noi_indices is not None else 0
+    n_vs = len(vsource_res_indices) if vsource_res_indices is not None else 0
+    logger.info(f"Creating UMFPACK NR solver: V({n_nodes}), NOI: {n_noi}, vsource_masked: {n_vs}")
     return jax.jit(nr_solve)
