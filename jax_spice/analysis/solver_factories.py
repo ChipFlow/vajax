@@ -23,8 +23,10 @@ from jax_spice._logging import logger
 
 # Newton-Raphson solver constants
 MAX_NR_ITERATIONS = 100
-# With vsource residuals masked, we can use VACASK's tight tolerance
-DEFAULT_ABSTOL = 1e-12  # Match VACASK default
+# Match VACASK defaults for tolerance parameters
+DEFAULT_ABSTOL = 1e-12  # Absolute current tolerance (A)
+DEFAULT_VNTOL = 1e-6    # Absolute voltage tolerance (V)
+DEFAULT_RELTOL = 1e-3   # Relative tolerance (dimensionless)
 
 
 def _compute_convergence_masks(
@@ -133,12 +135,19 @@ def make_dense_solver(
     vsource_res_indices: Optional[Array] = None,
     max_iterations: int = MAX_NR_ITERATIONS,
     abstol: float = DEFAULT_ABSTOL,
+    vntol: float = DEFAULT_VNTOL,
+    reltol: float = DEFAULT_RELTOL,
     max_step: float = 1.0,
 ) -> Callable:
     """Create a JIT-compiled dense NR solver.
 
     Uses jax.scipy.linalg.solve for the linear system. Suitable for
     small to medium circuits (<1000 nodes).
+
+    Convergence criteria (matching VACASK):
+    - Residual: |f[i]| < abstol (current tolerance)
+    - Delta: |delta[i]| < max(|V[i]| * reltol, vntol) (voltage tolerance)
+    - Converged when EITHER residual OR delta check passes
 
     Args:
         build_system_jit: JIT-wrapped function
@@ -150,7 +159,9 @@ def make_dense_solver(
         vsource_res_indices: Optional array of vsource residual indices to exclude
             from convergence check (high-conductance G=1e12 creates large residuals)
         max_iterations: Maximum NR iterations
-        abstol: Absolute tolerance for convergence
+        abstol: Absolute current tolerance (default 1e-12 A)
+        vntol: Absolute voltage tolerance (default 1e-6 V)
+        reltol: Relative tolerance (default 1e-3)
         max_step: Maximum voltage step per iteration
 
     Returns:
@@ -220,7 +231,11 @@ def make_dense_solver(
             if noi_indices is not None and len(noi_indices) > 0:
                 V_new = V_new.at[noi_indices].set(0.0)
 
-            delta_converged = max_delta < 1e-12
+            # Delta convergence: |delta| < max(|V| * reltol, vntol)
+            # This is VACASK's voltage tolerance check
+            V_abs = jnp.abs(V_new[1:])  # Exclude ground
+            delta_tol = jnp.maximum(V_abs * reltol, vntol)
+            delta_converged = jnp.all(jnp.abs(delta) < delta_tol)
             converged = jnp.logical_or(residual_converged, delta_converged)
 
             return (V_new, iteration + 1, converged, max_f, max_delta, Q)
@@ -250,6 +265,8 @@ def make_sparse_solver(
     vsource_res_indices: Optional[Array] = None,
     max_iterations: int = MAX_NR_ITERATIONS,
     abstol: float = DEFAULT_ABSTOL,
+    vntol: float = DEFAULT_VNTOL,
+    reltol: float = DEFAULT_RELTOL,
     max_step: float = 1.0,
     coo_sort_perm: Optional[Array] = None,
     csr_segment_ids: Optional[Array] = None,
@@ -260,6 +277,11 @@ def make_sparse_solver(
 
     Uses JAX's sparse direct solver (QR factorization) for large circuits.
 
+    Convergence criteria (matching VACASK):
+    - Residual: |f[i]| < abstol (current tolerance)
+    - Delta: |delta[i]| < max(|V[i]| * reltol, vntol) (voltage tolerance)
+    - Converged when EITHER residual OR delta check passes
+
     Args:
         build_system_jit: JIT-wrapped function returning (J_bcoo, f, Q)
         n_nodes: Total node count including ground
@@ -268,7 +290,9 @@ def make_sparse_solver(
         vsource_res_indices: Optional array of vsource residual indices to exclude
             from convergence check (high-conductance G=1e12 creates large residuals)
         max_iterations: Maximum NR iterations
-        abstol: Absolute tolerance for convergence
+        abstol: Absolute current tolerance (default 1e-12 A)
+        vntol: Absolute voltage tolerance (default 1e-6 V)
+        reltol: Relative tolerance (default 1e-3)
         max_step: Maximum voltage step per iteration
         coo_sort_perm: Pre-computed COO→CSR permutation
         csr_segment_ids: Pre-computed segment IDs for duplicate summing
@@ -368,7 +392,11 @@ def make_sparse_solver(
             if noi_indices is not None and len(noi_indices) > 0:
                 V_new = V_new.at[noi_indices].set(0.0)
 
-            delta_converged = max_delta < 1e-12
+            # Delta convergence: |delta| < max(|V| * reltol, vntol)
+            # This is VACASK's voltage tolerance check
+            V_abs = jnp.abs(V_new[1:])  # Exclude ground
+            delta_tol = jnp.maximum(V_abs * reltol, vntol)
+            delta_converged = jnp.all(jnp.abs(delta) < delta_tol)
             converged = jnp.logical_or(residual_converged, delta_converged)
 
             return (V_new, iteration + 1, converged, max_f, max_delta, Q)
@@ -399,6 +427,8 @@ def make_spineax_solver(
     vsource_res_indices: Optional[Array] = None,
     max_iterations: int = MAX_NR_ITERATIONS,
     abstol: float = DEFAULT_ABSTOL,
+    vntol: float = DEFAULT_VNTOL,
+    reltol: float = DEFAULT_RELTOL,
     max_step: float = 1.0,
     coo_sort_perm: Optional[Array] = None,
     csr_segment_ids: Optional[Array] = None,
@@ -407,6 +437,11 @@ def make_spineax_solver(
 
     Uses Spineax's cuDSS wrapper with cached symbolic factorization.
     The symbolic analysis is done once when the solver is created.
+
+    Convergence criteria (matching VACASK):
+    - Residual: |f[i]| < abstol (current tolerance)
+    - Delta: |delta[i]| < max(|V[i]| * reltol, vntol) (voltage tolerance)
+    - Converged when EITHER residual OR delta check passes
 
     Args:
         build_system_jit: JIT-wrapped function returning (J_bcoo, f, Q)
@@ -418,7 +453,9 @@ def make_spineax_solver(
         vsource_res_indices: Optional array of vsource residual indices to exclude
             from convergence check (high-conductance G=1e12 creates large residuals)
         max_iterations: Maximum NR iterations
-        abstol: Absolute tolerance for convergence
+        abstol: Absolute current tolerance (default 1e-12 A)
+        vntol: Absolute voltage tolerance (default 1e-6 V)
+        reltol: Relative tolerance (default 1e-3)
         max_step: Maximum voltage step per iteration
         coo_sort_perm: Pre-computed COO→CSR permutation
         csr_segment_ids: Pre-computed segment IDs
@@ -513,7 +550,11 @@ def make_spineax_solver(
             if noi_indices is not None and len(noi_indices) > 0:
                 V_new = V_new.at[noi_indices].set(0.0)
 
-            delta_converged = max_delta < 1e-12
+            # Delta convergence: |delta| < max(|V| * reltol, vntol)
+            # This is VACASK's voltage tolerance check
+            V_abs = jnp.abs(V_new[1:])  # Exclude ground
+            delta_tol = jnp.maximum(V_abs * reltol, vntol)
+            delta_converged = jnp.all(jnp.abs(delta) < delta_tol)
             converged = jnp.logical_or(residual_converged, delta_converged)
 
             return (V_new, iteration + 1, converged, max_f, max_delta, Q)
@@ -544,6 +585,8 @@ def make_umfpack_solver(
     vsource_res_indices: Optional[Array] = None,
     max_iterations: int = MAX_NR_ITERATIONS,
     abstol: float = DEFAULT_ABSTOL,
+    vntol: float = DEFAULT_VNTOL,
+    reltol: float = DEFAULT_RELTOL,
     max_step: float = 1.0,
     coo_sort_perm: Optional[Array] = None,
     csr_segment_ids: Optional[Array] = None,
@@ -551,6 +594,11 @@ def make_umfpack_solver(
     """Create a JIT-compiled sparse NR solver using UMFPACK.
 
     Uses UMFPACK with cached symbolic factorization for fast CPU solving.
+
+    Convergence criteria (matching VACASK):
+    - Residual: |f[i]| < abstol (current tolerance)
+    - Delta: |delta[i]| < max(|V[i]| * reltol, vntol) (voltage tolerance)
+    - Converged when EITHER residual OR delta check passes
 
     Args:
         build_system_jit: JIT-wrapped function returning (J_bcoo, f, Q)
@@ -562,7 +610,9 @@ def make_umfpack_solver(
         vsource_res_indices: Optional array of vsource residual indices to exclude
             from convergence check (high-conductance G=1e12 creates large residuals)
         max_iterations: Maximum NR iterations
-        abstol: Absolute tolerance for convergence
+        abstol: Absolute current tolerance (default 1e-12 A)
+        vntol: Absolute voltage tolerance (default 1e-6 V)
+        reltol: Relative tolerance (default 1e-3)
         max_step: Maximum voltage step per iteration
         coo_sort_perm: Pre-computed COO→CSR permutation
         csr_segment_ids: Pre-computed segment IDs
@@ -651,7 +701,11 @@ def make_umfpack_solver(
             if noi_indices is not None and len(noi_indices) > 0:
                 V_new = V_new.at[noi_indices].set(0.0)
 
-            delta_converged = max_delta < 1e-12
+            # Delta convergence: |delta| < max(|V| * reltol, vntol)
+            # This is VACASK's voltage tolerance check
+            V_abs = jnp.abs(V_new[1:])  # Exclude ground
+            delta_tol = jnp.maximum(V_abs * reltol, vntol)
+            delta_converged = jnp.all(jnp.abs(delta) < delta_tol)
             converged = jnp.logical_or(residual_converged, delta_converged)
 
             return (V_new, iteration + 1, converged, max_f, max_delta, Q)
