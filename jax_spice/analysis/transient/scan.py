@@ -124,15 +124,12 @@ class ScanStrategy(TransientStrategy):
         device_arrays = self.get_device_arrays()
         inv_dt = 1.0 / dt
 
-        # Trapezoidal integration: c0=2/dt, c1=-2/dt, d1=-1
-        integ_c0 = 2.0 / dt
-        integ_c1 = -2.0 / dt
-        integ_d1 = -1.0
+        # Use backward Euler (more stable than trapezoidal for stiff circuits)
+        # The solver defaults to inv_dt when integ_c0/c1 are None
 
         # Initial state
         V0 = jnp.zeros(n_nodes, dtype=jnp.float64)
         Q0 = self.get_initial_Q()
-        dQdt0 = jnp.zeros(n_unknowns, dtype=jnp.float64)
 
         # Get or create the cached scan function
         # Cache key includes dt since integration coefficients depend on it
@@ -143,8 +140,7 @@ class ScanStrategy(TransientStrategy):
             logger.debug(f"{self.name}: Reusing cached lax.scan function")
         else:
             run_simulation = self._make_scan_fn(
-                nr_solve, n_external, n_unknowns, inv_dt, device_arrays,
-                integ_c0, integ_c1, integ_d1
+                nr_solve, n_external, inv_dt, device_arrays
             )
             self._cached_scan_fn = run_simulation
             self._cached_scan_key = scan_cache_key
@@ -154,7 +150,7 @@ class ScanStrategy(TransientStrategy):
         logger.info(f"{self.name}: Running lax.scan simulation...")
         t0 = time_module.perf_counter()
         all_V, all_iters, all_converged = run_simulation(
-            V0, Q0, dQdt0, all_vsource_vals, all_isource_vals
+            V0, Q0, all_vsource_vals, all_isource_vals
         )
         jax.block_until_ready(all_V)  # Ensure computation is complete
         wall_time = time_module.perf_counter() - t0
@@ -226,10 +222,9 @@ class ScanStrategy(TransientStrategy):
 
         return jnp.stack(all_values, axis=1) if all_values else jnp.zeros((num_timesteps, 0))
 
-    def _make_scan_fn(self, nr_solve: Callable, n_external: int, n_unknowns: int,
-                       inv_dt: float, device_arrays: Dict,
-                       integ_c0: float, integ_c1: float, integ_d1: float) -> Callable:
-        """Create a JIT-compiled scan function.
+    def _make_scan_fn(self, nr_solve: Callable, n_external: int,
+                       inv_dt: float, device_arrays: Dict) -> Callable:
+        """Create a JIT-compiled scan function using backward Euler.
 
         The function is created in a factory to ensure proper closure capture
         and avoid re-tracing issues.
@@ -237,24 +232,21 @@ class ScanStrategy(TransientStrategy):
         Args:
             nr_solve: JIT-compiled Newton-Raphson solver
             n_external: Number of external nodes
-            n_unknowns: Number of unknowns (n_nodes - 1)
             inv_dt: Inverse timestep (1/dt)
             device_arrays: Device arrays for solver
-            integ_c0: Integration coefficient c0 (2/dt for trap)
-            integ_c1: Integration coefficient c1 (-2/dt for trap)
-            integ_d1: Integration coefficient d1 (-1 for trap)
 
         Returns:
             JIT-compiled function that runs the full simulation
         """
         @jax.jit
-        def run_simulation_with_outputs(V_init, Q_init, dQdt_init, all_vsource, all_isource):
+        def run_simulation_with_outputs(V_init, Q_init, all_vsource, all_isource):
             """Run simulation with time-varying sources using lax.scan.
+
+            Uses backward Euler integration (more stable for stiff circuits).
 
             Args:
                 V_init: Initial voltage vector
                 Q_init: Initial charge vector
-                dQdt_init: Initial dQ/dt vector
                 all_vsource: Pre-computed vsource values [num_timesteps, n_vsources]
                 all_isource: Pre-computed isource values [num_timesteps, n_isources]
 
@@ -262,25 +254,20 @@ class ScanStrategy(TransientStrategy):
                 Tuple of (all_V, all_iters, all_converged)
             """
             def step_fn(carry, source_vals):
-                V, Q_prev, dQdt_prev = carry
+                V, Q_prev = carry
                 vsource_vals, isource_vals = source_vals
 
-                # Call NR solver with full interface
+                # Call NR solver with backward Euler (default integ coefficients)
                 V_new, iterations, converged, max_f, Q = nr_solve(
-                    V, vsource_vals, isource_vals, Q_prev, inv_dt, device_arrays,
-                    1e-12, 0.0,  # gmin, gshunt
-                    dQdt_prev, integ_c0, integ_c1, integ_d1
+                    V, vsource_vals, isource_vals, Q_prev, inv_dt, device_arrays
                 )
 
-                # Update dQdt for next step
-                dQdt = integ_c0 * Q + integ_c1 * Q_prev + integ_d1 * dQdt_prev
-
-                return (V_new, Q, dQdt), (V_new[:n_external], iterations, converged)
+                return (V_new, Q), (V_new[:n_external], iterations, converged)
 
             # Stack source arrays for scan input
             source_inputs = (all_vsource, all_isource)
             _, (all_V, all_iters, all_converged) = jax.lax.scan(
-                step_fn, (V_init, Q_init, dQdt_init), source_inputs
+                step_fn, (V_init, Q_init), source_inputs
             )
             return all_V, all_iters, all_converged
 

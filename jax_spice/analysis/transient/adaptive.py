@@ -53,7 +53,7 @@ class AdaptiveConfig:
     use_predictor: bool = False  # tran_predictor - use predicted value for NR start
 
     # Integration order
-    order: int = 2  # Trapezoidal (order 2)
+    order: int = 1  # Backward Euler (order 1)
 
     # Debug
     debug: int = 0  # Debug verbosity
@@ -111,7 +111,7 @@ class AdaptiveStrategy(TransientStrategy):
         # Initialize state
         V = jnp.zeros(n_total, dtype=jnp.float64)
         Q_prev = self.get_initial_Q()
-        dQdt_prev = jnp.zeros(n_unknowns, dtype=jnp.float64)
+        # Use backward Euler for stability (no dQdt tracking needed)
 
         # History for predictor (need at least 2 past points for order-1 predictor)
         # V_history[0] = current (t_k), V_history[1] = t_{k-1}, etc.
@@ -151,11 +151,8 @@ class AdaptiveStrategy(TransientStrategy):
                 hk = t_stop - t
                 t_new = t_stop
 
-            # Compute integration coefficients for this timestep
+            # Compute inverse timestep for this step
             inv_dt = 1.0 / hk
-            integ_c0 = 2.0 / hk  # Trapezoidal
-            integ_c1 = -2.0 / hk
-            integ_d1 = -1.0
 
             # Predict solution at t_new using polynomial extrapolation
             V_predicted = self._predict(V_history, dt_history, hk, cfg.order)
@@ -167,11 +164,9 @@ class AdaptiveStrategy(TransientStrategy):
             source_values = source_fn(t_new)
             vsource_vals, isource_vals = self._build_source_arrays(source_values)
 
-            # Run NR solver with full interface
+            # Run NR solver with backward Euler (uses default integ coefficients)
             V_new, iterations, converged, max_f, Q = nr_solve(
-                V_start, vsource_vals, isource_vals, Q_prev, inv_dt, device_arrays,
-                1e-12, 0.0,  # gmin, gshunt
-                dQdt_prev, integ_c0, integ_c1, integ_d1
+                V_start, vsource_vals, isource_vals, Q_prev, inv_dt, device_arrays
             )
 
             nr_iters = int(iterations)
@@ -218,10 +213,8 @@ class AdaptiveStrategy(TransientStrategy):
             t = t_new
             V = V_new
 
-            # Update charge state for trapezoidal integration
-            dQdt = integ_c0 * Q + integ_c1 * Q_prev + integ_d1 * dQdt_prev
+            # Update charge state for backward Euler (just Q_prev)
             Q_prev = Q
-            dQdt_prev = dQdt
 
             # Update history
             V_history.insert(0, V)
@@ -356,11 +349,11 @@ class AdaptiveStrategy(TransientStrategy):
             # Not enough history for LTE check - accept
             return True, min(hk * cfg.max_step_factor, hk * 2)
 
-        # LTE factor for trapezoidal + linear predictor
-        # Trapezoidal error coeff: 1/12 (for order 2)
+        # LTE factor for backward Euler + linear predictor
+        # Backward Euler error coeff: 1/2 (for order 1)
         # Linear predictor error coeff: -1/2 (for order 1)
-        # factor = (1/12) / ((1/12) - (-1/2)) = (1/12) / (7/12) = 1/7 ≈ 0.143
-        factor = 1.0 / 7.0
+        # factor = (1/2) / ((1/2) - (-1/2)) = (1/2) / 1 = 0.5
+        factor = 0.5
 
         # Compute LTE estimate
         lte = factor * (V_new - V_predicted)

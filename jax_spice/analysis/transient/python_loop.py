@@ -89,11 +89,8 @@ class PythonLoopStrategy(TransientStrategy):
         Q_prev = self.get_initial_Q()
         inv_dt = 1.0 / dt
 
-        # Trapezoidal integration coefficients: c0=2/dt, c1=-2/dt, d1=-1
-        integ_c0 = 2.0 / dt
-        integ_c1 = -2.0 / dt
-        integ_d1 = -1.0
-        dQdt_prev = jnp.zeros(n_unknowns, dtype=jnp.float64)
+        # Use backward Euler (integ_c0=inv_dt, integ_c1=-inv_dt, integ_d1=0)
+        # This is more stable than trapezoidal for stiff circuits
 
         times_list: List[float] = []
         voltages_dict: Dict[int, List[float]] = {i: [] for i in range(n_external)}
@@ -107,8 +104,6 @@ class PythonLoopStrategy(TransientStrategy):
             num_timesteps = max_steps
             dt = t_stop / (max_steps - 1) if max_steps > 1 else t_stop
             inv_dt = 1.0 / dt
-            integ_c0 = 2.0 / dt
-            integ_c1 = -2.0 / dt
             logger.info(f"{self.name}: Limiting to {max_steps} steps, dt={dt:.2e}s")
 
         logger.info(f"{self.name}: Starting simulation ({num_timesteps} timesteps, "
@@ -122,11 +117,9 @@ class PythonLoopStrategy(TransientStrategy):
             source_values = source_fn(t)
             vsource_vals, isource_vals = self._build_source_arrays(source_values)
 
-            # JIT-compiled NR solve with full interface
+            # JIT-compiled NR solve - backward Euler (no integ coeffs needed, uses defaults)
             V_new, iterations, converged, max_f, Q = nr_solve(
-                V, vsource_vals, isource_vals, Q_prev, inv_dt, device_arrays,
-                1e-12, 0.0,  # gmin, gshunt
-                dQdt_prev, integ_c0, integ_c1, integ_d1
+                V, vsource_vals, isource_vals, Q_prev, inv_dt, device_arrays
             )
 
             # Extract Python values for tracking
@@ -134,11 +127,8 @@ class PythonLoopStrategy(TransientStrategy):
             is_converged = bool(converged)
             residual = float(max_f)
 
-            # Update charge state for trapezoidal integration
-            dQdt = integ_c0 * Q + integ_c1 * Q_prev + integ_d1 * dQdt_prev
+            # Update charge state for next timestep (backward Euler: just Q_prev)
             Q_prev = Q
-            dQdt_prev = dQdt
-
             V = V_new
             total_nr_iters += nr_iters
 
