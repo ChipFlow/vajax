@@ -3271,7 +3271,7 @@ class CircuitEngine:
             f_idx_n = jnp.where(node_n != ground, node_n - 1, -1)
             # Stack to shape (n, 2): [[p0, n0], [p1, n1], ...]
             f_indices = jnp.stack([f_idx_p, f_idx_n], axis=1)
-            f_signs = jnp.array([1.0, -1.0])  # I at p, -I at n
+            f_signs = jnp.array([-1.0, 1.0])  # -I at p (current leaves), +I at n (current enters)
 
             # Jacobian indices for 4-entry stamp pattern
             # Entries: (p,p), (p,n), (n,n), (n,p)
@@ -3389,9 +3389,9 @@ class CircuitEngine:
         if 'isource' in device_data and isource_vals.size > 0:
             d = device_data['isource']
             # isource_vals is pre-built JAX array - no Python loop here
-            # Residual: +I at p (current leaves), -I at n (current enters)
-            # For KCL: f[i] = sum of currents LEAVING node i
-            f_vals = isource_vals[:, None] * jnp.array([1.0, -1.0])[None, :]  # (n, 2)
+            # KCL: sum of currents INTO node = 0
+            # For isource from p to n: -I at p (leaves), +I at n (enters)
+            f_vals = isource_vals[:, None] * jnp.array([-1.0, 1.0])[None, :]  # (n, 2) - current leaves p, enters n
             f_idx = d['f_indices'].ravel()
             f_val = f_vals.ravel()
             f_valid = f_idx >= 0
@@ -3587,10 +3587,11 @@ class CircuitEngine:
                 ))
 
             # Current sources (resistive residual only)
-            # Residual: +I at p (current leaves), -I at n (current enters)
+            # KCL: sum of currents INTO node = 0
+            # For isource from p to n: -I at p (leaves), +I at n (enters)
             if 'isource' in source_device_data and isource_vals.size > 0:
                 d = source_device_data['isource']
-                f_vals = isource_vals[:, None] * jnp.array([1.0, -1.0])[None, :]
+                f_vals = isource_vals[:, None] * jnp.array([-1.0, 1.0])[None, :]
                 f_idx = d['f_indices'].ravel()
                 f_val = f_vals.ravel()
                 f_valid = f_idx >= 0
