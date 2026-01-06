@@ -1,0 +1,254 @@
+"""MIR data structures for OpenVAF to JAX translation.
+
+This module provides dataclasses representing MIR (Mid-level IR) structures
+as returned by openvaf_py.VaModule methods.
+"""
+
+from dataclasses import dataclass, field
+from typing import Dict, List, Optional, Any
+
+
+@dataclass(frozen=True)
+class MIRValue:
+    """Reference to a MIR value (e.g., 'v123').
+
+    In MIR, values are named vN where N is the value ID.
+    Each value is assigned exactly once (SSA form).
+    """
+    id: str
+
+    def __str__(self) -> str:
+        return self.id
+
+
+@dataclass
+class PhiOperand:
+    """An operand of a PHI node.
+
+    PHI nodes merge values from different control flow paths.
+    Each operand specifies:
+    - block: The predecessor block this value comes from
+    - value: The value ID from that block
+    """
+    block: str
+    value: str
+
+
+@dataclass
+class MIRInstruction:
+    """A single MIR instruction.
+
+    MIR instructions are the basic unit of computation. Each instruction:
+    - Has an opcode (e.g., 'fadd', 'phi', 'br')
+    - May produce a result value
+    - Has zero or more operands
+
+    Special instructions:
+    - PHI: Merges values from multiple predecessors
+    - BR: Conditional branch with true/false targets
+    - JMP: Unconditional jump
+    - EXIT: Function return
+    - CALL: Function call
+    """
+    opcode: str
+    block: str
+    result: Optional[str] = None
+    operands: List[str] = field(default_factory=list)
+
+    # PHI-specific fields
+    phi_operands: Optional[List[PhiOperand]] = None
+
+    # Branch-specific fields
+    condition: Optional[str] = None
+    true_block: Optional[str] = None
+    false_block: Optional[str] = None
+    target_block: Optional[str] = None  # For JMP
+
+    # Call-specific fields
+    func_name: Optional[str] = None
+
+    @property
+    def is_phi(self) -> bool:
+        return self.opcode.lower() == 'phi'
+
+    @property
+    def is_terminator(self) -> bool:
+        """Returns True if this instruction ends a basic block."""
+        return self.opcode.lower() in ('br', 'jmp', 'exit')
+
+    @property
+    def is_branch(self) -> bool:
+        return self.opcode.lower() == 'br'
+
+    @property
+    def is_jump(self) -> bool:
+        return self.opcode.lower() == 'jmp'
+
+    @property
+    def is_exit(self) -> bool:
+        return self.opcode.lower() == 'exit'
+
+
+@dataclass
+class Block:
+    """A basic block in the control flow graph.
+
+    A basic block is a sequence of instructions with:
+    - Single entry point (first instruction)
+    - Single exit point (last instruction, a terminator)
+    - No branches except at the end
+    """
+    name: str
+    instructions: List[MIRInstruction] = field(default_factory=list)
+    predecessors: List[str] = field(default_factory=list)
+    successors: List[str] = field(default_factory=list)
+
+    @property
+    def phi_nodes(self) -> List[MIRInstruction]:
+        """Get all PHI nodes at the start of this block."""
+        return [inst for inst in self.instructions if inst.is_phi]
+
+    @property
+    def terminator(self) -> Optional[MIRInstruction]:
+        """Get the terminating instruction of this block."""
+        for inst in reversed(self.instructions):
+            if inst.is_terminator:
+                return inst
+        return None
+
+    @property
+    def body_instructions(self) -> List[MIRInstruction]:
+        """Get non-PHI, non-terminator instructions."""
+        return [inst for inst in self.instructions
+                if not inst.is_phi and not inst.is_terminator]
+
+
+@dataclass
+class MIRFunction:
+    """A complete MIR function (init or eval).
+
+    Contains all blocks, constants, and parameters for a function.
+    """
+    name: str
+    blocks: Dict[str, Block] = field(default_factory=dict)
+
+    # Constants
+    constants: Dict[str, float] = field(default_factory=dict)
+    bool_constants: Dict[str, bool] = field(default_factory=dict)
+    int_constants: Dict[str, int] = field(default_factory=dict)
+
+    # Parameters (value IDs in order)
+    params: List[str] = field(default_factory=list)
+
+    # Entry block name
+    entry_block: str = 'block0'
+
+    @property
+    def all_instructions(self) -> List[MIRInstruction]:
+        """Get all instructions across all blocks."""
+        result = []
+        for block in self.blocks.values():
+            result.extend(block.instructions)
+        return result
+
+    def get_instruction_by_result(self, result: str) -> Optional[MIRInstruction]:
+        """Find instruction that produces a given result value."""
+        for block in self.blocks.values():
+            for inst in block.instructions:
+                if inst.result == result:
+                    return inst
+        return None
+
+
+def parse_mir_function(name: str, mir_data: Dict[str, Any]) -> MIRFunction:
+    """Parse MIR data from openvaf_py into MIRFunction.
+
+    Args:
+        name: Function name ('init' or 'eval')
+        mir_data: Dict from get_mir_instructions() or get_init_mir_instructions()
+
+    Returns:
+        Parsed MIRFunction
+    """
+    func = MIRFunction(
+        name=name,
+        constants=dict(mir_data.get('constants', {})),
+        bool_constants=dict(mir_data.get('bool_constants', {})),
+        int_constants=dict(mir_data.get('int_constants', {})),
+        params=list(mir_data.get('params', [])),
+    )
+
+    # Parse blocks
+    blocks_data = mir_data.get('blocks', {})
+    for block_name, block_data in blocks_data.items():
+        block = Block(
+            name=block_name,
+            predecessors=list(block_data.get('predecessors', [])),
+            successors=list(block_data.get('successors', [])),
+        )
+        func.blocks[block_name] = block
+
+    # Parse instructions and add to blocks
+    instructions = mir_data.get('instructions', [])
+    for inst_data in instructions:
+        inst = _parse_instruction(inst_data)
+        block_name = inst.block
+        if block_name in func.blocks:
+            func.blocks[block_name].instructions.append(inst)
+
+    # Set entry block
+    # The entry block is the one with no predecessors
+    if func.blocks:
+        # First try 'block0' which is the conventional entry
+        if 'block0' in func.blocks:
+            func.entry_block = 'block0'
+        else:
+            # Find block with no predecessors
+            for block_name, block in func.blocks.items():
+                if not block.predecessors:
+                    func.entry_block = block_name
+                    break
+            else:
+                # Fallback: use block with lowest numeric suffix
+                def block_num(name: str) -> int:
+                    try:
+                        return int(name.replace('block', ''))
+                    except ValueError:
+                        return float('inf')
+                func.entry_block = min(func.blocks.keys(), key=block_num)
+
+    return func
+
+
+def _parse_instruction(inst_data: Dict[str, Any]) -> MIRInstruction:
+    """Parse a single instruction from MIR data."""
+    opcode = inst_data.get('opcode', '').lower()
+
+    inst = MIRInstruction(
+        opcode=opcode,
+        block=inst_data.get('block', ''),
+        result=inst_data.get('result'),
+        operands=list(inst_data.get('operands', [])),
+    )
+
+    # Parse PHI operands
+    if opcode == 'phi':
+        phi_ops = inst_data.get('phi_operands', [])
+        inst.phi_operands = [
+            PhiOperand(block=op['block'], value=op['value'])
+            for op in phi_ops
+        ]
+
+    # Parse branch-specific fields
+    if opcode == 'br':
+        inst.condition = inst_data.get('condition')
+        inst.true_block = inst_data.get('true_block')
+        inst.false_block = inst_data.get('false_block')
+    elif opcode == 'jmp':
+        inst.target_block = inst_data.get('target_block')
+
+    # Parse call-specific fields
+    if opcode == 'call':
+        inst.func_name = inst_data.get('func_name')
+
+    return inst
