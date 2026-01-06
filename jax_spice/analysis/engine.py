@@ -69,11 +69,8 @@ _SPICE_NUMBER_CACHE: Dict[str, float] = {}
 
 # Newton-Raphson solver constants
 MAX_NR_ITERATIONS = 100  # Maximum Newton-Raphson iterations per timestep
-# Absolute tolerance for NR convergence (current in Amperes)
-# With voltage sources using G=1e12, residual = G * V_error
-# For 10nV voltage accuracy: abstol = 1e12 * 10e-9 = 1e4 (10kA)
-# Previous value of 1e-3 demanded femtovolt accuracy (unrealistic)
-DEFAULT_ABSTOL = 1e4  # 10kA - corresponds to ~10nV voltage accuracy with G=1e12
+# With vsource residuals masked, we can use VACASK's tight tolerance
+DEFAULT_ABSTOL = 1e-12  # Match VACASK default
 
 
 @dataclass

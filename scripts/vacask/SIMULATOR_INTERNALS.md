@@ -708,3 +708,306 @@ From actual ring oscillator simulation:
 - **System size**: 47 unknowns, 220 Jacobian entries
 
 The high bypass rate indicates efficient steady-state operation where device terminals don't change significantly between iterations.
+
+---
+
+## 6. VACASK Defaults vs JAX-SPICE Comparison
+
+### Tolerance Defaults
+
+| Parameter | VACASK | JAX-SPICE | Status |
+|-----------|--------|-----------|--------|
+| `abstol` | 1e-12 | 1e-12 | ✅ Aligned |
+| `reltol` | 1e-3 | 1e-3 | ✅ Have it |
+| `vntol` | 1e-6 | ❌ | **Missing** - voltage tolerance for convergence |
+| `chgtol` | 1e-15 | ❌ | **Missing** - charge tolerance (1mV across 1pF) |
+| `fluxtol` | 1e-14 | ❌ | **Missing** - flux tolerance (1µA across 10nH) |
+| `tolscale` | 1.0 | ❌ | **Missing** - global tolerance scaling factor |
+
+### Environment Defaults
+
+| Parameter | VACASK | JAX-SPICE | Status |
+|-----------|--------|-----------|--------|
+| `temp` | 27°C (300.15K) | 300.15K | ✅ Have it |
+| `tnom` | 27°C (300.15K) | ❌ | **Missing** - nominal temp for model params |
+| `gmin` | 1e-12 | 1e-12 | ✅ Have it |
+| `gshunt` | 0.0 | 0.0 | ✅ Have it |
+| `scale` | 1.0 | ❌ | **Missing** - geometry scaling factor |
+| `minr` | 0.0 | ❌ | **Missing** - minimum resistance |
+
+### Newton-Raphson Defaults
+
+| Parameter | VACASK | JAX-SPICE | Status |
+|-----------|--------|-----------|--------|
+| `op_itl` | 100 | 100 | ✅ Have it |
+| `tran_itl` | 10 | 100 | ⚠️ Different (VACASK uses 10 for transient) |
+| `nr_damping` | 1.0 | 1.0 | ✅ Have it |
+| `nr_conviter` | 1 | ❌ | **Missing** - consecutive converged iterations required |
+| `nr_residualcheck` | 1 | ✅ | Have it (implicit) |
+| `nr_convtol` | 0.01 | ❌ | **Missing** - instance convergence tolerance factor |
+| `nr_bypasstol` | 0.01 | ❌ | **Missing** - instance bypass tolerance factor |
+| `nr_bypass` | 0 | ❌ | **Missing** - instance bypass enable |
+| `nr_force` | 1e5 | ❌ | **Missing** - nodeset/IC forcing factor |
+
+### Transient Analysis Defaults
+
+| Parameter | VACASK | JAX-SPICE | Status |
+|-----------|--------|-----------|--------|
+| `tran_method` | "trap" | trap | ✅ Have it |
+| `tran_maxord` | 2 | ❌ | **Missing** (trap is fixed order 2) |
+| `tran_predictor` | 0 | ❌ | **Missing** - use predictor for initial guess |
+| `tran_redofactor` | 2.5 | ❌ | **Missing** - LTE rejection threshold |
+| `tran_lteratio` | 3.5 | ❌ | **Missing** - LTE overestimation safety factor |
+| `tran_xmu` | 0.5 | ❌ | **Missing** - trap/euler mixing (0.5=pure trap) |
+| `tran_ft` | 0.25 | ❌ | **Missing** - timestep reduction factor on NR fail |
+| `tran_fs` | 0.25 | ❌ | **Missing** - initial timestep fraction |
+| `tran_fbr` | 0.2501 | ❌ | **Missing** - breakpoint proximity factor |
+| `tran_trapltefilter` | 1 | ❌ | **Missing** - trap ringing filter |
+
+### Homotopy Defaults
+
+| Parameter | VACASK | JAX-SPICE | Status |
+|-----------|--------|-----------|--------|
+| `homotopy_gminsteps` | 100 | 100 | ✅ Have it |
+| `homotopy_gminfactor` | 10.0 | 10.0 | ✅ Have it |
+| `homotopy_startgmin` | 1e-3 | 1e-3 | ✅ Have it |
+| `homotopy_mingmin` | 1e-15 | 1e-13 | ⚠️ Slightly different |
+| `homotopy_srcsteps` | 100 | 100 | ✅ Have it |
+
+---
+
+## 7. LTE-Based Timestep Control (Detailed)
+
+From `coretran.cpp:1070-1223`, the LTE algorithm:
+
+### Predictor-Corrector Framework
+
+```cpp
+// Use polynomial extrapolation to predict x_{k+1}
+predictorCoeffs.setMethod(PolynomialExtrapolation, order);
+predictorCoeffs.predict(predictedSolution);
+
+// NR solver computes corrector (actual solution)
+// LTE ≈ corrector - predictor, scaled by error coefficients
+
+double factor = integCoeffs.errorCoeff() /
+                (integCoeffs.errorCoeff() - predictorCoeffs.errorCoeff());
+// factor is always < 1 because:
+//   - integrator errorCoeff is positive
+//   - predictor errorCoeff is negative
+```
+
+### LTE Computation Per Unknown
+
+```cpp
+for (int i = 1; i <= n; i++) {
+    // Compute LTE estimate
+    double lte;
+    if (tran_trapltefilter && method == AdamsMoulton && order == 2) {
+        // Use filtered solution for trap ringing suppression
+        lte = factor * (filteredSolution[i] - predictedSolution[i]);
+    } else {
+        lte = factor * (solution[i] - predictedSolution[i]);
+    }
+
+    // Compute tolerance based on relref setting
+    double tolref;
+    switch (relreflte) {
+        case relrefGlobal:      // Max over all unknowns & time
+            tolref = globalMaxSolution[nature_index];
+            break;
+        case relrefLocal:       // Max over time, per unknown
+            tolref = historicMaxSolution[i];
+            break;
+        case relrefPointLocal:  // Current value only
+            tolref = solution[i];
+            break;
+    }
+    double tol = max(|tolref * reltol|, abstol[i]);
+
+    // Compute scaled LTE ratio
+    double ratio;
+    if (tran_spicelte) {
+        // SPICE-compatible (incorrect) formulation
+        ratio = |lte| / (tol * lteratio * factorial(order + 1));
+    } else {
+        // Correct formulation
+        ratio = |lte| / (tol * lteratio);
+    }
+
+    maxRatio = max(maxRatio, ratio);
+}
+```
+
+### Timestep Adjustment
+
+```cpp
+// If maxRatio > 0, compute new timestep
+if (maxRatio > 0) {
+    double hkFactor;
+    if (tran_spicelte) {
+        // SPICE: LTE ∝ h^order
+        hkFactor = pow(maxRatio, -1.0 / order);
+    } else {
+        // Correct: LTE ∝ h^(order+1)
+        hkFactor = pow(maxRatio, -1.0 / (order + 1));
+    }
+    hkNew = min(hkNew, hk * hkFactor);
+}
+
+// Check if timestep should be rejected
+double hkRatio = hk / hkNew;
+if (tran_redofactor > 0 && hkRatio > tran_redofactor) {
+    // LTE too large, reject timepoint
+    accept = false;
+    // Will retry with smaller step
+} else {
+    accept = true;
+    // Optionally increase order
+    if (order < maxOrder) {
+        order++;
+    }
+}
+```
+
+### Trap Ringing Filter
+
+For trapezoidal integration, spurious oscillations can occur. VACASK uses a filter:
+
+```cpp
+// Need at least 3 past points for filter
+if (trapHistory >= 3 && method == AdamsMoulton && order == 2) {
+    for (int i = 1; i <= n; i++) {
+        auto x0 = solution[i];      // Latest
+        auto x1 = solution(1)[i];   // t_k
+        auto x2 = solution(2)[i];   // t_{k-1}
+        auto x3 = solution(3)[i];   // t_{k-2}
+
+        // Compute envelope slopes
+        auto k13 = (x1 - x3) / (hk1 + hk2);  // Odd points envelope
+        auto k02 = (x0 - x2) / (hk1 + hk);   // Even points envelope
+
+        // Estimate envelope width at x2
+        auto deltaEnvelopeAt2 = x2 - (x3 + k13 * hk2);
+
+        // Corrected solution removes half the envelope width
+        filteredSolution[i] = x0 - deltaEnvelopeAt2 / 2;
+    }
+}
+```
+
+### Timestep Limiting Factors
+
+The new timestep is limited by multiple factors:
+
+```cpp
+// 1. Maxstep parameter
+if (params.maxstep > 0) {
+    hmax = min(hmax, params.maxstep);
+}
+
+// 2. Simulation interval
+if (tran_minpts > 0) {
+    hmax = min(hmax, (params.stop - params.start) / tran_minpts);
+}
+
+// 3. Breakpoint proximity (avoid tiny steps near breakpoints)
+hmax = min(hmax, tran_fbr * (nextBreakpoint - lastBreakpoint));
+
+// 4. Device-requested bound_step ($bound_step in Verilog-A)
+if (boundStep > 0) {
+    hkNew = min(hkNew, boundStep);
+}
+
+// 5. Apply hmax
+hkNew = min(hkNew, hmax);
+
+// 6. Breakpoint cutting (land exactly on breakpoint)
+if (tk + hkNew > nextBreakpoint) {
+    hkNew = nextBreakpoint - tk;
+    tSolveNew = nextBreakpoint;
+}
+```
+
+---
+
+## 8. openvaf-py Instance Core Data Exports
+
+### Currently Exported
+
+| Data | openvaf-py | JAX-SPICE Usage |
+|------|------------|-----------------|
+| `residuals_resist` | ✅ Array per node | Used for f(x) |
+| `residuals_react` | ✅ Array per node | Used for Q(x) |
+| `jacobian_resist` | ✅ Flattened array | Used for ∂f/∂V |
+| `jacobian_react` | ✅ Flattened array | Used for ∂Q/∂V |
+| `lim_rhs_resist` | ✅ Array per node | Limiting RHS correction |
+| `lim_rhs_react` | ✅ Array per node | Limiting RHS correction |
+| `node_names` | ✅ List | For result mapping |
+| `jacobian_keys` | ✅ (row, col) pairs | For sparse stamping |
+| `terminals` | ✅ List | External connections |
+| `internal_nodes` | ✅ List | Internal nodes (e.g., NOI) |
+| `collapsible_pairs` | ✅ List | Node collapse info |
+| `collapse_decision_outputs` | ✅ List | Dynamic collapse decisions |
+
+### Not Currently Exported (Needed for Full VACASK Parity)
+
+| Data | VACASK Location | Purpose |
+|------|-----------------|---------|
+| `state_index_table` | `stateIndexTable()` | Maps states to global vector for multi-rate |
+| `bound_step` | `bound_step_offset` | Device-requested max timestep ($bound_step) |
+| `node_mapping_array` | `nodeMappingArray()` | Maps internal→system unknowns |
+| `jacobian_pointers` | `resistiveJacobianPointers()` | Direct sparse matrix pointers |
+
+### Priority for Implementation
+
+1. **High**: `bound_step` - Needed for PSP103 and complex models that use $bound_step
+2. **Medium**: `state_index_table` - Needed for multi-rate integration
+3. **Low**: `jacobian_pointers`, `node_mapping_array` - Optimization for sparse stamping
+
+---
+
+## 9. Voltage Source Implementation Comparison
+
+### JAX-SPICE: High-Conductance Stamp
+
+```python
+G_vsource = 1e12  # Very large conductance
+
+# Jacobian contribution
+J[p, p] += G
+J[p, n] -= G
+J[n, p] -= G
+J[n, n] += G
+
+# Residual contribution
+f[p] += G * (V[p] - V[n] - Vsource)
+f[n] -= G * (V[p] - V[n] - Vsource)
+```
+
+**Problem**: Creates ~1kA residual per 1nV error → dominates convergence check
+**Solution**: Mask vsource nodes from residual convergence check
+
+### VACASK: Branch Current MNA
+
+From `devvisrc.cpp`:
+
+```cpp
+// Adds extra unknown: branch current I_branch
+// nodes_[0] = positive terminal
+// nodes_[1] = negative terminal
+// nodes_[2] = branch current (extra unknown)
+
+// Jacobian entries (not 1e12, just ±1 and ±mfactor)
+jacPFlow += mfactor;   // dI(p)/dI_branch = +mfactor
+jacNFlow -= mfactor;   // dI(n)/dI_branch = -mfactor
+jacFlowP -= 1.0;       // d(Vp-Vn)/dVp = -1
+jacFlowN += 1.0;       // d(Vp-Vn)/dVn = +1
+
+// Residual (KCL at nodes + voltage equation)
+residual[p] += mfactor * I_branch;
+residual[n] -= mfactor * I_branch;
+residual[flow] = V[p] - V[n] - Vsource;  // O(1) magnitude
+```
+
+**Advantage**: O(1) residuals → no masking needed, tight abstol works naturally

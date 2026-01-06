@@ -23,9 +23,8 @@ from jax_spice._logging import logger
 
 # Newton-Raphson solver constants
 MAX_NR_ITERATIONS = 100
-# With vsource residuals masked, we can use a tighter tolerance that responds
-# to µA-level current perturbations (like the 10µA pulse in ring oscillator)
-DEFAULT_ABSTOL = 1e-6  # 1µA - allows detection of small perturbations
+# With vsource residuals masked, we can use VACASK's tight tolerance
+DEFAULT_ABSTOL = 1e-12  # Match VACASK default
 
 
 def _compute_convergence_masks(
