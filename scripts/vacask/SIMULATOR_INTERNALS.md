@@ -500,6 +500,182 @@ LOOP:
 
 ---
 
+## 5. Numerical Robustness and Large Capacitance Handling
+
+VACASK does not have explicit "large capacitance" detection or limiting. Instead, it relies on several general mechanisms that naturally handle extreme component values.
+
+### Device-Level Timestep Bounding (`$bound_step`)
+
+Verilog-A models can call `$bound_step(value)` to limit the simulator timestep. This is the primary mechanism for devices to communicate timestep constraints:
+
+```cpp
+// In EvalSetup (elsetup.h)
+double boundStep {};  // Initialized to -1, set by devices
+
+void setBoundStep(double bound) {
+    if (bound < boundStep) boundStep = bound;
+}
+
+// Applied in coretran.cpp:1294
+if (boundStep > 0) {
+    if (debug > 1 && boundStep < hkNew) {
+        Simulator::dbg() << "Instance(s) limit timestep to dt=" << boundStep << ".\n";
+    }
+    hkNew = std::min(hkNew, boundStep);
+}
+```
+
+If a device model detects conditions requiring small timesteps (e.g., large dV/dt across a large capacitor), it can enforce this constraint.
+
+### LTE-Based Automatic Timestep Reduction
+
+Large capacitances naturally produce larger local truncation errors when voltages change rapidly:
+
+```
+LTE ∝ C * d²V/dt² * h^(order+1)
+```
+
+For trapezoidal integration (order 2):
+- Large C with changing V → large LTE
+- LTE/tolerance > 1 triggers timestep rejection
+- New step: `h_new = h * (tolerance/LTE)^(1/3)`
+
+This provides automatic protection without explicit capacitance checks.
+
+### Matrix Conditioning and Numerical Checks
+
+VACASK provides optional checks for numerical problems:
+
+| Option | Default | Description |
+|--------|---------|-------------|
+| `matrixcheck` | 0 | Check Jacobian entries for inf/NaN |
+| `rhscheck` | 1 | Check RHS vector for inf/NaN |
+| `solutioncheck` | 1 | Check solution vector for inf/NaN |
+| `rcondcheck` | 0 | Check reciprocal condition number (if > 0) |
+
+#### Matrix Check
+
+```cpp
+// In NR solver iteration
+if (settings.matrixCheck && !jacobian.isFinite(true, true)) {
+    // Iteration fails, timestep will be reduced
+    lastError = Error::MatrixError;
+    return false;
+}
+```
+
+#### Condition Number Check (AC/Noise analyses)
+
+```cpp
+// In coreac.cpp, corenoise.cpp, coreacxf.cpp
+if (options.rcondcheck > 0) {
+    double rcond;
+    if (!acMatrix.rcond(rcond)) {
+        setError(AcError::MatrixError);
+        break;
+    }
+    if (rcond < options.rcondcheck) {
+        Simulator::dbg() << "Matrix is close to singular.\n";
+        setError(AcError::MatrixError);
+        break;
+    }
+}
+```
+
+### Singular Matrix Detection
+
+KLU (the sparse solver) detects zero pivots during factorization:
+
+```cpp
+// klumatrix.cpp:738
+if (!numeric || isSingular || (nr >= 0 && nr != AN)) {
+    lastError = Error::Factorization;
+    errorIndex = singularColumn();
+    // Error message: "Factorization failed, zero pivot @ node 'xxx'"
+}
+```
+
+A large capacitance can contribute to singularity if:
+- The `alpha = 1/(h*b_{-1})` term becomes very small (large timestep)
+- Combined with small conductances elsewhere in the circuit
+
+### Jacobian Contribution from Capacitance
+
+During transient analysis, a capacitor C between nodes i and j contributes:
+
+```
+Jacobian[i,i] += alpha * C
+Jacobian[i,j] -= alpha * C
+Jacobian[j,i] -= alpha * C
+Jacobian[j,j] += alpha * C
+
+where alpha = 1/(h * b_{-1})
+```
+
+For trapezoidal: `alpha = 2/h`
+
+**Potential issues with large C:**
+- If `h` is large, `alpha*C` may be comparable to other conductances → OK
+- If `h` is small (forced by LTE), `alpha*C` becomes very large → dominates matrix
+- Very large `alpha*C` can cause conditioning issues if other elements are small
+
+### What VACASK Does NOT Do
+
+Unlike some SPICE variants, VACASK does not:
+- Automatically insert `gmin` shunts across capacitors
+- Warn about "unrealistic" capacitance values
+- Scale or limit capacitance values
+- Have special handling for floating capacitors
+
+### Debugging Large Capacitance Issues
+
+To diagnose problems with large capacitances:
+
+```
+control
+  // Enable all numerical checks
+  options matrixcheck=1
+  options rhscheck=1
+  options solutioncheck=1
+  options rcondcheck=1e-15
+
+  // Enable detailed debug output
+  options tran_debug=2
+  options nr_debug=1
+
+  analysis tran step=1n stop=100n
+endc
+```
+
+Signs of large capacitance problems:
+1. **Very small timesteps** - LTE control forcing tiny steps
+2. **"Matrix entry is not finite"** - overflow in Jacobian
+3. **"Matrix is close to singular"** - conditioning issues
+4. **"Factorization failed, zero pivot"** - numerical singularity
+5. **Many NR iterations** - slow convergence due to stiff system
+
+### Recommendations for Large Capacitances
+
+1. **Use `maxstep`** to prevent excessively large timesteps:
+   ```
+   analysis tran step=1n stop=1u maxstep=10n
+   ```
+
+2. **Consider BDF-2** for stiff circuits (large C with small R):
+   ```
+   options tran_method="gear2"
+   ```
+   BDF-2 is A-stable and better suited for stiff systems.
+
+3. **Enable matrix checks** during development:
+   ```
+   options matrixcheck=1 rcondcheck=1e-14
+   ```
+
+4. **Check device models** - ensure `$bound_step` is called appropriately for large reactive elements.
+
+---
+
 ## Summary: Key Numerical Parameters
 
 | Parameter | Default | Description |
