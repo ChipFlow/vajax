@@ -2855,7 +2855,7 @@ class CircuitEngine:
                 source_max_steps=100,
                 chain=("gdev", "gshunt", "src"),
                 max_iterations=max_iterations,
-                abstol=1e-9,
+                abstol=1e-12,  # Match standard SPICE tolerance
                 debug=0,  # Disable debug output for normal runs
             )
 
