@@ -1,0 +1,763 @@
+This is vacask 0.3.1-75-g9becb2cf.
+(c)2023-2025 EDA Lab FE Uni-Lj, Arpad Buermen
+https://codeberg.org/arpadbuermen/VACASK
+
+Warning! This is a debug build. Simulator will be slow.
+
+Simulating: 9 stage ring oscillator
+Osdi device instance u1:mn:m of model psp103n
+  Terminals: 2 1 0 0 
+  Collapsed node pairs:
+    G, GP
+    S, SI
+    D, DI
+    BP, BI
+    BS, BI
+    BD, BI
+    B, BI
+  Parameters:
+    $mfactor = 1 (real) (not given)
+    l = 1e-06 (real)
+    w = 1e-05 (real)
+    sa = 0 (real) (not given)
+    sb = 0 (real) (not given)
+    sd = 0 (real) (not given)
+    sca = 0 (real) (not given)
+    scb = 0 (real) (not given)
+    scc = 0 (real) (not given)
+    sc = 0 (real) (not given)
+    nf = 1 (real) (not given)
+    ngcon = 1 (real) (not given)
+    xgw = 1e-07 (real) (not given)
+    nrs = 0 (real) (not given)
+    nrd = 0 (real) (not given)
+    jw = 1e-06 (real) (not given)
+    delvto = 0 (real) (not given)
+    factuo = 1 (real) (not given)
+    delvtoedge = 0 (real) (not given)
+    factuoedge = 1 (real) (not given)
+    absource = 1e-12 (real) (not given)
+    lssource = 1e-06 (real) (not given)
+    lgsource = 1e-06 (real) (not given)
+    abdrain = 1e-12 (real) (not given)
+    lsdrain = 1e-06 (real) (not given)
+    lgdrain = 1e-06 (real) (not given)
+    as = 5e-12 (real)
+    ps = 2.1e-05 (real)
+    ad = 5e-12 (real)
+    pd = 2.1e-05 (real)
+    mult = 1 (real) (not given)
+Osdi device instance u1:mp:m of model psp103p
+  Terminals: 2 1 vdd vdd 
+  Collapsed node pairs:
+    G, GP
+    S, SI
+    D, DI
+    BP, BI
+    BS, BI
+    BD, BI
+    B, BI
+  Parameters:
+    $mfactor = 1 (real) (not given)
+    l = 1e-06 (real)
+    w = 2e-05 (real)
+    sa = 0 (real) (not given)
+    sb = 0 (real) (not given)
+    sd = 0 (real) (not given)
+    sca = 0 (real) (not given)
+    scb = 0 (real) (not given)
+    scc = 0 (real) (not given)
+    sc = 0 (real) (not given)
+    nf = 1 (real) (not given)
+    ngcon = 1 (real) (not given)
+    xgw = 1e-07 (real) (not given)
+    nrs = 0 (real) (not given)
+    nrd = 0 (real) (not given)
+    jw = 1e-06 (real) (not given)
+    delvto = 0 (real) (not given)
+    factuo = 1 (real) (not given)
+    delvtoedge = 0 (real) (not given)
+    factuoedge = 1 (real) (not given)
+    absource = 1e-12 (real) (not given)
+    lssource = 1e-06 (real) (not given)
+    lgsource = 1e-06 (real) (not given)
+    abdrain = 1e-12 (real) (not given)
+    lsdrain = 1e-06 (real) (not given)
+    lgdrain = 1e-06 (real) (not given)
+    as = 1e-11 (real)
+    ps = 4.1e-05 (real)
+    ad = 1e-11 (real)
+    pd = 4.1e-05 (real)
+    mult = 1 (real) (not given)
+Osdi device instance u2:mn:m of model psp103n
+  Terminals: 3 2 0 0 
+  Collapsed node pairs:
+    G, GP
+    S, SI
+    D, DI
+    BP, BI
+    BS, BI
+    BD, BI
+    B, BI
+  Parameters:
+    $mfactor = 1 (real) (not given)
+    l = 1e-06 (real)
+    w = 1e-05 (real)
+    sa = 0 (real) (not given)
+    sb = 0 (real) (not given)
+    sd = 0 (real) (not given)
+    sca = 0 (real) (not given)
+    scb = 0 (real) (not given)
+    scc = 0 (real) (not given)
+    sc = 0 (real) (not given)
+    nf = 1 (real) (not given)
+    ngcon = 1 (real) (not given)
+    xgw = 1e-07 (real) (not given)
+    nrs = 0 (real) (not given)
+    nrd = 0 (real) (not given)
+    jw = 1e-06 (real) (not given)
+    delvto = 0 (real) (not given)
+    factuo = 1 (real) (not given)
+    delvtoedge = 0 (real) (not given)
+    factuoedge = 1 (real) (not given)
+    absource = 1e-12 (real) (not given)
+    lssource = 1e-06 (real) (not given)
+    lgsource = 1e-06 (real) (not given)
+    abdrain = 1e-12 (real) (not given)
+    lsdrain = 1e-06 (real) (not given)
+    lgdrain = 1e-06 (real) (not given)
+    as = 5e-12 (real)
+    ps = 2.1e-05 (real)
+    ad = 5e-12 (real)
+    pd = 2.1e-05 (real)
+    mult = 1 (real) (not given)
+Osdi device instance u2:mp:m of model psp103p
+  Terminals: 3 2 vdd vdd 
+  Collapsed node pairs:
+    G, GP
+    S, SI
+    D, DI
+    BP, BI
+    BS, BI
+    BD, BI
+    B, BI
+  Parameters:
+    $mfactor = 1 (real) (not given)
+    l = 1e-06 (real)
+    w = 2e-05 (real)
+    sa = 0 (real) (not given)
+    sb = 0 (real) (not given)
+    sd = 0 (real) (not given)
+    sca = 0 (real) (not given)
+    scb = 0 (real) (not given)
+    scc = 0 (real) (not given)
+    sc = 0 (real) (not given)
+    nf = 1 (real) (not given)
+    ngcon = 1 (real) (not given)
+    xgw = 1e-07 (real) (not given)
+    nrs = 0 (real) (not given)
+    nrd = 0 (real) (not given)
+    jw = 1e-06 (real) (not given)
+    delvto = 0 (real) (not given)
+    factuo = 1 (real) (not given)
+    delvtoedge = 0 (real) (not given)
+    factuoedge = 1 (real) (not given)
+    absource = 1e-12 (real) (not given)
+    lssource = 1e-06 (real) (not given)
+    lgsource = 1e-06 (real) (not given)
+    abdrain = 1e-12 (real) (not given)
+    lsdrain = 1e-06 (real) (not given)
+    lgdrain = 1e-06 (real) (not given)
+    as = 1e-11 (real)
+    ps = 4.1e-05 (real)
+    ad = 1e-11 (real)
+    pd = 4.1e-05 (real)
+    mult = 1 (real) (not given)
+Osdi device instance u3:mn:m of model psp103n
+  Terminals: 4 3 0 0 
+  Collapsed node pairs:
+    G, GP
+    S, SI
+    D, DI
+    BP, BI
+    BS, BI
+    BD, BI
+    B, BI
+  Parameters:
+    $mfactor = 1 (real) (not given)
+    l = 1e-06 (real)
+    w = 1e-05 (real)
+    sa = 0 (real) (not given)
+    sb = 0 (real) (not given)
+    sd = 0 (real) (not given)
+    sca = 0 (real) (not given)
+    scb = 0 (real) (not given)
+    scc = 0 (real) (not given)
+    sc = 0 (real) (not given)
+    nf = 1 (real) (not given)
+    ngcon = 1 (real) (not given)
+    xgw = 1e-07 (real) (not given)
+    nrs = 0 (real) (not given)
+    nrd = 0 (real) (not given)
+    jw = 1e-06 (real) (not given)
+    delvto = 0 (real) (not given)
+    factuo = 1 (real) (not given)
+    delvtoedge = 0 (real) (not given)
+    factuoedge = 1 (real) (not given)
+    absource = 1e-12 (real) (not given)
+    lssource = 1e-06 (real) (not given)
+    lgsource = 1e-06 (real) (not given)
+    abdrain = 1e-12 (real) (not given)
+    lsdrain = 1e-06 (real) (not given)
+    lgdrain = 1e-06 (real) (not given)
+    as = 5e-12 (real)
+    ps = 2.1e-05 (real)
+    ad = 5e-12 (real)
+    pd = 2.1e-05 (real)
+    mult = 1 (real) (not given)
+Osdi device instance u3:mp:m of model psp103p
+  Terminals: 4 3 vdd vdd 
+  Collapsed node pairs:
+    G, GP
+    S, SI
+    D, DI
+    BP, BI
+    BS, BI
+    BD, BI
+    B, BI
+  Parameters:
+    $mfactor = 1 (real) (not given)
+    l = 1e-06 (real)
+    w = 2e-05 (real)
+    sa = 0 (real) (not given)
+    sb = 0 (real) (not given)
+    sd = 0 (real) (not given)
+    sca = 0 (real) (not given)
+    scb = 0 (real) (not given)
+    scc = 0 (real) (not given)
+    sc = 0 (real) (not given)
+    nf = 1 (real) (not given)
+    ngcon = 1 (real) (not given)
+    xgw = 1e-07 (real) (not given)
+    nrs = 0 (real) (not given)
+    nrd = 0 (real) (not given)
+    jw = 1e-06 (real) (not given)
+    delvto = 0 (real) (not given)
+    factuo = 1 (real) (not given)
+    delvtoedge = 0 (real) (not given)
+    factuoedge = 1 (real) (not given)
+    absource = 1e-12 (real) (not given)
+    lssource = 1e-06 (real) (not given)
+    lgsource = 1e-06 (real) (not given)
+    abdrain = 1e-12 (real) (not given)
+    lsdrain = 1e-06 (real) (not given)
+    lgdrain = 1e-06 (real) (not given)
+    as = 1e-11 (real)
+    ps = 4.1e-05 (real)
+    ad = 1e-11 (real)
+    pd = 4.1e-05 (real)
+    mult = 1 (real) (not given)
+Osdi device instance u4:mn:m of model psp103n
+  Terminals: 5 4 0 0 
+  Collapsed node pairs:
+    G, GP
+    S, SI
+    D, DI
+    BP, BI
+    BS, BI
+    BD, BI
+    B, BI
+  Parameters:
+    $mfactor = 1 (real) (not given)
+    l = 1e-06 (real)
+    w = 1e-05 (real)
+    sa = 0 (real) (not given)
+    sb = 0 (real) (not given)
+    sd = 0 (real) (not given)
+    sca = 0 (real) (not given)
+    scb = 0 (real) (not given)
+    scc = 0 (real) (not given)
+    sc = 0 (real) (not given)
+    nf = 1 (real) (not given)
+    ngcon = 1 (real) (not given)
+    xgw = 1e-07 (real) (not given)
+    nrs = 0 (real) (not given)
+    nrd = 0 (real) (not given)
+    jw = 1e-06 (real) (not given)
+    delvto = 0 (real) (not given)
+    factuo = 1 (real) (not given)
+    delvtoedge = 0 (real) (not given)
+    factuoedge = 1 (real) (not given)
+    absource = 1e-12 (real) (not given)
+    lssource = 1e-06 (real) (not given)
+    lgsource = 1e-06 (real) (not given)
+    abdrain = 1e-12 (real) (not given)
+    lsdrain = 1e-06 (real) (not given)
+    lgdrain = 1e-06 (real) (not given)
+    as = 5e-12 (real)
+    ps = 2.1e-05 (real)
+    ad = 5e-12 (real)
+    pd = 2.1e-05 (real)
+    mult = 1 (real) (not given)
+Osdi device instance u4:mp:m of model psp103p
+  Terminals: 5 4 vdd vdd 
+  Collapsed node pairs:
+    G, GP
+    S, SI
+    D, DI
+    BP, BI
+    BS, BI
+    BD, BI
+    B, BI
+  Parameters:
+    $mfactor = 1 (real) (not given)
+    l = 1e-06 (real)
+    w = 2e-05 (real)
+    sa = 0 (real) (not given)
+    sb = 0 (real) (not given)
+    sd = 0 (real) (not given)
+    sca = 0 (real) (not given)
+    scb = 0 (real) (not given)
+    scc = 0 (real) (not given)
+    sc = 0 (real) (not given)
+    nf = 1 (real) (not given)
+    ngcon = 1 (real) (not given)
+    xgw = 1e-07 (real) (not given)
+    nrs = 0 (real) (not given)
+    nrd = 0 (real) (not given)
+    jw = 1e-06 (real) (not given)
+    delvto = 0 (real) (not given)
+    factuo = 1 (real) (not given)
+    delvtoedge = 0 (real) (not given)
+    factuoedge = 1 (real) (not given)
+    absource = 1e-12 (real) (not given)
+    lssource = 1e-06 (real) (not given)
+    lgsource = 1e-06 (real) (not given)
+    abdrain = 1e-12 (real) (not given)
+    lsdrain = 1e-06 (real) (not given)
+    lgdrain = 1e-06 (real) (not given)
+    as = 1e-11 (real)
+    ps = 4.1e-05 (real)
+    ad = 1e-11 (real)
+    pd = 4.1e-05 (real)
+    mult = 1 (real) (not given)
+Osdi device instance u5:mn:m of model psp103n
+  Terminals: 6 5 0 0 
+  Collapsed node pairs:
+    G, GP
+    S, SI
+    D, DI
+    BP, BI
+    BS, BI
+    BD, BI
+    B, BI
+  Parameters:
+    $mfactor = 1 (real) (not given)
+    l = 1e-06 (real)
+    w = 1e-05 (real)
+    sa = 0 (real) (not given)
+    sb = 0 (real) (not given)
+    sd = 0 (real) (not given)
+    sca = 0 (real) (not given)
+    scb = 0 (real) (not given)
+    scc = 0 (real) (not given)
+    sc = 0 (real) (not given)
+    nf = 1 (real) (not given)
+    ngcon = 1 (real) (not given)
+    xgw = 1e-07 (real) (not given)
+    nrs = 0 (real) (not given)
+    nrd = 0 (real) (not given)
+    jw = 1e-06 (real) (not given)
+    delvto = 0 (real) (not given)
+    factuo = 1 (real) (not given)
+    delvtoedge = 0 (real) (not given)
+    factuoedge = 1 (real) (not given)
+    absource = 1e-12 (real) (not given)
+    lssource = 1e-06 (real) (not given)
+    lgsource = 1e-06 (real) (not given)
+    abdrain = 1e-12 (real) (not given)
+    lsdrain = 1e-06 (real) (not given)
+    lgdrain = 1e-06 (real) (not given)
+    as = 5e-12 (real)
+    ps = 2.1e-05 (real)
+    ad = 5e-12 (real)
+    pd = 2.1e-05 (real)
+    mult = 1 (real) (not given)
+Osdi device instance u5:mp:m of model psp103p
+  Terminals: 6 5 vdd vdd 
+  Collapsed node pairs:
+    G, GP
+    S, SI
+    D, DI
+    BP, BI
+    BS, BI
+    BD, BI
+    B, BI
+  Parameters:
+    $mfactor = 1 (real) (not given)
+    l = 1e-06 (real)
+    w = 2e-05 (real)
+    sa = 0 (real) (not given)
+    sb = 0 (real) (not given)
+    sd = 0 (real) (not given)
+    sca = 0 (real) (not given)
+    scb = 0 (real) (not given)
+    scc = 0 (real) (not given)
+    sc = 0 (real) (not given)
+    nf = 1 (real) (not given)
+    ngcon = 1 (real) (not given)
+    xgw = 1e-07 (real) (not given)
+    nrs = 0 (real) (not given)
+    nrd = 0 (real) (not given)
+    jw = 1e-06 (real) (not given)
+    delvto = 0 (real) (not given)
+    factuo = 1 (real) (not given)
+    delvtoedge = 0 (real) (not given)
+    factuoedge = 1 (real) (not given)
+    absource = 1e-12 (real) (not given)
+    lssource = 1e-06 (real) (not given)
+    lgsource = 1e-06 (real) (not given)
+    abdrain = 1e-12 (real) (not given)
+    lsdrain = 1e-06 (real) (not given)
+    lgdrain = 1e-06 (real) (not given)
+    as = 1e-11 (real)
+    ps = 4.1e-05 (real)
+    ad = 1e-11 (real)
+    pd = 4.1e-05 (real)
+    mult = 1 (real) (not given)
+Osdi device instance u6:mn:m of model psp103n
+  Terminals: 7 6 0 0 
+  Collapsed node pairs:
+    G, GP
+    S, SI
+    D, DI
+    BP, BI
+    BS, BI
+    BD, BI
+    B, BI
+  Parameters:
+    $mfactor = 1 (real) (not given)
+    l = 1e-06 (real)
+    w = 1e-05 (real)
+    sa = 0 (real) (not given)
+    sb = 0 (real) (not given)
+    sd = 0 (real) (not given)
+    sca = 0 (real) (not given)
+    scb = 0 (real) (not given)
+    scc = 0 (real) (not given)
+    sc = 0 (real) (not given)
+    nf = 1 (real) (not given)
+    ngcon = 1 (real) (not given)
+    xgw = 1e-07 (real) (not given)
+    nrs = 0 (real) (not given)
+    nrd = 0 (real) (not given)
+    jw = 1e-06 (real) (not given)
+    delvto = 0 (real) (not given)
+    factuo = 1 (real) (not given)
+    delvtoedge = 0 (real) (not given)
+    factuoedge = 1 (real) (not given)
+    absource = 1e-12 (real) (not given)
+    lssource = 1e-06 (real) (not given)
+    lgsource = 1e-06 (real) (not given)
+    abdrain = 1e-12 (real) (not given)
+    lsdrain = 1e-06 (real) (not given)
+    lgdrain = 1e-06 (real) (not given)
+    as = 5e-12 (real)
+    ps = 2.1e-05 (real)
+    ad = 5e-12 (real)
+    pd = 2.1e-05 (real)
+    mult = 1 (real) (not given)
+Osdi device instance u6:mp:m of model psp103p
+  Terminals: 7 6 vdd vdd 
+  Collapsed node pairs:
+    G, GP
+    S, SI
+    D, DI
+    BP, BI
+    BS, BI
+    BD, BI
+    B, BI
+  Parameters:
+    $mfactor = 1 (real) (not given)
+    l = 1e-06 (real)
+    w = 2e-05 (real)
+    sa = 0 (real) (not given)
+    sb = 0 (real) (not given)
+    sd = 0 (real) (not given)
+    sca = 0 (real) (not given)
+    scb = 0 (real) (not given)
+    scc = 0 (real) (not given)
+    sc = 0 (real) (not given)
+    nf = 1 (real) (not given)
+    ngcon = 1 (real) (not given)
+    xgw = 1e-07 (real) (not given)
+    nrs = 0 (real) (not given)
+    nrd = 0 (real) (not given)
+    jw = 1e-06 (real) (not given)
+    delvto = 0 (real) (not given)
+    factuo = 1 (real) (not given)
+    delvtoedge = 0 (real) (not given)
+    factuoedge = 1 (real) (not given)
+    absource = 1e-12 (real) (not given)
+    lssource = 1e-06 (real) (not given)
+    lgsource = 1e-06 (real) (not given)
+    abdrain = 1e-12 (real) (not given)
+    lsdrain = 1e-06 (real) (not given)
+    lgdrain = 1e-06 (real) (not given)
+    as = 1e-11 (real)
+    ps = 4.1e-05 (real)
+    ad = 1e-11 (real)
+    pd = 4.1e-05 (real)
+    mult = 1 (real) (not given)
+Osdi device instance u7:mn:m of model psp103n
+  Terminals: 8 7 0 0 
+  Collapsed node pairs:
+    G, GP
+    S, SI
+    D, DI
+    BP, BI
+    BS, BI
+    BD, BI
+    B, BI
+  Parameters:
+    $mfactor = 1 (real) (not given)
+    l = 1e-06 (real)
+    w = 1e-05 (real)
+    sa = 0 (real) (not given)
+    sb = 0 (real) (not given)
+    sd = 0 (real) (not given)
+    sca = 0 (real) (not given)
+    scb = 0 (real) (not given)
+    scc = 0 (real) (not given)
+    sc = 0 (real) (not given)
+    nf = 1 (real) (not given)
+    ngcon = 1 (real) (not given)
+    xgw = 1e-07 (real) (not given)
+    nrs = 0 (real) (not given)
+    nrd = 0 (real) (not given)
+    jw = 1e-06 (real) (not given)
+    delvto = 0 (real) (not given)
+    factuo = 1 (real) (not given)
+    delvtoedge = 0 (real) (not given)
+    factuoedge = 1 (real) (not given)
+    absource = 1e-12 (real) (not given)
+    lssource = 1e-06 (real) (not given)
+    lgsource = 1e-06 (real) (not given)
+    abdrain = 1e-12 (real) (not given)
+    lsdrain = 1e-06 (real) (not given)
+    lgdrain = 1e-06 (real) (not given)
+    as = 5e-12 (real)
+    ps = 2.1e-05 (real)
+    ad = 5e-12 (real)
+    pd = 2.1e-05 (real)
+    mult = 1 (real) (not given)
+Osdi device instance u7:mp:m of model psp103p
+  Terminals: 8 7 vdd vdd 
+  Collapsed node pairs:
+    G, GP
+    S, SI
+    D, DI
+    BP, BI
+    BS, BI
+    BD, BI
+    B, BI
+  Parameters:
+    $mfactor = 1 (real) (not given)
+    l = 1e-06 (real)
+    w = 2e-05 (real)
+    sa = 0 (real) (not given)
+    sb = 0 (real) (not given)
+    sd = 0 (real) (not given)
+    sca = 0 (real) (not given)
+    scb = 0 (real) (not given)
+    scc = 0 (real) (not given)
+    sc = 0 (real) (not given)
+    nf = 1 (real) (not given)
+    ngcon = 1 (real) (not given)
+    xgw = 1e-07 (real) (not given)
+    nrs = 0 (real) (not given)
+    nrd = 0 (real) (not given)
+    jw = 1e-06 (real) (not given)
+    delvto = 0 (real) (not given)
+    factuo = 1 (real) (not given)
+    delvtoedge = 0 (real) (not given)
+    factuoedge = 1 (real) (not given)
+    absource = 1e-12 (real) (not given)
+    lssource = 1e-06 (real) (not given)
+    lgsource = 1e-06 (real) (not given)
+    abdrain = 1e-12 (real) (not given)
+    lsdrain = 1e-06 (real) (not given)
+    lgdrain = 1e-06 (real) (not given)
+    as = 1e-11 (real)
+    ps = 4.1e-05 (real)
+    ad = 1e-11 (real)
+    pd = 4.1e-05 (real)
+    mult = 1 (real) (not given)
+Osdi device instance u8:mn:m of model psp103n
+  Terminals: 9 8 0 0 
+  Collapsed node pairs:
+    G, GP
+    S, SI
+    D, DI
+    BP, BI
+    BS, BI
+    BD, BI
+    B, BI
+  Parameters:
+    $mfactor = 1 (real) (not given)
+    l = 1e-06 (real)
+    w = 1e-05 (real)
+    sa = 0 (real) (not given)
+    sb = 0 (real) (not given)
+    sd = 0 (real) (not given)
+    sca = 0 (real) (not given)
+    scb = 0 (real) (not given)
+    scc = 0 (real) (not given)
+    sc = 0 (real) (not given)
+    nf = 1 (real) (not given)
+    ngcon = 1 (real) (not given)
+    xgw = 1e-07 (real) (not given)
+    nrs = 0 (real) (not given)
+    nrd = 0 (real) (not given)
+    jw = 1e-06 (real) (not given)
+    delvto = 0 (real) (not given)
+    factuo = 1 (real) (not given)
+    delvtoedge = 0 (real) (not given)
+    factuoedge = 1 (real) (not given)
+    absource = 1e-12 (real) (not given)
+    lssource = 1e-06 (real) (not given)
+    lgsource = 1e-06 (real) (not given)
+    abdrain = 1e-12 (real) (not given)
+    lsdrain = 1e-06 (real) (not given)
+    lgdrain = 1e-06 (real) (not given)
+    as = 5e-12 (real)
+    ps = 2.1e-05 (real)
+    ad = 5e-12 (real)
+    pd = 2.1e-05 (real)
+    mult = 1 (real) (not given)
+Osdi device instance u8:mp:m of model psp103p
+  Terminals: 9 8 vdd vdd 
+  Collapsed node pairs:
+    G, GP
+    S, SI
+    D, DI
+    BP, BI
+    BS, BI
+    BD, BI
+    B, BI
+  Parameters:
+    $mfactor = 1 (real) (not given)
+    l = 1e-06 (real)
+    w = 2e-05 (real)
+    sa = 0 (real) (not given)
+    sb = 0 (real) (not given)
+    sd = 0 (real) (not given)
+    sca = 0 (real) (not given)
+    scb = 0 (real) (not given)
+    scc = 0 (real) (not given)
+    sc = 0 (real) (not given)
+    nf = 1 (real) (not given)
+    ngcon = 1 (real) (not given)
+    xgw = 1e-07 (real) (not given)
+    nrs = 0 (real) (not given)
+    nrd = 0 (real) (not given)
+    jw = 1e-06 (real) (not given)
+    delvto = 0 (real) (not given)
+    factuo = 1 (real) (not given)
+    delvtoedge = 0 (real) (not given)
+    factuoedge = 1 (real) (not given)
+    absource = 1e-12 (real) (not given)
+    lssource = 1e-06 (real) (not given)
+    lgsource = 1e-06 (real) (not given)
+    abdrain = 1e-12 (real) (not given)
+    lsdrain = 1e-06 (real) (not given)
+    lgdrain = 1e-06 (real) (not given)
+    as = 1e-11 (real)
+    ps = 4.1e-05 (real)
+    ad = 1e-11 (real)
+    pd = 4.1e-05 (real)
+    mult = 1 (real) (not given)
+Osdi device instance u9:mn:m of model psp103n
+  Terminals: 1 9 0 0 
+  Collapsed node pairs:
+    G, GP
+    S, SI
+    D, DI
+    BP, BI
+    BS, BI
+    BD, BI
+    B, BI
+  Parameters:
+    $mfactor = 1 (real) (not given)
+    l = 1e-06 (real)
+    w = 1e-05 (real)
+    sa = 0 (real) (not given)
+    sb = 0 (real) (not given)
+    sd = 0 (real) (not given)
+    sca = 0 (real) (not given)
+    scb = 0 (real) (not given)
+    scc = 0 (real) (not given)
+    sc = 0 (real) (not given)
+    nf = 1 (real) (not given)
+    ngcon = 1 (real) (not given)
+    xgw = 1e-07 (real) (not given)
+    nrs = 0 (real) (not given)
+    nrd = 0 (real) (not given)
+    jw = 1e-06 (real) (not given)
+    delvto = 0 (real) (not given)
+    factuo = 1 (real) (not given)
+    delvtoedge = 0 (real) (not given)
+    factuoedge = 1 (real) (not given)
+    absource = 1e-12 (real) (not given)
+    lssource = 1e-06 (real) (not given)
+    lgsource = 1e-06 (real) (not given)
+    abdrain = 1e-12 (real) (not given)
+    lsdrain = 1e-06 (real) (not given)
+    lgdrain = 1e-06 (real) (not given)
+    as = 5e-12 (real)
+    ps = 2.1e-05 (real)
+    ad = 5e-12 (real)
+    pd = 2.1e-05 (real)
+    mult = 1 (real) (not given)
+Osdi device instance u9:mp:m of model psp103p
+  Terminals: 1 9 vdd vdd 
+  Collapsed node pairs:
+    G, GP
+    S, SI
+    D, DI
+    BP, BI
+    BS, BI
+    BD, BI
+    B, BI
+  Parameters:
+    $mfactor = 1 (real) (not given)
+    l = 1e-06 (real)
+    w = 2e-05 (real)
+    sa = 0 (real) (not given)
+    sb = 0 (real) (not given)
+    sd = 0 (real) (not given)
+    sca = 0 (real) (not given)
+    scb = 0 (real) (not given)
+    scc = 0 (real) (not given)
+    sc = 0 (real) (not given)
+    nf = 1 (real) (not given)
+    ngcon = 1 (real) (not given)
+    xgw = 1e-07 (real) (not given)
+    nrs = 0 (real) (not given)
+    nrd = 0 (real) (not given)
+    jw = 1e-06 (real) (not given)
+    delvto = 0 (real) (not given)
+    factuo = 1 (real) (not given)
+    delvtoedge = 0 (real) (not given)
+    factuoedge = 1 (real) (not given)
+    absource = 1e-12 (real) (not given)
+    lssource = 1e-06 (real) (not given)
+    lgsource = 1e-06 (real) (not given)
+    abdrain = 1e-12 (real) (not given)
+    lsdrain = 1e-06 (real) (not given)
+    lgdrain = 1e-06 (real) (not given)
+    as = 1e-11 (real)
+    ps = 4.1e-05 (real)
+    ad = 1e-11 (real)
+    pd = 4.1e-05 (real)
+    mult = 1 (real) (not given)

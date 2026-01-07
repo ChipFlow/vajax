@@ -1,0 +1,1680 @@
+This is vacask 0.3.1-75-g9becb2cf.
+(c)2023-2025 EDA Lab FE Uni-Lj, Arpad Buermen
+https://codeberg.org/arpadbuermen/VACASK
+
+Warning! This is a debug build. Simulator will be slow.
+
+Simulating: // 9 stage ring oscillator - DEBUG VERSION
+Running analysis 'tran_debug'.
+Solving initial conditions with OP analysis.
+Starting NR algorithm with zero initial solution.
+Iteration 1, worst residual=0.00e+00 @ 1
+Iteration 2, worst residual=7.86e-03 @ vdd, worst delta=4.44e-03 @ vdd:flow(br)
+Iteration 3, worst residual=3.53e-04 @ vdd, worst delta=2.36e-04 @ vdd:flow(br)
+Iteration 4, converged, worst residual=7.10e-07 @ vdd, worst delta=4.42e-07 @ vdd:flow(br)
+NR algorithm converged in 4 iteration(s).
+  Solving at t=2.500000000000000e-11 with hk=2.500000000000000e-11
+Starting NR algorithm with given initial solution.
+Iteration 1, worst residual=7.10e-07 @ vdd
+Iteration 2, converged, worst residual=6.28e-13 @ vdd, worst delta=3.71e-13 @ vdd:flow(br)
+NR algorithm converged in 2 iteration(s).
+  Cannot estimate LTE. Will accept the point and keep the step unchanged.
+  Next break point is at t=1.000000000000000e-09.
+Point #2 accepted at t=2.500000000000000e-11, dt=2.500000000000000e-11, order=1.
+  Solving at t=5.000000000000001e-11 with hk=2.500000000000000e-11
+Starting NR algorithm with given initial solution.
+Iteration 1, worst residual=3.09e-08 @ 1
+Iteration 2, converged, worst residual=2.40e-13 @ vdd, worst delta=1.42e-13 @ vdd:flow(br)
+NR algorithm converged in 2 iteration(s).
+  Cannot estimate LTE. Will accept the point and keep the step unchanged.
+  Next break point is at t=1.000000000000000e-09.
+Point #3 accepted at t=5.000000000000001e-11, dt=2.500000000000000e-11, order=1.
+  Solving at t=7.500000000000001e-11 with hk=2.500000000000000e-11
+Starting NR algorithm with given initial solution.
+Iteration 1, worst residual=1.92e-08 @ 1
+Iteration 2, converged, worst residual=9.16e-14 @ vdd, worst delta=5.42e-14 @ vdd:flow(br)
+NR algorithm converged in 2 iteration(s).
+  Maximal LTE/tol=1.289880725204388e-04 suggests dt=5.000000000000001e-11.
+  Increasing order to 2.
+  Next break point is at t=1.000000000000000e-09.
+Point #4 accepted at t=7.500000000000001e-11, dt=5.000000000000001e-11, order=2.
+  Solving at t=1.250000000000000e-10 with hk=5.000000000000001e-11
+Starting NR algorithm with given initial solution.
+Iteration 1, worst residual=2.39e-08 @ 1
+Iteration 2, converged, worst residual=1.40e-13 @ vdd, worst delta=8.28e-14 @ vdd:flow(br)
+NR algorithm converged in 2 iteration(s).
+  Maximal LTE/tol=9.729586412800908e-05 suggests dt=1.000000000000000e-10.
+  Timestep limited by hmax to dt=1.000000000000000e-10.
+  Next break point is at t=1.000000000000000e-09.
+Point #5 accepted at t=1.250000000000000e-10, dt=1.000000000000000e-10, order=2.
+  Solving at t=2.250000000000001e-10 with hk=1.000000000000000e-10
+Starting NR algorithm with given initial solution.
+Iteration 1, worst residual=6.00e-09 @ 3
+Iteration 2, converged, worst residual=1.55e-14 @ vdd, worst delta=9.33e-15 @ vdd:flow(br)
+NR algorithm converged in 2 iteration(s).
+  Maximal LTE/tol=1.037607716761261e-04 suggests dt=2.000000000000000e-10.
+  Timestep limited by hmax to dt=1.000000000000000e-10.
+  Next break point is at t=1.000000000000000e-09.
+Point #6 accepted at t=2.250000000000001e-10, dt=1.000000000000000e-10, order=2.
+  Solving at t=3.250000000000001e-10 with hk=1.000000000000000e-10
+Starting NR algorithm with given initial solution.
+Iteration 1, worst residual=1.74e-09 @ 2
+Iteration 2, converged, worst residual=2.09e-16 @ 5, worst delta=5.19e-16 @ vdd:flow(br)
+NR algorithm converged in 2 iteration(s).
+  Maximal LTE/tol=1.326118587949222e-04 suggests dt=2.000000000000000e-10.
+  Timestep limited by hmax to dt=1.000000000000000e-10.
+  Next break point is at t=1.000000000000000e-09.
+Point #7 accepted at t=3.250000000000001e-10, dt=1.000000000000000e-10, order=2.
+  Solving at t=4.250000000000001e-10 with hk=1.000000000000000e-10
+Starting NR algorithm with given initial solution.
+Iteration 1, worst residual=3.59e-09 @ 4
+Iteration 2, converged, worst residual=1.09e-15 @ 5, worst delta=3.01e-15 @ vdd:flow(br)
+NR algorithm converged in 2 iteration(s).
+  Maximal LTE/tol=3.151287486639817e-05 suggests dt=2.000000000000000e-10.
+  Timestep limited by hmax to dt=1.000000000000000e-10.
+  Next break point is at t=1.000000000000000e-09.
+Point #8 accepted at t=4.250000000000001e-10, dt=1.000000000000000e-10, order=2.
+  Solving at t=5.250000000000000e-10 with hk=1.000000000000000e-10
+Starting NR algorithm with given initial solution.
+Iteration 1, worst residual=9.15e-09 @ 5
+Iteration 2, converged, worst residual=7.31e-15 @ 6, worst delta=2.22e-14 @ vdd:flow(br)
+NR algorithm converged in 2 iteration(s).
+  Maximal LTE/tol=4.145562748010571e-05 suggests dt=2.000000000000000e-10.
+  Timestep limited by hmax to dt=1.000000000000000e-10.
+  Next break point is at t=1.000000000000000e-09.
+Point #9 accepted at t=5.250000000000000e-10, dt=1.000000000000000e-10, order=2.
+  Solving at t=6.250000000000000e-10 with hk=1.000000000000000e-10
+Starting NR algorithm with given initial solution.
+Iteration 1, worst residual=2.37e-08 @ 6
+Iteration 2, converged, worst residual=5.07e-14 @ 7, worst delta=1.68e-13 @ vdd:flow(br)
+NR algorithm converged in 2 iteration(s).
+  Maximal LTE/tol=8.928301212071726e-05 suggests dt=2.000000000000000e-10.
+  Timestep limited by hmax to dt=1.000000000000000e-10.
+  Next break point is at t=1.000000000000000e-09.
+Point #10 accepted at t=6.250000000000000e-10, dt=1.000000000000000e-10, order=2.
+  Solving at t=7.250000000000000e-10 with hk=1.000000000000000e-10
+Starting NR algorithm with given initial solution.
+Iteration 1, worst residual=6.29e-08 @ 7
+Iteration 2, converged, worst residual=3.62e-13 @ 8, worst delta=1.28e-12 @ vdd:flow(br)
+NR algorithm converged in 2 iteration(s).
+  Maximal LTE/tol=1.983948787418839e-04 suggests dt=2.000000000000000e-10.
+  Timestep limited by hmax to dt=1.000000000000000e-10.
+  Next break point is at t=1.000000000000000e-09.
+Point #11 accepted at t=7.250000000000000e-10, dt=1.000000000000000e-10, order=2.
+  Solving at t=8.249999999999999e-10 with hk=1.000000000000000e-10
+Starting NR algorithm with given initial solution.
+Iteration 1, worst residual=1.69e-07 @ 8
+Iteration 2, converged, worst residual=2.64e-12 @ 9, worst delta=9.82e-12 @ vdd:flow(br)
+NR algorithm converged in 2 iteration(s).
+  Maximal LTE/tol=5.269842815427404e-04 suggests dt=2.000000000000000e-10.
+  Timestep limited by hmax to dt=1.000000000000000e-10.
+  Next break point is at t=1.000000000000000e-09.
+Point #12 accepted at t=8.249999999999999e-10, dt=1.000000000000000e-10, order=2.
+  Solving at t=9.249999999999999e-10 with hk=1.000000000000000e-10
+Starting NR algorithm with given initial solution.
+Iteration 1, worst residual=4.59e-07 @ 9
+Iteration 2, converged, worst residual=1.96e-11 @ 1, worst delta=7.54e-11 @ vdd:flow(br)
+NR algorithm converged in 2 iteration(s).
+  Maximal LTE/tol=1.423991050680333e-03 suggests dt=2.000000000000000e-10.
+  Timestep limited by hmax to dt=1.000000000000000e-10.
+  Next break point is at t=1.000000000000000e-09.
+  Timestep cut due to break point, dt=7.500000000000015e-11.
+Point #13 accepted at t=9.249999999999999e-10, dt=7.500000000000015e-11, order=2.
+  Solving at t=1.000000000000000e-09 with hk=7.500000000000015e-11
+Starting NR algorithm with given initial solution.
+Iteration 1, worst residual=1.25e-06 @ 1
+Iteration 2, converged, worst residual=6.03e-11 @ 2, worst delta=2.29e-10 @ vdd:flow(br)
+NR algorithm converged in 2 iteration(s).
+  Maximal LTE/tol=1.452710500592216e-03 suggests dt=1.500000000000003e-10.
+  Timestep limited by hmax to dt=1.000000000000000e-10.
+  Next break point is at t=2.000000000000000e-09.
+  Discontinuity reached, setting order to 1.
+Point #14 accepted at t=1.000000000000000e-09, dt=1.000000000000000e-10, order=1.
+  Solving at t=1.100000000000000e-09 with hk=1.000000000000000e-10
+Starting NR algorithm with given initial solution.
+Iteration 1, worst residual=1.31e-06 @ 2
+Iteration 2, converged, worst residual=1.78e-09 @ 7, worst delta=6.61e-09 @ vdd:flow(br)
+NR algorithm converged in 2 iteration(s).
+  Cannot estimate LTE. Will accept the point and keep the step unchanged.
+  Next break point is at t=2.000000000000000e-09.
+Point #15 accepted at t=1.100000000000000e-09, dt=1.000000000000000e-10, order=1.
+  Solving at t=1.200000000000000e-09 with hk=1.000000000000000e-10
+Starting NR algorithm with given initial solution.
+Iteration 1, worst residual=4.05e-06 @ 6
+Iteration 2, converged, worst residual=2.32e-08 @ 2, worst delta=8.72e-08 @ vdd:flow(br)
+NR algorithm converged in 2 iteration(s).
+  Maximal LTE/tol=4.617432796228012e-01 suggests dt=1.471633645324026e-10.
+  Increasing order to 2.
+  Timestep limited by hmax to dt=1.000000000000000e-10.
+  Next break point is at t=2.000000000000000e-09.
+Point #16 accepted at t=1.200000000000000e-09, dt=1.000000000000000e-10, order=2.
+  Solving at t=1.300000000000000e-09 with hk=1.000000000000000e-10
+Starting NR algorithm with given initial solution.
+Iteration 1, worst residual=2.91e-05 @ 2
+Iteration 2, converged, worst residual=8.25e-08 @ 3, worst delta=3.16e-07 @ vdd:flow(br)
+NR algorithm converged in 2 iteration(s).
+  Maximal LTE/tol=2.653365095158261e-02 suggests dt=2.000000000000000e-10.
+  Timestep limited by hmax to dt=1.000000000000000e-10.
+  Next break point is at t=2.000000000000000e-09.
+Point #17 accepted at t=1.300000000000000e-09, dt=1.000000000000000e-10, order=2.
+  Solving at t=1.400000000000000e-09 with hk=1.000000000000000e-10
+Starting NR algorithm with given initial solution.
+Iteration 1, worst residual=8.07e-05 @ 3
+Iteration 2, worst residual=6.74e-07 @ 4, worst delta=2.45e-06 @ vdd:flow(br)
+Iteration 3, converged, worst residual=1.55e-11 @ 5, worst delta=4.77e-11 @ vdd:flow(br)
+NR algorithm converged in 3 iteration(s).
+  Maximal LTE/tol=2.686417567956599e-01 suggests dt=1.549799418845979e-10.
+  Timestep limited by hmax to dt=1.000000000000000e-10.
+  Next break point is at t=2.000000000000000e-09.
+Point #18 accepted at t=1.400000000000000e-09, dt=1.000000000000000e-10, order=2.
+  Solving at t=1.500000000000000e-09 with hk=1.000000000000000e-10
+Starting NR algorithm with given initial solution.
+Iteration 1, worst residual=2.22e-04 @ 4
+Iteration 2, worst residual=4.99e-06 @ 4, worst delta=1.86e-05 @ vdd:flow(br)
+Iteration 3, converged, worst residual=9.35e-10 @ 5, worst delta=2.93e-09 @ vdd:flow(br)
+NR algorithm converged in 3 iteration(s).
+  Maximal LTE/tol=6.900741854438968e-01 suggests dt=1.131622062906463e-10.
+  Timestep limited by hmax to dt=1.000000000000000e-10.
+  Next break point is at t=2.000000000000000e-09.
+Point #19 accepted at t=1.500000000000000e-09, dt=1.000000000000000e-10, order=2.
+  Solving at t=1.600000000000000e-09 with hk=1.000000000000000e-10
+Starting NR algorithm with given initial solution.
+Iteration 1, worst residual=5.97e-04 @ 4
+Iteration 2, worst residual=8.38e-05 @ 4, worst delta=1.06e-04 @ vdd:flow(br)
+Iteration 3, worst residual=2.22e-06 @ 5, worst delta=3.08e-04 @ 5
+Iteration 4, converged, worst residual=1.84e-09 @ 5, worst delta=2.52e-07 @ 5
+NR algorithm converged in 4 iteration(s).
+  Maximal LTE/tol=1.888553397417216e+00 suggests dt=8.090156267836190e-11.
+  Next break point is at t=2.000000000000000e-09.
+Point #20 accepted at t=1.600000000000000e-09, dt=8.090156267836190e-11, order=2.
+  Solving at t=1.680901562678362e-09 with hk=8.090156267836190e-11
+Starting NR algorithm with given initial solution.
+Iteration 1, worst residual=1.49e-03 @ 6
+Iteration 2, worst residual=8.72e-04 @ 7, worst delta=5.24e-02 @ 6
+Iteration 3, worst residual=4.11e-05 @ 7, worst delta=2.25e-05 @ vdd:flow(br)
+Iteration 4, converged, worst residual=1.24e-07 @ 7, worst delta=7.53e-06 @ 8
+NR algorithm converged in 4 iteration(s).
+  Maximal LTE/tol=1.725403575626437e+00 suggests dt=6.745176928584329e-11.
+  Next break point is at t=2.000000000000000e-09.
+Point #21 accepted at t=1.680901562678362e-09, dt=6.745176928584329e-11, order=2.
+  Solving at t=1.748353331964206e-09 with hk=6.745176928584329e-11
+Starting NR algorithm with given initial solution.
+Iteration 1, worst residual=1.95e-03 @ 6
+Iteration 2, worst residual=7.05e-04 @ 8, worst delta=3.44e-02 @ 8
+Iteration 3, worst residual=2.04e-05 @ 9, worst delta=1.38e-03 @ 9
+Iteration 4, converged, worst residual=1.80e-08 @ 9, worst delta=1.22e-06 @ 9
+NR algorithm converged in 4 iteration(s).
+  Maximal LTE/tol=1.774051063024124e+00 suggests dt=5.571917025777088e-11.
+  Next break point is at t=2.000000000000000e-09.
+Point #22 accepted at t=1.748353331964206e-09, dt=5.571917025777088e-11, order=2.
+  Solving at t=1.804072502221977e-09 with hk=5.571917025777088e-11
+Starting NR algorithm with given initial solution.
+Iteration 1, worst residual=2.02e-03 @ 8
+Iteration 2, worst residual=2.74e-04 @ 1, worst delta=1.70e-02 @ 1
+Iteration 3, worst residual=2.09e-06 @ 1, worst delta=1.35e-04 @ 1
+Iteration 4, converged, worst residual=1.14e-10 @ 1, worst delta=7.44e-09 @ 1
+NR algorithm converged in 4 iteration(s).
+  Maximal LTE/tol=1.301256940173023e+00 suggests dt=5.103682168585370e-11.
+  Next break point is at t=2.000000000000000e-09.
+Point #23 accepted at t=1.804072502221977e-09, dt=5.103682168585370e-11, order=2.
+  Solving at t=1.855109323907830e-09 with hk=5.103682168585370e-11
+Starting NR algorithm with given initial solution.
+Iteration 1, worst residual=2.32e-03 @ 1
+Iteration 2, worst residual=1.73e-04 @ 1, worst delta=8.53e-03 @ 1
+Iteration 3, converged, worst residual=1.16e-06 @ 1, worst delta=7.92e-05 @ 2
+NR algorithm converged in 3 iteration(s).
+  Maximal LTE/tol=1.730461061808671e+00 suggests dt=4.251051279168509e-11.
+  Next break point is at t=2.000000000000000e-09.
+Point #24 accepted at t=1.855109323907830e-09, dt=4.251051279168509e-11, order=2.
+  Solving at t=1.897619836699515e-09 with hk=4.251051279168509e-11
+Starting NR algorithm with given initial solution.
+Iteration 1, worst residual=3.37e-03 @ 2
+Iteration 2, worst residual=3.59e-04 @ 1, worst delta=2.45e-02 @ 3
+Iteration 3, worst residual=1.85e-06 @ 4, worst delta=1.97e-06 @ vdd:flow(br)
+Iteration 4, converged, worst residual=7.19e-11 @ 3, worst delta=8.44e-11 @ vdd:flow(br)
+NR algorithm converged in 4 iteration(s).
+  Maximal LTE/tol=9.528856485939078e-01 suggests dt=4.319990068617249e-11.
+  Next break point is at t=2.000000000000000e-09.
+Point #25 accepted at t=1.897619836699515e-09, dt=4.319990068617249e-11, order=2.
+  Solving at t=1.940819737385688e-09 with hk=4.319990068617249e-11
+Starting NR algorithm with given initial solution.
+Iteration 1, worst residual=3.29e-03 @ 2
+Iteration 2, worst residual=3.04e-04 @ 3, worst delta=1.66e-04 @ vdd:flow(br)
+Iteration 3, worst residual=2.98e-06 @ 3, worst delta=1.35e-06 @ vdd:flow(br)
+Iteration 4, converged, worst residual=4.28e-10 @ 3, worst delta=1.76e-10 @ vdd:flow(br)
+NR algorithm converged in 4 iteration(s).
+  Maximal LTE/tol=7.288282614584281e-01 suggests dt=4.800365953056448e-11.
+  Next break point is at t=2.000000000000000e-09.
+Point #26 accepted at t=1.940819737385688e-09, dt=4.800365953056448e-11, order=2.
+  Solving at t=1.988823396916252e-09 with hk=4.800365953056448e-11
+Starting NR algorithm with given initial solution.
+Iteration 1, worst residual=2.73e-03 @ 3
+Iteration 2, worst residual=2.37e-04 @ 3, worst delta=8.59e-05 @ vdd:flow(br)
+Iteration 3, worst residual=1.74e-06 @ 3, worst delta=1.18e-04 @ 3
+Iteration 4, converged, worst residual=1.27e-10 @ 3, worst delta=8.53e-09 @ 3
+NR algorithm converged in 4 iteration(s).
+  Maximal LTE/tol=2.175180874599620e+00 suggests dt=3.704894863003466e-11.
+  Next break point is at t=2.000000000000000e-09.
+  Timestep cut due to break point, dt=1.117660308374763e-11.
+Point #27 accepted at t=1.988823396916252e-09, dt=1.117660308374763e-11, order=2.
+  Solving at t=2.000000000000000e-09 with hk=1.117660308374763e-11
+Starting NR algorithm with given initial solution.
+Iteration 1, worst residual=3.17e-03 @ 3
+Iteration 2, worst residual=5.34e-05 @ 3, worst delta=7.22e-04 @ 3
+Iteration 3, converged, worst residual=2.72e-08 @ 3, worst delta=4.68e-07 @ 2
+NR algorithm converged in 3 iteration(s).
+  Maximal LTE/tol=5.569415213568719e-02 suggests dt=2.235320616749527e-11.
+  Next break point is at t=3.000000000000000e-09.
+  Discontinuity reached, setting order to 1.
+Point #28 accepted at t=2.000000000000000e-09, dt=2.235320616749527e-11, order=1.
+  Solving at t=2.022353206167495e-09 with hk=2.235320616749527e-11
+Starting NR algorithm with given initial solution.
+Iteration 1, worst residual=1.58e-03 @ 3
+Iteration 2, worst residual=5.93e-05 @ 3, worst delta=2.38e-03 @ 4
+Iteration 3, converged, worst residual=1.07e-07 @ 3, worst delta=5.69e-06 @ 3
+NR algorithm converged in 3 iteration(s).
+  Cannot estimate LTE. Will accept the point and keep the step unchanged.
+  Next break point is at t=3.000000000000000e-09.
+Point #29 accepted at t=2.022353206167495e-09, dt=2.235320616749527e-11, order=1.
+  Solving at t=2.044706412334991e-09 with hk=2.235320616749527e-11
+Starting NR algorithm with given initial solution.
+Iteration 1, worst residual=1.51e-03 @ 3
+Iteration 2, worst residual=3.49e-05 @ 4, worst delta=2.38e-03 @ 4
+Iteration 3, converged, worst residual=1.01e-08 @ 5, worst delta=8.27e-07 @ 4
+NR algorithm converged in 3 iteration(s).
+  Maximal LTE/tol=2.542453243670176e+00 suggests dt=1.401888058155281e-11.
+  Increasing order to 2.
+  Next break point is at t=3.000000000000000e-09.
+Point #30 accepted at t=2.044706412334991e-09, dt=1.401888058155281e-11, order=2.
+  Solving at t=2.058725292916544e-09 with hk=1.401888058155281e-11
+Starting NR algorithm with given initial solution.
+Iteration 1, worst residual=2.04e-03 @ 4
+Iteration 2, worst residual=2.42e-05 @ 4, worst delta=5.18e-04 @ 4
+Iteration 3, converged, worst residual=4.05e-09 @ 3, worst delta=1.15e-09 @ vdd:flow(br)
+NR algorithm converged in 3 iteration(s).
+  Maximal LTE/tol=1.499160605884755e-01 suggests dt=2.638946682283072e-11.
+  Next break point is at t=3.000000000000000e-09.
+Point #31 accepted at t=2.058725292916544e-09, dt=2.638946682283072e-11, order=2.
+  Solving at t=2.085114759739374e-09 with hk=2.638946682283072e-11
+Starting NR algorithm with given initial solution.
+Iteration 1, worst residual=2.36e-03 @ 4
+Iteration 2, worst residual=9.71e-05 @ 4, worst delta=3.73e-03 @ 4
+Iteration 3, converged, worst residual=4.11e-07 @ 3, worst delta=1.21e-07 @ vdd:flow(br)
+NR algorithm converged in 3 iteration(s).
+  Maximal LTE/tol=7.380433833179176e-01 suggests dt=2.920137615993381e-11.
+  Next break point is at t=3.000000000000000e-09.
+Point #32 accepted at t=2.085114759739374e-09, dt=2.920137615993381e-11, order=2.
+  Solving at t=2.114316135899308e-09 with hk=2.920137615993381e-11
+Starting NR algorithm with given initial solution.
+Iteration 1, worst residual=3.02e-03 @ 4
+Iteration 2, worst residual=2.09e-04 @ 3, worst delta=1.13e-04 @ vdd:flow(br)
+Iteration 3, converged, worst residual=1.21e-07 @ 2, worst delta=1.94e-07 @ vdd:flow(br)
+NR algorithm converged in 3 iteration(s).
+  Maximal LTE/tol=8.740360653318934e-01 suggests dt=3.054172302287135e-11.
+  Next break point is at t=3.000000000000000e-09.
+Point #33 accepted at t=2.114316135899308e-09, dt=3.054172302287135e-11, order=2.
+  Solving at t=2.144857858922179e-09 with hk=3.054172302287135e-11
+Starting NR algorithm with given initial solution.
+Iteration 1, worst residual=3.88e-03 @ 4
+Iteration 2, worst residual=1.04e-04 @ 4, worst delta=9.20e-05 @ vdd:flow(br)
+Iteration 3, converged, worst residual=2.92e-08 @ 4, worst delta=3.66e-08 @ vdd:flow(br)
+NR algorithm converged in 3 iteration(s).
+  Maximal LTE/tol=7.218534042568201e-01 suggests dt=3.404687043122209e-11.
+  Next break point is at t=3.000000000000000e-09.
+Point #34 accepted at t=2.144857858922179e-09, dt=3.404687043122209e-11, order=2.
+  Solving at t=2.178904729353401e-09 with hk=3.404687043122209e-11
+Starting NR algorithm with given initial solution.
+Iteration 1, worst residual=4.63e-03 @ 4
+Iteration 2, worst residual=1.37e-04 @ 4, worst delta=7.04e-05 @ vdd:flow(br)
+Iteration 3, converged, worst residual=5.96e-07 @ 3, worst delta=3.03e-05 @ 4
+NR algorithm converged in 3 iteration(s).
+  Maximal LTE/tol=1.258573798038520e+00 suggests dt=3.153438043037880e-11.
+  Next break point is at t=3.000000000000000e-09.
+Point #35 accepted at t=2.178904729353401e-09, dt=3.153438043037880e-11, order=2.
+  Solving at t=2.210439109783780e-09 with hk=3.153438043037880e-11
+Starting NR algorithm with given initial solution.
+Iteration 1, worst residual=5.10e-03 @ 4
+Iteration 2, worst residual=4.29e-04 @ 3, worst delta=1.69e-02 @ 4
+Iteration 3, worst residual=4.01e-06 @ 4, worst delta=1.29e-04 @ 4
+Iteration 4, converged, worst residual=1.49e-10 @ 3, worst delta=5.96e-09 @ 4
+NR algorithm converged in 4 iteration(s).
+  Maximal LTE/tol=8.580221779087824e-01 suggests dt=3.318573682893192e-11.
+  Next break point is at t=3.000000000000000e-09.
+Point #36 accepted at t=2.210439109783780e-09, dt=3.318573682893192e-11, order=2.
+  Solving at t=2.243624846612712e-09 with hk=3.318573682893192e-11
+Starting NR algorithm with given initial solution.
+Iteration 1, worst residual=2.14e-03 @ 5
+Iteration 2, worst residual=1.44e-04 @ 5, worst delta=4.71e-05 @ vdd:flow(br)
+Iteration 3, converged, worst residual=6.31e-07 @ 5, worst delta=2.69e-05 @ 5
+NR algorithm converged in 3 iteration(s).
+  Maximal LTE/tol=7.891509583231604e-01 suggests dt=3.591132549999491e-11.
+  Next break point is at t=3.000000000000000e-09.
+Point #37 accepted at t=2.243624846612712e-09, dt=3.591132549999491e-11, order=2.
+  Solving at t=2.279536172112706e-09 with hk=3.591132549999491e-11
+Starting NR algorithm with given initial solution.
+Iteration 1, worst residual=2.33e-03 @ 5
+Iteration 2, worst residual=4.71e-04 @ 5, worst delta=3.57e-02 @ 5
+Iteration 3, worst residual=2.29e-05 @ 5, worst delta=1.85e-03 @ 5
+Iteration 4, converged, worst residual=3.29e-08 @ 5, worst delta=2.78e-06 @ 4
+NR algorithm converged in 4 iteration(s).
+  Maximal LTE/tol=9.670374668276348e-01 suggests dt=3.631480098852842e-11.
+  Next break point is at t=3.000000000000000e-09.
+Point #38 accepted at t=2.279536172112706e-09, dt=3.631480098852842e-11, order=2.
+  Solving at t=2.315850973101235e-09 with hk=3.631480098852842e-11
+Starting NR algorithm with given initial solution.
+Iteration 1, worst residual=2.78e-03 @ 5
+Iteration 2, worst residual=5.48e-04 @ 5, worst delta=1.86e-04 @ vdd:flow(br)
+Iteration 3, worst residual=1.04e-05 @ 5, worst delta=3.36e-06 @ vdd:flow(br)
+Iteration 4, converged, worst residual=5.40e-09 @ 5, worst delta=1.76e-09 @ vdd:flow(br)
+NR algorithm converged in 4 iteration(s).
+  Maximal LTE/tol=7.398576048859907e-01 suggests dt=4.015142418116308e-11.
+  Next break point is at t=3.000000000000000e-09.
+Point #39 accepted at t=2.315850973101235e-09, dt=4.015142418116308e-11, order=2.
+  Solving at t=2.356002397282398e-09 with hk=4.015142418116308e-11
+Starting NR algorithm with given initial solution.
+Iteration 1, worst residual=3.28e-03 @ 5
+Iteration 2, worst residual=3.85e-04 @ 5, worst delta=9.96e-05 @ vdd:flow(br)
+Iteration 3, worst residual=3.68e-06 @ 5, worst delta=2.10e-04 @ 5
+Iteration 4, converged, worst residual=4.78e-10 @ 5, worst delta=2.68e-08 @ 5
+NR algorithm converged in 4 iteration(s).
+  Maximal LTE/tol=2.533933895360009e+00 suggests dt=2.945116829528911e-11.
+  Next break point is at t=3.000000000000000e-09.
+Point #40 accepted at t=2.356002397282398e-09, dt=2.945116829528911e-11, order=2.
+  Solving at t=2.385453565577687e-09 with hk=2.945116829528911e-11
+Starting NR algorithm with given initial solution.
+Iteration 1, worst residual=3.38e-03 @ 5
+Iteration 2, worst residual=1.74e-04 @ 5, worst delta=3.59e-03 @ 6
+Iteration 3, converged, worst residual=5.36e-07 @ 5, worst delta=1.90e-05 @ 5
+NR algorithm converged in 3 iteration(s).
+  Maximal LTE/tol=6.212987736164569e-01 suggests dt=3.451456164714497e-11.
+  Next break point is at t=3.000000000000000e-09.
+Point #41 accepted at t=2.385453565577687e-09, dt=3.451456164714497e-11, order=2.
+  Solving at t=2.419968127224832e-09 with hk=3.451456164714497e-11
+Starting NR algorithm with given initial solution.
+Iteration 1, worst residual=3.18e-03 @ 5
+Iteration 2, worst residual=7.72e-05 @ 6, worst delta=4.55e-03 @ 6
+Iteration 3, converged, worst residual=5.24e-08 @ 6, worst delta=3.56e-06 @ 6
+NR algorithm converged in 3 iteration(s).
+  Maximal LTE/tol=1.362442133371728e+00 suggests dt=3.113362380575049e-11.
+  Next break point is at t=3.000000000000000e-09.
+Point #42 accepted at t=2.419968127224832e-09, dt=3.113362380575049e-11, order=2.
+  Solving at t=2.451101751030583e-09 with hk=3.113362380575049e-11
+Starting NR algorithm with given initial solution.
+Iteration 1, worst residual=2.43e-03 @ 6
+Iteration 2, worst residual=9.97e-05 @ 6, worst delta=4.69e-03 @ 6
+Iteration 3, converged, worst residual=1.66e-07 @ 5, worst delta=6.44e-06 @ 6
+NR algorithm converged in 3 iteration(s).
+  Maximal LTE/tol=5.122699219360449e-01 suggests dt=3.891019325354962e-11.
+  Next break point is at t=3.000000000000000e-09.
+Point #43 accepted at t=2.451101751030583e-09, dt=3.891019325354962e-11, order=2.
+  Solving at t=2.490011944284132e-09 with hk=3.891019325354962e-11
+Starting NR algorithm with given initial solution.
+Iteration 1, worst residual=3.00e-03 @ 6
+Iteration 2, worst residual=2.99e-04 @ 5, worst delta=1.44e-02 @ 6
+Iteration 3, converged, worst residual=9.42e-07 @ 7, worst delta=1.70e-06 @ vdd:flow(br)
+NR algorithm converged in 3 iteration(s).
+  Maximal LTE/tol=6.682594462672450e-01 suggests dt=4.450563675237792e-11.
+  Next break point is at t=3.000000000000000e-09.
+Point #44 accepted at t=2.490011944284132e-09, dt=4.450563675237792e-11, order=2.
+  Solving at t=2.534517581036510e-09 with hk=4.450563675237792e-11
+Starting NR algorithm with given initial solution.
+Iteration 1, worst residual=3.98e-03 @ 6
+Iteration 2, worst residual=2.51e-04 @ 6, worst delta=2.07e-04 @ vdd:flow(br)
+Iteration 3, converged, worst residual=2.52e-07 @ 6, worst delta=3.85e-07 @ vdd:flow(br)
+NR algorithm converged in 3 iteration(s).
+  Maximal LTE/tol=9.992682712757756e-01 suggests dt=4.451649740177545e-11.
+  Next break point is at t=3.000000000000000e-09.
+Point #45 accepted at t=2.534517581036510e-09, dt=4.451649740177545e-11, order=2.
+  Solving at t=2.579034078438286e-09 with hk=4.451649740177545e-11
+Starting NR algorithm with given initial solution.
+Iteration 1, worst residual=4.99e-03 @ 6
+Iteration 2, worst residual=6.19e-04 @ 6, worst delta=2.84e-02 @ 6
+Iteration 3, worst residual=1.15e-05 @ 6, worst delta=5.17e-04 @ 6
+Iteration 4, converged, worst residual=4.33e-09 @ 6, worst delta=1.98e-07 @ 6
+NR algorithm converged in 4 iteration(s).
+  Maximal LTE/tol=1.716072425601774e+00 suggests dt=3.718283065437783e-11.
+  Next break point is at t=3.000000000000000e-09.
+Point #46 accepted at t=2.579034078438286e-09, dt=3.718283065437783e-11, order=2.
+  Solving at t=2.616216909092663e-09 with hk=3.718283065437783e-11
+Starting NR algorithm with given initial solution.
+Iteration 1, worst residual=5.04e-03 @ 6
+Iteration 2, worst residual=2.03e-04 @ 5, worst delta=1.02e-02 @ 6
+Iteration 3, converged, worst residual=3.67e-07 @ 7, worst delta=2.09e-07 @ vdd:flow(br)
+NR algorithm converged in 3 iteration(s).
+  Maximal LTE/tol=1.447607287730367e+00 suggests dt=3.286943167696255e-11.
+  Next break point is at t=3.000000000000000e-09.
+Point #47 accepted at t=2.616216909092663e-09, dt=3.286943167696255e-11, order=2.
+  Solving at t=2.649086340769626e-09 with hk=3.286943167696255e-11
+Starting NR algorithm with given initial solution.
+Iteration 1, worst residual=2.32e-03 @ 7
+Iteration 2, worst residual=2.81e-04 @ 7, worst delta=1.59e-02 @ 7
+Iteration 3, worst residual=9.23e-06 @ 7, worst delta=5.09e-04 @ 7
+Iteration 4, converged, worst residual=1.51e-08 @ 7, worst delta=8.31e-07 @ 7
+NR algorithm converged in 4 iteration(s).
+  Maximal LTE/tol=5.592662768583141e-01 suggests dt=3.989507790795362e-11.
+  Next break point is at t=3.000000000000000e-09.
+Point #48 accepted at t=2.649086340769626e-09, dt=3.989507790795362e-11, order=2.
+  Solving at t=2.688981418677580e-09 with hk=3.989507790795362e-11
+Starting NR algorithm with given initial solution.
+Iteration 1, worst residual=2.59e-03 @ 7
+Iteration 2, worst residual=4.92e-04 @ 7, worst delta=3.50e-02 @ 6
+Iteration 3, worst residual=3.13e-05 @ 7, worst delta=1.17e-05 @ vdd:flow(br)
+Iteration 4, converged, worst residual=9.13e-08 @ 7, worst delta=2.97e-08 @ vdd:flow(br)
+NR algorithm converged in 4 iteration(s).
+  Maximal LTE/tol=2.106801185012861e+00 suggests dt=3.112037341861006e-11.
+  Next break point is at t=3.000000000000000e-09.
+Point #49 accepted at t=2.688981418677580e-09, dt=3.112037341861006e-11, order=2.
+  Solving at t=2.720101792096190e-09 with hk=3.112037341861006e-11
+Starting NR algorithm with given initial solution.
+Iteration 1, worst residual=3.22e-03 @ 7
+Iteration 2, worst residual=5.47e-04 @ 7, worst delta=1.39e-04 @ vdd:flow(br)
+Iteration 3, worst residual=4.19e-06 @ 7, worst delta=1.12e-06 @ vdd:flow(br)
+Iteration 4, converged, worst residual=3.10e-10 @ 7, worst delta=1.09e-10 @ vdd:flow(br)
+NR algorithm converged in 4 iteration(s).
+  Maximal LTE/tol=1.123908284413535e+00 suggests dt=2.993191537589892e-11.
+  Next break point is at t=3.000000000000000e-09.
+Point #50 accepted at t=2.720101792096190e-09, dt=2.993191537589892e-11, order=2.
+  Solving at t=2.750033707472089e-09 with hk=2.993191537589892e-11
+Starting NR algorithm with given initial solution.
+Iteration 1, worst residual=3.39e-03 @ 7
+Iteration 2, worst residual=1.81e-04 @ 7, worst delta=7.22e-03 @ 7
+Iteration 3, converged, worst residual=7.21e-07 @ 7, worst delta=2.81e-05 @ 7
+NR algorithm converged in 3 iteration(s).
+  Maximal LTE/tol=8.582510809158722e-01 suggests dt=3.149655508290220e-11.
+  Next break point is at t=3.000000000000000e-09.
+Point #51 accepted at t=2.750033707472089e-09, dt=3.149655508290220e-11, order=2.
+  Solving at t=2.781530262554991e-09 with hk=3.149655508290220e-11
+Starting NR algorithm with given initial solution.
+Iteration 1, worst residual=3.33e-03 @ 7
+Iteration 2, worst residual=1.48e-04 @ 7, worst delta=3.92e-03 @ 8
+Iteration 3, converged, worst residual=3.24e-07 @ 7, worst delta=6.26e-06 @ 8
+NR algorithm converged in 3 iteration(s).
+  Maximal LTE/tol=1.372826420520023e+00 suggests dt=2.833943447281683e-11.
+  Next break point is at t=3.000000000000000e-09.
+Point #52 accepted at t=2.781530262554991e-09, dt=2.833943447281683e-11, order=2.
+  Solving at t=2.809869697027808e-09 with hk=2.833943447281683e-11
+Starting NR algorithm with given initial solution.
+Iteration 1, worst residual=2.06e-03 @ 8
+Iteration 2, worst residual=5.83e-05 @ 8, worst delta=2.78e-03 @ 8
+Iteration 3, converged, worst residual=2.49e-08 @ 8, worst delta=1.16e-06 @ 8
+NR algorithm converged in 3 iteration(s).
+  Maximal LTE/tol=4.487379597329698e-01 suggests dt=3.701634859774295e-11.
+  Next break point is at t=3.000000000000000e-09.
+Point #53 accepted at t=2.809869697027808e-09, dt=3.701634859774295e-11, order=2.
+  Solving at t=2.846886045625551e-09 with hk=3.701634859774295e-11
+Starting NR algorithm with given initial solution.
+Iteration 1, worst residual=2.56e-03 @ 8
+Iteration 2, worst residual=1.58e-04 @ 8, worst delta=8.91e-03 @ 8
+Iteration 3, converged, worst residual=8.94e-07 @ 7, worst delta=3.42e-05 @ 8
+NR algorithm converged in 3 iteration(s).
+  Maximal LTE/tol=2.191441309821884e-01 suggests dt=6.139744448259042e-11.
+  Next break point is at t=3.000000000000000e-09.
+Point #54 accepted at t=2.846886045625551e-09, dt=6.139744448259042e-11, order=2.
+  Solving at t=2.908283490108141e-09 with hk=6.139744448259042e-11
+Starting NR algorithm with given initial solution.
+Iteration 1, worst residual=3.28e-03 @ 8
+Iteration 2, worst residual=3.69e-04 @ 7, worst delta=2.66e-04 @ vdd:flow(br)
+Iteration 3, converged, worst residual=1.61e-06 @ 7, worst delta=2.10e-06 @ vdd:flow(br)
+NR algorithm converged in 3 iteration(s).
+  Maximal LTE/tol=2.302902449682172e+00 suggests dt=4.649345079143970e-11.
+  Next break point is at t=3.000000000000000e-09.
+Point #55 accepted at t=2.908283490108141e-09, dt=4.649345079143970e-11, order=2.
+  Solving at t=2.954776940899581e-09 with hk=4.649345079143970e-11
+Starting NR algorithm with given initial solution.
+Iteration 1, worst residual=4.82e-03 @ 8
+Iteration 2, worst residual=4.01e-04 @ 8, worst delta=2.06e-02 @ 8
+Iteration 3, worst residual=6.80e-06 @ 8, worst delta=3.36e-04 @ 8
+Iteration 4, converged, worst residual=2.37e-09 @ 8, worst delta=1.20e-07 @ 8
+NR algorithm converged in 4 iteration(s).
+  Maximal LTE/tol=1.154588664119605e+00 suggests dt=4.431825834005245e-11.
+  Next break point is at t=3.000000000000000e-09.
+  Next timepoint is close to a break point. Setting dt=2.215912917002622e-11.
+Point #56 accepted at t=2.954776940899581e-09, dt=2.215912917002622e-11, order=2.
+  Solving at t=2.976936070069607e-09 with hk=2.215912917002622e-11
+Starting NR algorithm with given initial solution.
+Iteration 1, worst residual=5.19e-03 @ 8
+Iteration 2, worst residual=2.03e-04 @ 7, worst delta=4.73e-03 @ 8
+Iteration 3, converged, worst residual=3.42e-07 @ 8, worst delta=1.18e-07 @ vdd:flow(br)
+NR algorithm converged in 3 iteration(s).
+  Maximal LTE/tol=5.023853154832296e-01 suggests dt=2.787449727729507e-11.
+  Next break point is at t=3.000000000000000e-09.
+  Timestep cut due to break point, dt=2.306392993039322e-11.
+Point #57 accepted at t=2.976936070069607e-09, dt=2.306392993039322e-11, order=2.
+  Solving at t=3.000000000000000e-09 with hk=2.306392993039322e-11
+Starting NR algorithm with given initial solution.
+Iteration 1, worst residual=4.67e-03 @ 8
+Iteration 2, worst residual=7.92e-05 @ 9, worst delta=2.01e-05 @ vdd:flow(br)
+Iteration 3, converged, worst residual=1.07e-07 @ 9, worst delta=2.05e-08 @ vdd:flow(br)
+NR algorithm converged in 3 iteration(s).
+  Maximal LTE/tol=4.836912792393471e-01 suggests dt=2.938172057447717e-11.
+  Next break point is at t=4.000000000000000e-09.
+  Discontinuity reached, setting order to 1.
+Point #58 accepted at t=3.000000000000000e-09, dt=2.938172057447717e-11, order=1.
+  Solving at t=3.029381720574478e-09 with hk=2.938172057447717e-11
+Starting NR algorithm with given initial solution.
+Iteration 1, worst residual=1.16e-03 @ 9
+Iteration 2, worst residual=1.50e-04 @ 9, worst delta=1.51e-02 @ 9
+Iteration 3, worst residual=3.49e-06 @ 9, worst delta=3.44e-04 @ 9
+Iteration 4, converged, worst residual=3.04e-09 @ 9, worst delta=3.00e-07 @ 9
+NR algorithm converged in 4 iteration(s).
+  Cannot estimate LTE. Will accept the point and keep the step unchanged.
+  Next break point is at t=4.000000000000000e-09.
+Point #59 accepted at t=3.029381720574478e-09, dt=2.938172057447717e-11, order=1.
+  Solving at t=3.058763441148955e-09 with hk=2.938172057447717e-11
+Starting NR algorithm with given initial solution.
+Iteration 1, worst residual=1.24e-03 @ 9
+Iteration 2, worst residual=2.93e-04 @ 9, worst delta=4.16e-02 @ 9
+Iteration 3, worst residual=8.41e-06 @ 9, worst delta=4.66e-06 @ vdd:flow(br)
+Iteration 4, converged, worst residual=9.33e-09 @ 9, worst delta=1.14e-06 @ 9
+NR algorithm converged in 4 iteration(s).
+  Maximal LTE/tol=5.541434787012855e+00 suggests dt=1.248148073803869e-11.
+  Increasing order to 2.
+  Next break point is at t=4.000000000000000e-09.
+Point #60 accepted at t=3.058763441148955e-09, dt=1.248148073803869e-11, order=2.
+  Solving at t=3.071244921886994e-09 with hk=1.248148073803869e-11
+Starting NR algorithm with given initial solution.
+Iteration 1, worst residual=2.88e-03 @ 9
+Iteration 2, worst residual=2.70e-04 @ 9, worst delta=9.50e-05 @ vdd:flow(br)
+Iteration 3, worst residual=2.09e-06 @ 9, worst delta=6.01e-07 @ vdd:flow(br)
+Iteration 4, converged, worst residual=1.27e-10 @ 9, worst delta=3.59e-11 @ vdd:flow(br)
+NR algorithm converged in 4 iteration(s).
+  Maximal LTE/tol=2.959566799829163e-01 suggests dt=1.872937974610845e-11.
+  Next break point is at t=4.000000000000000e-09.
+Point #61 accepted at t=3.071244921886994e-09, dt=1.872937974610845e-11, order=2.
+  Solving at t=3.089974301633102e-09 with hk=1.872937974610845e-11
+Starting NR algorithm with given initial solution.
+Iteration 1, worst residual=3.08e-03 @ 9
+Iteration 2, worst residual=3.31e-04 @ 9, worst delta=8.42e-05 @ vdd:flow(br)
+Iteration 3, converged, worst residual=1.51e-06 @ 9, worst delta=4.01e-07 @ vdd:flow(br)
+NR algorithm converged in 3 iteration(s).
+  Maximal LTE/tol=2.795060174219151e+00 suggests dt=1.329616332542597e-11.
+  Next break point is at t=4.000000000000000e-09.
+Point #62 accepted at t=3.089974301633102e-09, dt=1.329616332542597e-11, order=2.
+  Solving at t=3.103270464958528e-09 with hk=1.329616332542597e-11
+Starting NR algorithm with given initial solution.
+Iteration 1, worst residual=3.27e-03 @ 9
+Iteration 2, worst residual=9.59e-05 @ 9, worst delta=2.23e-05 @ vdd:flow(br)
+Iteration 3, converged, worst residual=5.52e-08 @ 9, worst delta=1.24e-08 @ vdd:flow(br)
+NR algorithm converged in 3 iteration(s).
+  Maximal LTE/tol=1.588563343754841e+00 suggests dt=1.139527548517916e-11.
+  Next break point is at t=4.000000000000000e-09.
+Point #63 accepted at t=3.103270464958528e-09, dt=1.139527548517916e-11, order=2.
+  Solving at t=3.114665740443707e-09 with hk=1.139527548517916e-11
+Starting NR algorithm with given initial solution.
+Iteration 1, worst residual=3.34e-03 @ 9
+Iteration 2, worst residual=5.57e-05 @ 9, worst delta=9.84e-06 @ vdd:flow(br)
+Iteration 3, converged, worst residual=1.61e-08 @ 9, worst delta=1.80e-09 @ vdd:flow(br)
+NR algorithm converged in 3 iteration(s).
+  Maximal LTE/tol=9.525550237578642e-01 suggests dt=1.158141093377011e-11.
+  Next break point is at t=4.000000000000000e-09.
+Point #64 accepted at t=3.114665740443707e-09, dt=1.158141093377011e-11, order=2.
+  Solving at t=3.126247151377477e-09 with hk=1.158141093377011e-11
+Starting NR algorithm with given initial solution.
+Iteration 1, worst residual=3.36e-03 @ 9
+Iteration 2, worst residual=5.68e-05 @ 9, worst delta=4.51e-06 @ vdd:flow(br)
+Iteration 3, converged, worst residual=2.64e-08 @ 9, worst delta=4.15e-07 @ 8
+NR algorithm converged in 3 iteration(s).
+  Maximal LTE/tol=9.149745760394671e-01 suggests dt=1.192957932604606e-11.
+  Next break point is at t=4.000000000000000e-09.
+Point #65 accepted at t=3.126247151377477e-09, dt=1.192957932604606e-11, order=2.
+  Solving at t=3.138176730703523e-09 with hk=1.192957932604606e-11
+Starting NR algorithm with given initial solution.
+Iteration 1, worst residual=3.34e-03 @ 9
+Iteration 2, worst residual=6.01e-05 @ 9, worst delta=7.96e-04 @ 8
+Iteration 3, converged, worst residual=3.40e-08 @ 9, worst delta=6.09e-07 @ 8
+NR algorithm converged in 3 iteration(s).
+  Maximal LTE/tol=3.162470326671029e-01 suggests dt=1.750987219996858e-11.
+  Next break point is at t=4.000000000000000e-09.
+Point #66 accepted at t=3.138176730703523e-09, dt=1.750987219996858e-11, order=2.
+  Solving at t=3.155686602903492e-09 with hk=1.750987219996858e-11
+Starting NR algorithm with given initial solution.
+Iteration 1, worst residual=3.28e-03 @ 9
+Iteration 2, worst residual=6.99e-05 @ 9, worst delta=8.81e-04 @ 1
+Iteration 3, converged, worst residual=4.88e-08 @ 9, worst delta=1.11e-06 @ 8
+NR algorithm converged in 3 iteration(s).
+  Maximal LTE/tol=1.369137567356150e-01 suggests dt=3.397300376574639e-11.
+  Next break point is at t=4.000000000000000e-09.
+Point #67 accepted at t=3.155686602903492e-09, dt=3.397300376574639e-11, order=2.
+  Solving at t=3.189659606669239e-09 with hk=3.397300376574639e-11
+Starting NR algorithm with given initial solution.
+Iteration 1, worst residual=3.14e-03 @ 9
+Iteration 2, worst residual=7.70e-05 @ 1, worst delta=4.39e-03 @ 1
+Iteration 3, converged, worst residual=4.99e-08 @ 1, worst delta=3.13e-06 @ 1
+NR algorithm converged in 3 iteration(s).
+  Maximal LTE/tol=3.727631651767849e-01 suggests dt=4.720517554569670e-11.
+  Next break point is at t=4.000000000000000e-09.
+Point #68 accepted at t=3.189659606669239e-09, dt=4.720517554569670e-11, order=2.
+  Solving at t=3.236864782214935e-09 with hk=4.720517554569670e-11
+Starting NR algorithm with given initial solution.
+Iteration 1, worst residual=2.49e-03 @ 1
+Iteration 2, worst residual=2.36e-04 @ 1, worst delta=1.74e-02 @ 1
+Iteration 3, worst residual=2.95e-06 @ 9, worst delta=1.18e-04 @ 1
+Iteration 4, converged, worst residual=3.71e-10 @ 9, worst delta=2.69e-08 @ 1
+NR algorithm converged in 4 iteration(s).
+  Maximal LTE/tol=3.920944270073679e-01 suggests dt=6.449500199164927e-11.
+  Next break point is at t=4.000000000000000e-09.
+Point #69 accepted at t=3.236864782214935e-09, dt=6.449500199164927e-11, order=2.
+  Solving at t=3.301359784206585e-09 with hk=6.449500199164927e-11
+Starting NR algorithm with given initial solution.
+Iteration 1, worst residual=3.44e-03 @ 1
+Iteration 2, worst residual=2.54e-04 @ 9, worst delta=3.65e-04 @ vdd:flow(br)
+Iteration 3, converged, worst residual=1.25e-06 @ 9, worst delta=1.28e-06 @ vdd:flow(br)
+NR algorithm converged in 3 iteration(s).
+  Maximal LTE/tol=2.526758429031662e+00 suggests dt=4.735198100936815e-11.
+  Next break point is at t=4.000000000000000e-09.
+Point #70 accepted at t=3.301359784206585e-09, dt=4.735198100936815e-11, order=2.
+  Solving at t=3.348711765215952e-09 with hk=4.735198100936815e-11
+Starting NR algorithm with given initial solution.
+Iteration 1, worst residual=5.02e-03 @ 1
+Iteration 2, worst residual=7.20e-04 @ 1, worst delta=3.42e-02 @ 1
+Iteration 3, worst residual=1.49e-05 @ 1, worst delta=6.92e-04 @ 1
+Iteration 4, converged, worst residual=6.81e-09 @ 1, worst delta=3.25e-07 @ 1
+NR algorithm converged in 4 iteration(s).
+  Maximal LTE/tol=1.487226055784518e+00 suggests dt=4.148385977777065e-11.
+  Next break point is at t=4.000000000000000e-09.
+Point #71 accepted at t=3.348711765215952e-09, dt=4.148385977777065e-11, order=2.
+  Solving at t=3.390195624993723e-09 with hk=4.148385977777065e-11
+Starting NR algorithm with given initial solution.
+Iteration 1, worst residual=4.99e-03 @ 1
+Iteration 2, worst residual=1.93e-04 @ 9, worst delta=7.52e-05 @ vdd:flow(br)
+Iteration 3, converged, worst residual=8.42e-07 @ 2, worst delta=2.43e-07 @ vdd:flow(br)
+NR algorithm converged in 3 iteration(s).
+  Maximal LTE/tol=2.370984521276232e+00 suggests dt=3.111020823310666e-11.
+  Next break point is at t=4.000000000000000e-09.
+Point #72 accepted at t=3.390195624993723e-09, dt=3.111020823310666e-11, order=2.
+  Solving at t=3.421305833226830e-09 with hk=3.111020823310666e-11
+Starting NR algorithm with given initial solution.
+Iteration 1, worst residual=3.80e-03 @ 1
+Iteration 2, worst residual=3.44e-04 @ 2, worst delta=1.96e-02 @ 2
+Iteration 3, worst residual=1.73e-05 @ 2, worst delta=1.04e-03 @ 2
+Iteration 4, converged, worst residual=5.36e-08 @ 2, worst delta=2.47e-06 @ 1
+NR algorithm converged in 4 iteration(s).
+  Maximal LTE/tol=5.604713089373188e-01 suggests dt=3.773274982723123e-11.
+  Next break point is at t=4.000000000000000e-09.
+Point #73 accepted at t=3.421305833226830e-09, dt=3.773274982723123e-11, order=2.
+  Solving at t=3.459038583054061e-09 with hk=3.773274982723123e-11
+Starting NR algorithm with given initial solution.
+Iteration 1, worst residual=2.68e-03 @ 2
+Iteration 2, worst residual=4.05e-04 @ 1, worst delta=1.16e-04 @ vdd:flow(br)
+Iteration 3, converged, worst residual=5.53e-07 @ 9, worst delta=5.07e-07 @ vdd:flow(br)
+NR algorithm converged in 3 iteration(s).
+  Maximal LTE/tol=1.936424260929153e+00 suggests dt=3.027273211315627e-11.
+  Next break point is at t=4.000000000000000e-09.
+Point #74 accepted at t=3.459038583054061e-09, dt=3.027273211315627e-11, order=2.
+  Solving at t=3.489311315167217e-09 with hk=3.027273211315627e-11
+Starting NR algorithm with given initial solution.
+Iteration 1, worst residual=3.26e-03 @ 2
+Iteration 2, worst residual=4.41e-04 @ 2, worst delta=1.13e-04 @ vdd:flow(br)
+Iteration 3, worst residual=2.64e-06 @ 2, worst delta=6.49e-07 @ vdd:flow(br)
+Iteration 4, converged, worst residual=1.16e-10 @ 2, worst delta=3.63e-11 @ vdd:flow(br)
+NR algorithm converged in 4 iteration(s).
+  Maximal LTE/tol=1.275853528963555e+00 suggests dt=2.791159649266643e-11.
+  Next break point is at t=4.000000000000000e-09.
+Point #75 accepted at t=3.489311315167217e-09, dt=2.791159649266643e-11, order=2.
+  Solving at t=3.517222911659884e-09 with hk=2.791159649266643e-11
+Starting NR algorithm with given initial solution.
+Iteration 1, worst residual=3.39e-03 @ 2
+Iteration 2, worst residual=1.66e-04 @ 2, worst delta=6.16e-03 @ 2
+Iteration 3, converged, worst residual=5.75e-07 @ 2, worst delta=2.07e-05 @ 2
+NR algorithm converged in 3 iteration(s).
+  Maximal LTE/tol=5.861257853231379e-01 suggests dt=3.335193754387778e-11.
+  Next break point is at t=4.000000000000000e-09.
+Point #76 accepted at t=3.517222911659884e-09, dt=3.335193754387778e-11, order=2.
+  Solving at t=3.550574849203762e-09 with hk=3.335193754387778e-11
+Starting NR algorithm with given initial solution.
+Iteration 1, worst residual=3.33e-03 @ 2
+Iteration 2, worst residual=1.54e-04 @ 2, worst delta=6.34e-03 @ 2
+Iteration 3, converged, worst residual=3.55e-07 @ 2, worst delta=1.39e-05 @ 2
+NR algorithm converged in 3 iteration(s).
+  Maximal LTE/tol=1.670604445579286e+00 suggests dt=2.810799437307709e-11.
+  Next break point is at t=4.000000000000000e-09.
+Point #77 accepted at t=3.550574849203762e-09, dt=2.810799437307709e-11, order=2.
+  Solving at t=3.578682843576839e-09 with hk=2.810799437307709e-11
+Starting NR algorithm with given initial solution.
+Iteration 1, worst residual=3.03e-03 @ 2
+Iteration 2, worst residual=5.93e-05 @ 3, worst delta=1.80e-05 @ vdd:flow(br)
+Iteration 3, converged, worst residual=2.64e-08 @ 3, worst delta=1.16e-06 @ 3
+NR algorithm converged in 3 iteration(s).
+  Maximal LTE/tol=4.849506530906119e-01 suggests dt=3.577645801026323e-11.
+  Next break point is at t=4.000000000000000e-09.
+Point #78 accepted at t=3.578682843576839e-09, dt=3.577645801026323e-11, order=2.
+  Solving at t=3.614459301587102e-09 with hk=3.577645801026323e-11
+Starting NR algorithm with given initial solution.
+Iteration 1, worst residual=2.61e-03 @ 3
+Iteration 2, worst residual=1.56e-04 @ 3, worst delta=8.48e-03 @ 3
+Iteration 3, converged, worst residual=9.17e-07 @ 2, worst delta=3.29e-05 @ 3
+NR algorithm converged in 3 iteration(s).
+  Maximal LTE/tol=2.734190365372384e-01 suggests dt=5.512150823175884e-11.
+  Next break point is at t=4.000000000000000e-09.
+Point #79 accepted at t=3.614459301587102e-09, dt=5.512150823175884e-11, order=2.
+  Solving at t=3.669580809818861e-09 with hk=5.512150823175884e-11
+Starting NR algorithm with given initial solution.
+Iteration 1, worst residual=3.30e-03 @ 3
+Iteration 2, worst residual=3.53e-04 @ 2, worst delta=2.43e-04 @ vdd:flow(br)
+Iteration 3, converged, worst residual=1.26e-06 @ 2, worst delta=1.58e-06 @ vdd:flow(br)
+NR algorithm converged in 3 iteration(s).
+  Maximal LTE/tol=1.885929183666292e+00 suggests dt=4.461483575677209e-11.
+  Next break point is at t=4.000000000000000e-09.
+Point #80 accepted at t=3.669580809818861e-09, dt=4.461483575677209e-11, order=2.
+  Solving at t=3.714195645575633e-09 with hk=4.461483575677209e-11
+Starting NR algorithm with given initial solution.
+Iteration 1, worst residual=4.72e-03 @ 3
+Iteration 2, worst residual=2.53e-04 @ 3, worst delta=1.24e-04 @ vdd:flow(br)
+Iteration 3, worst residual=2.20e-06 @ 2, worst delta=1.61e-04 @ 3
+Iteration 4, converged, worst residual=6.69e-10 @ 3, worst delta=3.48e-08 @ 3
+NR algorithm converged in 4 iteration(s).
+  Maximal LTE/tol=5.660940042673492e-01 suggests dt=5.393240413153101e-11.
+  Next break point is at t=4.000000000000000e-09.
+Point #81 accepted at t=3.714195645575633e-09, dt=5.393240413153101e-11, order=2.
+  Solving at t=3.768128049707165e-09 with hk=5.393240413153101e-11
+Starting NR algorithm with given initial solution.
+Iteration 1, worst residual=5.25e-03 @ 3
+Iteration 2, worst residual=8.37e-04 @ 3, worst delta=4.28e-02 @ 3
+Iteration 3, worst residual=5.21e-06 @ 2, worst delta=2.95e-04 @ 3
+Iteration 4, converged, worst residual=8.17e-10 @ 3, worst delta=4.11e-08 @ 3
+NR algorithm converged in 4 iteration(s).
+  Maximal LTE/tol=3.213588430031345e+00 suggests dt=3.654710899668587e-11.
+  Next break point is at t=4.000000000000000e-09.
+Point #82 accepted at t=3.768128049707165e-09, dt=3.654710899668587e-11, order=2.
+  Solving at t=3.804675158703851e-09 with hk=3.654710899668587e-11
+Starting NR algorithm with given initial solution.
+Iteration 1, worst residual=3.96e-03 @ 3
+Iteration 2, worst residual=3.57e-04 @ 4, worst delta=2.43e-02 @ 4
+Iteration 3, worst residual=2.37e-05 @ 3, worst delta=1.41e-03 @ 4
+Iteration 4, converged, worst residual=1.01e-07 @ 3, worst delta=5.74e-06 @ 4
+NR algorithm converged in 4 iteration(s).
+  Maximal LTE/tol=5.195725151175838e-01 suggests dt=4.546085911260239e-11.
+  Next break point is at t=4.000000000000000e-09.
+Point #83 accepted at t=3.804675158703851e-09, dt=4.546085911260239e-11, order=2.
+  Solving at t=3.850136017816453e-09 with hk=4.546085911260239e-11
+Starting NR algorithm with given initial solution.
+Iteration 1, worst residual=2.83e-03 @ 3
+Iteration 2, worst residual=4.11e-04 @ 3, worst delta=1.54e-04 @ vdd:flow(br)
+Iteration 3, converged, worst residual=6.22e-07 @ 2, worst delta=3.93e-05 @ 3
+NR algorithm converged in 3 iteration(s).
+  Maximal LTE/tol=2.303038024712834e+00 suggests dt=3.442473474344931e-11.
+  Next break point is at t=4.000000000000000e-09.
+Point #84 accepted at t=3.850136017816453e-09, dt=3.442473474344931e-11, order=2.
+  Solving at t=3.884560752559903e-09 with hk=3.442473474344931e-11
+Starting NR algorithm with given initial solution.
+Iteration 1, worst residual=3.32e-03 @ 4
+Iteration 2, worst residual=3.34e-04 @ 4, worst delta=8.71e-05 @ vdd:flow(br)
+Iteration 3, converged, worst residual=2.09e-06 @ 4, worst delta=1.04e-04 @ 4
+NR algorithm converged in 3 iteration(s).
+  Maximal LTE/tol=1.286298235740513e+00 suggests dt=3.165361952603859e-11.
+  Next break point is at t=4.000000000000000e-09.
+Point #85 accepted at t=3.884560752559903e-09, dt=3.165361952603859e-11, order=2.
+  Solving at t=3.916214372085941e-09 with hk=3.165361952603859e-11
+Starting NR algorithm with given initial solution.
+Iteration 1, worst residual=3.40e-03 @ 4
+Iteration 2, worst residual=1.97e-04 @ 4, worst delta=7.88e-03 @ 4
+Iteration 3, converged, worst residual=7.68e-07 @ 4, worst delta=2.96e-05 @ 4
+NR algorithm converged in 3 iteration(s).
+  Maximal LTE/tol=5.382615233683479e-01 suggests dt=3.891278063670377e-11.
+  Next break point is at t=4.000000000000000e-09.
+Point #86 accepted at t=3.916214372085941e-09, dt=3.891278063670377e-11, order=2.
+  Solving at t=3.955127152722645e-09 with hk=3.891278063670377e-11
+Starting NR algorithm with given initial solution.
+Iteration 1, worst residual=3.21e-03 @ 4
+Iteration 2, worst residual=9.78e-05 @ 5, worst delta=2.81e-05 @ vdd:flow(br)
+Iteration 3, converged, worst residual=9.21e-08 @ 5, worst delta=4.18e-08 @ vdd:flow(br)
+NR algorithm converged in 3 iteration(s).
+  Maximal LTE/tol=2.231082749128938e+00 suggests dt=2.977970375078680e-11.
+  Next break point is at t=4.000000000000000e-09.
+Point #87 accepted at t=3.955127152722645e-09, dt=2.977970375078680e-11, order=2.
+  Solving at t=3.984906856473432e-09 with hk=2.977970375078680e-11
+Starting NR algorithm with given initial solution.
+Iteration 1, worst residual=2.48e-03 @ 5
+Iteration 2, worst residual=9.46e-05 @ 5, worst delta=2.62e-05 @ vdd:flow(br)
+Iteration 3, converged, worst residual=1.30e-07 @ 5, worst delta=5.41e-06 @ 5
+NR algorithm converged in 3 iteration(s).
+  Maximal LTE/tol=4.117447151214765e-01 suggests dt=4.002927231458975e-11.
+  Next break point is at t=4.000000000000000e-09.
+  Timestep cut due to break point, dt=1.509314352656845e-11.
+Point #88 accepted at t=3.984906856473432e-09, dt=1.509314352656845e-11, order=2.
+  Solving at t=4.000000000000000e-09 with hk=1.509314352656845e-11
+Starting NR algorithm with given initial solution.
+Iteration 1, worst residual=3.02e-03 @ 5
+Iteration 2, worst residual=7.16e-05 @ 5, worst delta=1.28e-05 @ vdd:flow(br)
+Iteration 3, converged, worst residual=1.02e-07 @ 5, worst delta=2.72e-08 @ vdd:flow(br)
+NR algorithm converged in 3 iteration(s).
+  Maximal LTE/tol=4.229080742827094e-02 suggests dt=3.018628705313690e-11.
+  Next break point is at t=5.000000000000000e-09.
+  Discontinuity reached, setting order to 1.
+Point #89 accepted at t=4.000000000000000e-09, dt=3.018628705313690e-11, order=1.
+  Solving at t=4.030186287053137e-09 with hk=3.018628705313690e-11
+Starting NR algorithm with given initial solution.
+Iteration 1, worst residual=1.67e-03 @ 5
+Iteration 2, worst residual=1.47e-04 @ 4, worst delta=6.82e-05 @ vdd:flow(br)
+Iteration 3, converged, worst residual=3.15e-07 @ vdd, worst delta=3.31e-07 @ vdd:flow(br)
+NR algorithm converged in 3 iteration(s).
+  Cannot estimate LTE. Will accept the point and keep the step unchanged.
+  Next break point is at t=5.000000000000000e-09.
+Point #90 accepted at t=4.030186287053137e-09, dt=3.018628705313690e-11, order=1.
+  Solving at t=4.060372574106274e-09 with hk=3.018628705313690e-11
+Starting NR algorithm with given initial solution.
+Iteration 1, worst residual=2.04e-03 @ 5
+Iteration 2, worst residual=7.23e-05 @ 5, worst delta=7.77e-05 @ vdd:flow(br)
+Iteration 3, converged, worst residual=6.77e-08 @ vdd, worst delta=7.50e-08 @ vdd:flow(br)
+NR algorithm converged in 3 iteration(s).
+  Maximal LTE/tol=2.717542198506464e+00 suggests dt=1.831139998711730e-11.
+  Increasing order to 2.
+  Next break point is at t=5.000000000000000e-09.
+Point #91 accepted at t=4.060372574106274e-09, dt=1.831139998711730e-11, order=2.
+  Solving at t=4.078683974093391e-09 with hk=1.831139998711730e-11
+Starting NR algorithm with given initial solution.
+Iteration 1, worst residual=4.70e-03 @ 5
+Iteration 2, worst residual=3.13e-05 @ 5, worst delta=3.33e-05 @ vdd:flow(br)
+Iteration 3, converged, worst residual=3.27e-09 @ 4, worst delta=1.83e-09 @ vdd:flow(br)
+NR algorithm converged in 3 iteration(s).
+  Maximal LTE/tol=9.232417002709688e-02 suggests dt=3.662279997423460e-11.
+  Next break point is at t=5.000000000000000e-09.
+Point #92 accepted at t=4.078683974093391e-09, dt=3.662279997423460e-11, order=2.
+  Solving at t=4.115306774067626e-09 with hk=3.662279997423460e-11
+Starting NR algorithm with given initial solution.
+Iteration 1, worst residual=5.02e-03 @ 5
+Iteration 2, worst residual=6.77e-04 @ 5, worst delta=2.50e-02 @ 5
+Iteration 3, worst residual=9.76e-06 @ 5, worst delta=3.63e-04 @ 5
+Iteration 4, converged, worst residual=1.99e-09 @ 5, worst delta=7.34e-08 @ 5
+NR algorithm converged in 4 iteration(s).
+  Maximal LTE/tol=1.799335231999566e+00 suggests dt=3.011023768021457e-11.
+  Next break point is at t=5.000000000000000e-09.
+Point #93 accepted at t=4.115306774067626e-09, dt=3.011023768021457e-11, order=2.
+  Solving at t=4.145417011747841e-09 with hk=3.011023768021457e-11
+Starting NR algorithm with given initial solution.
+Iteration 1, worst residual=4.85e-03 @ 5
+Iteration 2, worst residual=1.47e-04 @ 4, worst delta=3.69e-05 @ vdd:flow(br)
+Iteration 3, converged, worst residual=1.94e-07 @ 6, worst delta=9.43e-08 @ vdd:flow(br)
+NR algorithm converged in 3 iteration(s).
+  Maximal LTE/tol=5.892685582979978e-01 suggests dt=3.591504602966720e-11.
+  Next break point is at t=5.000000000000000e-09.
+Point #94 accepted at t=4.145417011747841e-09, dt=3.591504602966720e-11, order=2.
+  Solving at t=4.181332057777508e-09 with hk=3.591504602966720e-11
+Starting NR algorithm with given initial solution.
+Iteration 1, worst residual=4.05e-03 @ 5
+Iteration 2, worst residual=3.02e-04 @ 6, worst delta=1.93e-02 @ 6
+Iteration 3, worst residual=1.39e-05 @ 5, worst delta=7.41e-04 @ 6
+Iteration 4, converged, worst residual=3.40e-08 @ 5, worst delta=1.76e-06 @ 6
+NR algorithm converged in 4 iteration(s).
+  Maximal LTE/tol=9.352577616174266e-01 suggests dt=3.672535368908709e-11.
+  Next break point is at t=5.000000000000000e-09.
+Point #95 accepted at t=4.181332057777508e-09, dt=3.672535368908709e-11, order=2.
+  Solving at t=4.218057411466595e-09 with hk=3.672535368908709e-11
+Starting NR algorithm with given initial solution.
+Iteration 1, worst residual=3.00e-03 @ 5
+Iteration 2, worst residual=6.21e-04 @ 5, worst delta=3.25e-02 @ 6
+Iteration 3, worst residual=2.10e-05 @ 6, worst delta=8.58e-06 @ vdd:flow(br)
+Iteration 4, converged, worst residual=4.13e-08 @ 6, worst delta=1.35e-08 @ vdd:flow(br)
+NR algorithm converged in 4 iteration(s).
+  Maximal LTE/tol=1.159803978089652e+00 suggests dt=3.495460957753532e-11.
+  Next break point is at t=5.000000000000000e-09.
+Point #96 accepted at t=4.218057411466595e-09, dt=3.495460957753532e-11, order=2.
+  Solving at t=4.253012021044131e-09 with hk=3.495460957753532e-11
+Starting NR algorithm with given initial solution.
+Iteration 1, worst residual=3.18e-03 @ 6
+Iteration 2, worst residual=6.50e-04 @ 6, worst delta=1.65e-04 @ vdd:flow(br)
+Iteration 3, worst residual=6.56e-06 @ 6, worst delta=1.65e-06 @ vdd:flow(br)
+Iteration 4, converged, worst residual=8.68e-10 @ 6, worst delta=3.12e-10 @ vdd:flow(br)
+NR algorithm converged in 4 iteration(s).
+  Maximal LTE/tol=1.604089482482524e+00 suggests dt=2.986035215633699e-11.
+  Next break point is at t=5.000000000000000e-09.
+Point #97 accepted at t=4.253012021044131e-09, dt=2.986035215633699e-11, order=2.
+  Solving at t=4.282872373200467e-09 with hk=2.986035215633699e-11
+Starting NR algorithm with given initial solution.
+Iteration 1, worst residual=3.38e-03 @ 6
+Iteration 2, worst residual=1.80e-04 @ 6, worst delta=7.12e-03 @ 6
+Iteration 3, converged, worst residual=7.15e-07 @ 6, worst delta=2.75e-05 @ 6
+NR algorithm converged in 3 iteration(s).
+  Maximal LTE/tol=7.358681402950117e-01 suggests dt=3.307462471528526e-11.
+  Next break point is at t=5.000000000000000e-09.
+Point #98 accepted at t=4.282872373200467e-09, dt=3.307462471528526e-11, order=2.
+  Solving at t=4.315946997915753e-09 with hk=3.307462471528526e-11
+Starting NR algorithm with given initial solution.
+Iteration 1, worst residual=3.32e-03 @ 6
+Iteration 2, worst residual=1.48e-04 @ 6, worst delta=6.06e-03 @ 6
+Iteration 3, converged, worst residual=3.24e-07 @ 6, worst delta=1.25e-05 @ 6
+NR algorithm converged in 3 iteration(s).
+  Maximal LTE/tol=1.327485581294970e+00 suggests dt=3.009435138805237e-11.
+  Next break point is at t=5.000000000000000e-09.
+Point #99 accepted at t=4.315946997915753e-09, dt=3.009435138805237e-11, order=2.
+  Solving at t=4.346041349303806e-09 with hk=3.009435138805237e-11
+Starting NR algorithm with given initial solution.
+Iteration 1, worst residual=2.12e-03 @ 7
+Iteration 2, worst residual=6.87e-05 @ 7, worst delta=2.17e-05 @ vdd:flow(br)
+Iteration 3, converged, worst residual=3.89e-08 @ 7, worst delta=1.80e-06 @ 7
+NR algorithm converged in 3 iteration(s).
+  Maximal LTE/tol=5.752396252443306e-01 suggests dt=3.618556760646365e-11.
+  Next break point is at t=5.000000000000000e-09.
+Point #100 accepted at t=4.346041349303806e-09, dt=3.618556760646365e-11, order=2.
+  Solving at t=4.382226916910269e-09 with hk=3.618556760646365e-11
+Starting NR algorithm with given initial solution.
+Iteration 1, worst residual=2.65e-03 @ 7
+Iteration 2, worst residual=1.69e-04 @ 7, worst delta=3.72e-05 @ vdd:flow(br)
+Iteration 3, converged, worst residual=1.29e-06 @ 6, worst delta=2.44e-07 @ vdd:flow(br)
+NR algorithm converged in 3 iteration(s).
+  Maximal LTE/tol=2.192087971076224e-01 suggests dt=6.001356090328077e-11.
+  Next break point is at t=5.000000000000000e-09.
+Point #101 accepted at t=4.382226916910269e-09, dt=6.001356090328077e-11, order=2.
+  Solving at t=4.442240477813550e-09 with hk=6.001356090328077e-11
+Starting NR algorithm with given initial solution.
+Iteration 1, worst residual=3.37e-03 @ 7
+Iteration 2, worst residual=3.15e-04 @ 6, worst delta=3.05e-04 @ vdd:flow(br)
+Iteration 3, converged, worst residual=1.42e-06 @ 6, worst delta=1.40e-06 @ vdd:flow(br)
+NR algorithm converged in 3 iteration(s).
+  Maximal LTE/tol=2.441224670129519e+00 suggests dt=4.457042886896023e-11.
+  Next break point is at t=5.000000000000000e-09.
+Point #102 accepted at t=4.442240477813550e-09, dt=4.457042886896023e-11, order=2.
+  Solving at t=4.486810906682510e-09 with hk=4.457042886896023e-11
+Starting NR algorithm with given initial solution.
+Iteration 1, worst residual=4.88e-03 @ 7
+Iteration 2, worst residual=4.20e-04 @ 7, worst delta=2.05e-02 @ 7
+Iteration 3, worst residual=6.98e-06 @ 7, worst delta=3.29e-04 @ 7
+Iteration 4, converged, worst residual=2.25e-09 @ 7, worst delta=1.08e-07 @ 7
+NR algorithm converged in 4 iteration(s).
+  Maximal LTE/tol=5.808295602844892e-01 suggests dt=5.341918313888076e-11.
+  Next break point is at t=5.000000000000000e-09.
+Point #103 accepted at t=4.486810906682510e-09, dt=5.341918313888076e-11, order=2.
+  Solving at t=4.540230089821391e-09 with hk=5.341918313888076e-11
+Starting NR algorithm with given initial solution.
+Iteration 1, worst residual=5.17e-03 @ 7
+Iteration 2, worst residual=5.49e-04 @ 7, worst delta=1.33e-04 @ vdd:flow(br)
+Iteration 3, converged, worst residual=2.39e-06 @ 6, worst delta=1.05e-06 @ vdd:flow(br)
+NR algorithm converged in 3 iteration(s).
+  Maximal LTE/tol=2.566976483488727e+00 suggests dt=3.901425150877427e-11.
+  Next break point is at t=5.000000000000000e-09.
+Point #104 accepted at t=4.540230089821391e-09, dt=3.901425150877427e-11, order=2.
+  Solving at t=4.579244341330165e-09 with hk=3.901425150877427e-11
+Starting NR algorithm with given initial solution.
+Iteration 1, worst residual=3.74e-03 @ 7
+Iteration 2, worst residual=5.10e-04 @ 8, worst delta=4.33e-02 @ 8
+Iteration 3, worst residual=3.28e-05 @ 7, worst delta=2.16e-03 @ 8
+Iteration 4, converged, worst residual=5.36e-08 @ 7, worst delta=1.15e-08 @ vdd:flow(br)
+NR algorithm converged in 4 iteration(s).
+  Maximal LTE/tol=6.719784431126279e-01 suggests dt=4.454218311077370e-11.
+  Next break point is at t=5.000000000000000e-09.
+Point #105 accepted at t=4.579244341330165e-09, dt=4.454218311077370e-11, order=2.
+  Solving at t=4.623786524440938e-09 with hk=4.454218311077370e-11
+Starting NR algorithm with given initial solution.
+Iteration 1, worst residual=2.84e-03 @ 8
+Iteration 2, worst residual=8.87e-04 @ 8, worst delta=2.45e-04 @ vdd:flow(br)
+Iteration 3, worst residual=1.79e-05 @ 8, worst delta=6.71e-06 @ vdd:flow(br)
+Iteration 4, converged, worst residual=1.27e-08 @ 8, worst delta=5.57e-09 @ vdd:flow(br)
+NR algorithm converged in 4 iteration(s).
+  Maximal LTE/tol=1.643011422019186e+00 suggests dt=3.774777039571997e-11.
+  Next break point is at t=5.000000000000000e-09.
+Point #106 accepted at t=4.623786524440938e-09, dt=3.774777039571997e-11, order=2.
+  Solving at t=4.661534294836659e-09 with hk=3.774777039571997e-11
+Starting NR algorithm with given initial solution.
+Iteration 1, worst residual=3.37e-03 @ 8
+Iteration 2, worst residual=2.74e-04 @ 8, worst delta=5.83e-05 @ vdd:flow(br)
+Iteration 3, converged, worst residual=1.95e-06 @ 8, worst delta=9.95e-05 @ 8
+NR algorithm converged in 3 iteration(s).
+  Maximal LTE/tol=1.567308679684948e+00 suggests dt=3.249673971047929e-11.
+  Next break point is at t=5.000000000000000e-09.
+Point #107 accepted at t=4.661534294836659e-09, dt=3.249673971047929e-11, order=2.
+  Solving at t=4.694031034547138e-09 with hk=3.249673971047929e-11
+Starting NR algorithm with given initial solution.
+Iteration 1, worst residual=3.36e-03 @ 8
+Iteration 2, worst residual=1.68e-04 @ 8, worst delta=6.74e-03 @ 8
+Iteration 3, converged, worst residual=4.50e-07 @ 8, worst delta=1.73e-05 @ 8
+NR algorithm converged in 3 iteration(s).
+  Maximal LTE/tol=3.713795102512690e-01 suggests dt=4.520992765994020e-11.
+  Next break point is at t=5.000000000000000e-09.
+Point #108 accepted at t=4.694031034547138e-09, dt=4.520992765994020e-11, order=2.
+  Solving at t=4.739240962207078e-09 with hk=4.520992765994020e-11
+Starting NR algorithm with given initial solution.
+Iteration 1, worst residual=2.01e-03 @ 9
+Iteration 2, worst residual=1.48e-04 @ 9, worst delta=5.38e-05 @ vdd:flow(br)
+Iteration 3, converged, worst residual=2.71e-07 @ 9, worst delta=1.92e-05 @ 9
+NR algorithm converged in 3 iteration(s).
+  Maximal LTE/tol=1.911972020435416e+00 suggests dt=3.642559332611885e-11.
+  Next break point is at t=5.000000000000000e-09.
+Point #109 accepted at t=4.739240962207078e-09, dt=3.642559332611885e-11, order=2.
+  Solving at t=4.775666555533196e-09 with hk=3.642559332611885e-11
+Starting NR algorithm with given initial solution.
+Iteration 1, worst residual=2.82e-03 @ 9
+Iteration 2, worst residual=2.06e-04 @ 9, worst delta=1.19e-02 @ 9
+Iteration 3, worst residual=2.76e-06 @ 8, worst delta=9.50e-07 @ vdd:flow(br)
+Iteration 4, converged, worst residual=1.65e-10 @ 9, worst delta=6.69e-11 @ vdd:flow(br)
+NR algorithm converged in 4 iteration(s).
+  Maximal LTE/tol=4.650566142105649e-01 suggests dt=4.701517165859627e-11.
+  Next break point is at t=5.000000000000000e-09.
+Point #110 accepted at t=4.775666555533196e-09, dt=4.701517165859627e-11, order=2.
+  Solving at t=4.822681727191792e-09 with hk=4.701517165859627e-11
+Starting NR algorithm with given initial solution.
+Iteration 1, worst residual=3.63e-03 @ 9
+Iteration 2, worst residual=3.00e-04 @ 9, worst delta=2.69e-04 @ vdd:flow(br)
+Iteration 3, converged, worst residual=3.38e-07 @ 1, worst delta=6.49e-07 @ vdd:flow(br)
+NR algorithm converged in 3 iteration(s).
+  Maximal LTE/tol=1.493624151227697e+00 suggests dt=4.112989337680638e-11.
+  Next break point is at t=5.000000000000000e-09.
+Point #111 accepted at t=4.822681727191792e-09, dt=4.112989337680638e-11, order=2.
+  Solving at t=4.863811620568599e-09 with hk=4.112989337680638e-11
+Starting NR algorithm with given initial solution.
+Iteration 1, worst residual=4.81e-03 @ 9
+Iteration 2, worst residual=2.65e-04 @ 9, worst delta=9.48e-05 @ vdd:flow(br)
+Iteration 3, worst residual=3.26e-06 @ 9, worst delta=1.51e-04 @ 9
+Iteration 4, converged, worst residual=6.12e-10 @ 9, worst delta=2.89e-08 @ 9
+NR algorithm converged in 4 iteration(s).
+  Maximal LTE/tol=8.982770712596525e-01 suggests dt=4.262726598436665e-11.
+  Next break point is at t=5.000000000000000e-09.
+Point #112 accepted at t=4.863811620568599e-09, dt=4.262726598436665e-11, order=2.
+  Solving at t=4.906438886552965e-09 with hk=4.262726598436665e-11
+Starting NR algorithm with given initial solution.
+Iteration 1, worst residual=5.24e-03 @ 9
+Iteration 2, worst residual=5.96e-04 @ 9, worst delta=2.51e-02 @ 9
+Iteration 3, worst residual=4.05e-06 @ 9, worst delta=1.59e-04 @ 9
+Iteration 4, converged, worst residual=2.26e-10 @ 9, worst delta=9.18e-09 @ 9
+NR algorithm converged in 4 iteration(s).
+  Maximal LTE/tol=1.205241708267526e+00 suggests dt=4.005555572345411e-11.
+  Next break point is at t=5.000000000000000e-09.
+Point #113 accepted at t=4.906438886552965e-09, dt=4.005555572345411e-11, order=2.
+  Solving at t=4.946494442276419e-09 with hk=4.005555572345411e-11
+Starting NR algorithm with given initial solution.
+Iteration 1, worst residual=4.24e-03 @ 9
+Iteration 2, worst residual=3.05e-04 @ 1, worst delta=2.17e-02 @ 1
+Iteration 3, worst residual=1.22e-05 @ 9, worst delta=7.21e-04 @ 1
+Iteration 4, converged, worst residual=2.71e-08 @ 9, worst delta=1.57e-06 @ 1
+NR algorithm converged in 4 iteration(s).
+  Maximal LTE/tol=9.169597692197368e-01 suggests dt=4.122993664937504e-11.
+  Next break point is at t=5.000000000000000e-09.
+Point #114 accepted at t=4.946494442276419e-09, dt=4.122993664937504e-11, order=2.
+  Solving at t=4.987724378925794e-09 with hk=4.122993664937504e-11
+Starting NR algorithm with given initial solution.
+Iteration 1, worst residual=3.05e-03 @ 9
+Iteration 2, worst residual=7.09e-04 @ 9, worst delta=4.54e-02 @ 1
+Iteration 3, worst residual=3.80e-05 @ 1, worst delta=1.39e-05 @ vdd:flow(br)
+Iteration 4, converged, worst residual=1.35e-07 @ 1, worst delta=4.40e-08 @ vdd:flow(br)
+NR algorithm converged in 4 iteration(s).
+  Maximal LTE/tol=1.408563493859440e+00 suggests dt=3.678074525237636e-11.
+  Next break point is at t=5.000000000000000e-09.
+  Timestep cut due to break point, dt=1.227562107420591e-11.
+Point #115 accepted at t=4.987724378925794e-09, dt=1.227562107420591e-11, order=2.
+  Solving at t=5.000000000000000e-09 with hk=1.227562107420591e-11
+Starting NR algorithm with given initial solution.
+Iteration 1, worst residual=3.22e-03 @ 1
+Iteration 2, worst residual=2.58e-04 @ 1, worst delta=6.45e-05 @ vdd:flow(br)
+Iteration 3, converged, worst residual=8.34e-07 @ 1, worst delta=2.07e-07 @ vdd:flow(br)
+NR algorithm converged in 3 iteration(s).
+  Maximal LTE/tol=7.737246982460742e-02 suggests dt=2.455124214841183e-11.
+  Next break point is at t=inf.
+  Discontinuity reached, setting order to 1.
+Point #116 accepted at t=5.000000000000000e-09, dt=2.455124214841183e-11, order=1.
+Transient analysis finished.
+  Elapsed time: 0.0111038
+Nodes:
+  0 : 0 
+  1 : 1 
+  2 : 2 
+  3 : 3 
+  4 : 4 
+  5 : 5 
+  6 : 6 
+  7 : 7 
+  8 : 8 
+  9 : 9 
+  10 : u1:mn:m:bd (internal) 
+  11 : u1:mn:m:bi (internal) 
+  12 : u1:mn:m:bp (internal) 
+  13 : u1:mn:m:bs (internal) 
+  14 : u1:mn:m:di (internal) 
+  15 : u1:mn:m:flow(noii) (flow) (internal) 
+  16 : u1:mn:m:gp (internal) 
+  17 : u1:mn:m:noi (internal) 
+  18 : u1:mn:m:si (internal) 
+  19 : u1:mp:m:bd (internal) 
+  20 : u1:mp:m:bi (internal) 
+  21 : u1:mp:m:bp (internal) 
+  22 : u1:mp:m:bs (internal) 
+  23 : u1:mp:m:di (internal) 
+  24 : u1:mp:m:flow(noii) (flow) (internal) 
+  25 : u1:mp:m:gp (internal) 
+  26 : u1:mp:m:noi (internal) 
+  27 : u1:mp:m:si (internal) 
+  28 : u2:mn:m:bd (internal) 
+  29 : u2:mn:m:bi (internal) 
+  30 : u2:mn:m:bp (internal) 
+  31 : u2:mn:m:bs (internal) 
+  32 : u2:mn:m:di (internal) 
+  33 : u2:mn:m:flow(noii) (flow) (internal) 
+  34 : u2:mn:m:gp (internal) 
+  35 : u2:mn:m:noi (internal) 
+  36 : u2:mn:m:si (internal) 
+  37 : u2:mp:m:bd (internal) 
+  38 : u2:mp:m:bi (internal) 
+  39 : u2:mp:m:bp (internal) 
+  40 : u2:mp:m:bs (internal) 
+  41 : u2:mp:m:di (internal) 
+  42 : u2:mp:m:flow(noii) (flow) (internal) 
+  43 : u2:mp:m:gp (internal) 
+  44 : u2:mp:m:noi (internal) 
+  45 : u2:mp:m:si (internal) 
+  46 : u3:mn:m:bd (internal) 
+  47 : u3:mn:m:bi (internal) 
+  48 : u3:mn:m:bp (internal) 
+  49 : u3:mn:m:bs (internal) 
+  50 : u3:mn:m:di (internal) 
+  51 : u3:mn:m:flow(noii) (flow) (internal) 
+  52 : u3:mn:m:gp (internal) 
+  53 : u3:mn:m:noi (internal) 
+  54 : u3:mn:m:si (internal) 
+  55 : u3:mp:m:bd (internal) 
+  56 : u3:mp:m:bi (internal) 
+  57 : u3:mp:m:bp (internal) 
+  58 : u3:mp:m:bs (internal) 
+  59 : u3:mp:m:di (internal) 
+  60 : u3:mp:m:flow(noii) (flow) (internal) 
+  61 : u3:mp:m:gp (internal) 
+  62 : u3:mp:m:noi (internal) 
+  63 : u3:mp:m:si (internal) 
+  64 : u4:mn:m:bd (internal) 
+  65 : u4:mn:m:bi (internal) 
+  66 : u4:mn:m:bp (internal) 
+  67 : u4:mn:m:bs (internal) 
+  68 : u4:mn:m:di (internal) 
+  69 : u4:mn:m:flow(noii) (flow) (internal) 
+  70 : u4:mn:m:gp (internal) 
+  71 : u4:mn:m:noi (internal) 
+  72 : u4:mn:m:si (internal) 
+  73 : u4:mp:m:bd (internal) 
+  74 : u4:mp:m:bi (internal) 
+  75 : u4:mp:m:bp (internal) 
+  76 : u4:mp:m:bs (internal) 
+  77 : u4:mp:m:di (internal) 
+  78 : u4:mp:m:flow(noii) (flow) (internal) 
+  79 : u4:mp:m:gp (internal) 
+  80 : u4:mp:m:noi (internal) 
+  81 : u4:mp:m:si (internal) 
+  82 : u5:mn:m:bd (internal) 
+  83 : u5:mn:m:bi (internal) 
+  84 : u5:mn:m:bp (internal) 
+  85 : u5:mn:m:bs (internal) 
+  86 : u5:mn:m:di (internal) 
+  87 : u5:mn:m:flow(noii) (flow) (internal) 
+  88 : u5:mn:m:gp (internal) 
+  89 : u5:mn:m:noi (internal) 
+  90 : u5:mn:m:si (internal) 
+  91 : u5:mp:m:bd (internal) 
+  92 : u5:mp:m:bi (internal) 
+  93 : u5:mp:m:bp (internal) 
+  94 : u5:mp:m:bs (internal) 
+  95 : u5:mp:m:di (internal) 
+  96 : u5:mp:m:flow(noii) (flow) (internal) 
+  97 : u5:mp:m:gp (internal) 
+  98 : u5:mp:m:noi (internal) 
+  99 : u5:mp:m:si (internal) 
+  100 : u6:mn:m:bd (internal) 
+  101 : u6:mn:m:bi (internal) 
+  102 : u6:mn:m:bp (internal) 
+  103 : u6:mn:m:bs (internal) 
+  104 : u6:mn:m:di (internal) 
+  105 : u6:mn:m:flow(noii) (flow) (internal) 
+  106 : u6:mn:m:gp (internal) 
+  107 : u6:mn:m:noi (internal) 
+  108 : u6:mn:m:si (internal) 
+  109 : u6:mp:m:bd (internal) 
+  110 : u6:mp:m:bi (internal) 
+  111 : u6:mp:m:bp (internal) 
+  112 : u6:mp:m:bs (internal) 
+  113 : u6:mp:m:di (internal) 
+  114 : u6:mp:m:flow(noii) (flow) (internal) 
+  115 : u6:mp:m:gp (internal) 
+  116 : u6:mp:m:noi (internal) 
+  117 : u6:mp:m:si (internal) 
+  118 : u7:mn:m:bd (internal) 
+  119 : u7:mn:m:bi (internal) 
+  120 : u7:mn:m:bp (internal) 
+  121 : u7:mn:m:bs (internal) 
+  122 : u7:mn:m:di (internal) 
+  123 : u7:mn:m:flow(noii) (flow) (internal) 
+  124 : u7:mn:m:gp (internal) 
+  125 : u7:mn:m:noi (internal) 
+  126 : u7:mn:m:si (internal) 
+  127 : u7:mp:m:bd (internal) 
+  128 : u7:mp:m:bi (internal) 
+  129 : u7:mp:m:bp (internal) 
+  130 : u7:mp:m:bs (internal) 
+  131 : u7:mp:m:di (internal) 
+  132 : u7:mp:m:flow(noii) (flow) (internal) 
+  133 : u7:mp:m:gp (internal) 
+  134 : u7:mp:m:noi (internal) 
+  135 : u7:mp:m:si (internal) 
+  136 : u8:mn:m:bd (internal) 
+  137 : u8:mn:m:bi (internal) 
+  138 : u8:mn:m:bp (internal) 
+  139 : u8:mn:m:bs (internal) 
+  140 : u8:mn:m:di (internal) 
+  141 : u8:mn:m:flow(noii) (flow) (internal) 
+  142 : u8:mn:m:gp (internal) 
+  143 : u8:mn:m:noi (internal) 
+  144 : u8:mn:m:si (internal) 
+  145 : u8:mp:m:bd (internal) 
+  146 : u8:mp:m:bi (internal) 
+  147 : u8:mp:m:bp (internal) 
+  148 : u8:mp:m:bs (internal) 
+  149 : u8:mp:m:di (internal) 
+  150 : u8:mp:m:flow(noii) (flow) (internal) 
+  151 : u8:mp:m:gp (internal) 
+  152 : u8:mp:m:noi (internal) 
+  153 : u8:mp:m:si (internal) 
+  154 : u9:mn:m:bd (internal) 
+  155 : u9:mn:m:bi (internal) 
+  156 : u9:mn:m:bp (internal) 
+  157 : u9:mn:m:bs (internal) 
+  158 : u9:mn:m:di (internal) 
+  159 : u9:mn:m:flow(noii) (flow) (internal) 
+  160 : u9:mn:m:gp (internal) 
+  161 : u9:mn:m:noi (internal) 
+  162 : u9:mn:m:si (internal) 
+  163 : u9:mp:m:bd (internal) 
+  164 : u9:mp:m:bi (internal) 
+  165 : u9:mp:m:bp (internal) 
+  166 : u9:mp:m:bs (internal) 
+  167 : u9:mp:m:di (internal) 
+  168 : u9:mp:m:flow(noii) (flow) (internal) 
+  169 : u9:mp:m:gp (internal) 
+  170 : u9:mp:m:noi (internal) 
+  171 : u9:mp:m:si (internal) 
+  172 : vdd 
+  173 : vdd:flow(br) (flow) (internal) 
+Unknowns:
+  0 : 0
+  1 : 1
+  2 : 2
+  3 : 3
+  4 : 4
+  5 : 5
+  6 : 6
+  7 : 7
+  8 : 8
+  9 : 9
+  10 : u1:mn:m:flow(noii)
+  11 : u1:mn:m:noi
+  12 : vdd
+  13 : u1:mp:m:flow(noii)
+  14 : u1:mp:m:noi
+  15 : u2:mn:m:flow(noii)
+  16 : u2:mn:m:noi
+  17 : u2:mp:m:flow(noii)
+  18 : u2:mp:m:noi
+  19 : u3:mn:m:flow(noii)
+  20 : u3:mn:m:noi
+  21 : u3:mp:m:flow(noii)
+  22 : u3:mp:m:noi
+  23 : u4:mn:m:flow(noii)
+  24 : u4:mn:m:noi
+  25 : u4:mp:m:flow(noii)
+  26 : u4:mp:m:noi
+  27 : u5:mn:m:flow(noii)
+  28 : u5:mn:m:noi
+  29 : u5:mp:m:flow(noii)
+  30 : u5:mp:m:noi
+  31 : u6:mn:m:flow(noii)
+  32 : u6:mn:m:noi
+  33 : u6:mp:m:flow(noii)
+  34 : u6:mp:m:noi
+  35 : u7:mn:m:flow(noii)
+  36 : u7:mn:m:noi
+  37 : u7:mp:m:flow(noii)
+  38 : u7:mp:m:noi
+  39 : u8:mn:m:flow(noii)
+  40 : u8:mn:m:noi
+  41 : u8:mp:m:flow(noii)
+  42 : u8:mp:m:noi
+  43 : u9:mn:m:flow(noii)
+  44 : u9:mn:m:noi
+  45 : u9:mp:m:flow(noii)
+  46 : u9:mp:m:noi
+  47 : vdd:flow(br)
+Sparsity:
+  (1, 1) : 0
+  (2, 1) : 1
+  (9, 1) : 2
+  (11, 1) : 3
+  (12, 1) : 4
+  (14, 1) : 5
+  (44, 1) : 6
+  (46, 1) : 7
+  (1, 2) : 8
+  (2, 2) : 9
+  (3, 2) : 10
+  (11, 2) : 11
+  (12, 2) : 12
+  (14, 2) : 13
+  (16, 2) : 14
+  (18, 2) : 15
+  (2, 3) : 16
+  (3, 3) : 17
+  (4, 3) : 18
+  (12, 3) : 19
+  (16, 3) : 20
+  (18, 3) : 21
+  (20, 3) : 22
+  (22, 3) : 23
+  (3, 4) : 24
+  (4, 4) : 25
+  (5, 4) : 26
+  (12, 4) : 27
+  (20, 4) : 28
+  (22, 4) : 29
+  (24, 4) : 30
+  (26, 4) : 31
+  (4, 5) : 32
+  (5, 5) : 33
+  (6, 5) : 34
+  (12, 5) : 35
+  (24, 5) : 36
+  (26, 5) : 37
+  (28, 5) : 38
+  (30, 5) : 39
+  (5, 6) : 40
+  (6, 6) : 41
+  (7, 6) : 42
+  (12, 6) : 43
+  (28, 6) : 44
+  (30, 6) : 45
+  (32, 6) : 46
+  (34, 6) : 47
+  (6, 7) : 48
+  (7, 7) : 49
+  (8, 7) : 50
+  (12, 7) : 51
+  (32, 7) : 52
+  (34, 7) : 53
+  (36, 7) : 54
+  (38, 7) : 55
+  (7, 8) : 56
+  (8, 8) : 57
+  (9, 8) : 58
+  (12, 8) : 59
+  (36, 8) : 60
+  (38, 8) : 61
+  (40, 8) : 62
+  (42, 8) : 63
+  (1, 9) : 64
+  (8, 9) : 65
+  (9, 9) : 66
+  (12, 9) : 67
+  (40, 9) : 68
+  (42, 9) : 69
+  (44, 9) : 70
+  (46, 9) : 71
+  (2, 10) : 72
+  (10, 10) : 73
+  (11, 10) : 74
+  (1, 11) : 75
+  (2, 11) : 76
+  (11, 11) : 77
+  (1, 12) : 78
+  (2, 12) : 79
+  (3, 12) : 80
+  (4, 12) : 81
+  (5, 12) : 82
+  (6, 12) : 83
+  (7, 12) : 84
+  (8, 12) : 85
+  (9, 12) : 86
+  (12, 12) : 87
+  (14, 12) : 88
+  (18, 12) : 89
+  (22, 12) : 90
+  (26, 12) : 91
+  (30, 12) : 92
+  (34, 12) : 93
+  (38, 12) : 94
+  (42, 12) : 95
+  (46, 12) : 96
+  (47, 12) : 97
+  (2, 13) : 98
+  (12, 13) : 99
+  (13, 13) : 100
+  (14, 13) : 101
+  (1, 14) : 102
+  (2, 14) : 103
+  (12, 14) : 104
+  (14, 14) : 105
+  (3, 15) : 106
+  (15, 15) : 107
+  (16, 15) : 108
+  (2, 16) : 109
+  (3, 16) : 110
+  (16, 16) : 111
+  (3, 17) : 112
+  (12, 17) : 113
+  (17, 17) : 114
+  (18, 17) : 115
+  (2, 18) : 116
+  (3, 18) : 117
+  (12, 18) : 118
+  (18, 18) : 119
+  (4, 19) : 120
+  (19, 19) : 121
+  (20, 19) : 122
+  (3, 20) : 123
+  (4, 20) : 124
+  (20, 20) : 125
+  (4, 21) : 126
+  (12, 21) : 127
+  (21, 21) : 128
+  (22, 21) : 129
+  (3, 22) : 130
+  (4, 22) : 131
+  (12, 22) : 132
+  (22, 22) : 133
+  (5, 23) : 134
+  (23, 23) : 135
+  (24, 23) : 136
+  (4, 24) : 137
+  (5, 24) : 138
+  (24, 24) : 139
+  (5, 25) : 140
+  (12, 25) : 141
+  (25, 25) : 142
+  (26, 25) : 143
+  (4, 26) : 144
+  (5, 26) : 145
+  (12, 26) : 146
+  (26, 26) : 147
+  (6, 27) : 148
+  (27, 27) : 149
+  (28, 27) : 150
+  (5, 28) : 151
+  (6, 28) : 152
+  (28, 28) : 153
+  (6, 29) : 154
+  (12, 29) : 155
+  (29, 29) : 156
+  (30, 29) : 157
+  (5, 30) : 158
+  (6, 30) : 159
+  (12, 30) : 160
+  (30, 30) : 161
+  (7, 31) : 162
+  (31, 31) : 163
+  (32, 31) : 164
+  (6, 32) : 165
+  (7, 32) : 166
+  (32, 32) : 167
+  (7, 33) : 168
+  (12, 33) : 169
+  (33, 33) : 170
+  (34, 33) : 171
+  (6, 34) : 172
+  (7, 34) : 173
+  (12, 34) : 174
+  (34, 34) : 175
+  (8, 35) : 176
+  (35, 35) : 177
+  (36, 35) : 178
+  (7, 36) : 179
+  (8, 36) : 180
+  (36, 36) : 181
+  (8, 37) : 182
+  (12, 37) : 183
+  (37, 37) : 184
+  (38, 37) : 185
+  (7, 38) : 186
+  (8, 38) : 187
+  (12, 38) : 188
+  (38, 38) : 189
+  (9, 39) : 190
+  (39, 39) : 191
+  (40, 39) : 192
+  (8, 40) : 193
+  (9, 40) : 194
+  (40, 40) : 195
+  (9, 41) : 196
+  (12, 41) : 197
+  (41, 41) : 198
+  (42, 41) : 199
+  (8, 42) : 200
+  (9, 42) : 201
+  (12, 42) : 202
+  (42, 42) : 203
+  (1, 43) : 204
+  (43, 43) : 205
+  (44, 43) : 206
+  (1, 44) : 207
+  (9, 44) : 208
+  (44, 44) : 209
+  (1, 45) : 210
+  (12, 45) : 211
+  (45, 45) : 212
+  (46, 45) : 213
+  (1, 46) : 214
+  (9, 46) : 215
+  (12, 46) : 216
+  (46, 46) : 217
+  (12, 47) : 218
+  (47, 47) : 219
+Osdi device instance u1:mp:m of model psp103p
+  Terminals: 2 1 vdd vdd 
+  Collapsed node pairs:
+    G, GP
+    S, SI
+    D, DI
+    BP, BI
+    BS, BI
+    BD, BI
+    B, BI
+  Parameters:
+    $mfactor = 1 (real) (not given)
+    l = 1e-06 (real)
+    w = 2e-05 (real)
+    sa = 0 (real) (not given)
+    sb = 0 (real) (not given)
+    sd = 0 (real) (not given)
+    sca = 0 (real) (not given)
+    scb = 0 (real) (not given)
+    scc = 0 (real) (not given)
+    sc = 0 (real) (not given)
+    nf = 1 (real) (not given)
+    ngcon = 1 (real) (not given)
+    xgw = 1e-07 (real) (not given)
+    nrs = 0 (real) (not given)
+    nrd = 0 (real) (not given)
+    jw = 1e-06 (real) (not given)
+    delvto = 0 (real) (not given)
+    factuo = 1 (real) (not given)
+    delvtoedge = 0 (real) (not given)
+    factuoedge = 1 (real) (not given)
+    absource = 1e-12 (real) (not given)
+    lssource = 1e-06 (real) (not given)
+    lgsource = 1e-06 (real) (not given)
+    abdrain = 1e-12 (real) (not given)
+    lsdrain = 1e-06 (real) (not given)
+    lgdrain = 1e-06 (real) (not given)
+    as = 1e-11 (real)
+    ps = 4.1e-05 (real)
+    ad = 1e-11 (real)
+    pd = 4.1e-05 (real)
+    mult = 1 (real) (not given)
+Osdi device instance u1:mn:m of model psp103n
+  Terminals: 2 1 0 0 
+  Collapsed node pairs:
+    G, GP
+    S, SI
+    D, DI
+    BP, BI
+    BS, BI
+    BD, BI
+    B, BI
+  Parameters:
+    $mfactor = 1 (real) (not given)
+    l = 1e-06 (real)
+    w = 1e-05 (real)
+    sa = 0 (real) (not given)
+    sb = 0 (real) (not given)
+    sd = 0 (real) (not given)
+    sca = 0 (real) (not given)
+    scb = 0 (real) (not given)
+    scc = 0 (real) (not given)
+    sc = 0 (real) (not given)
+    nf = 1 (real) (not given)
+    ngcon = 1 (real) (not given)
+    xgw = 1e-07 (real) (not given)
+    nrs = 0 (real) (not given)
+    nrd = 0 (real) (not given)
+    jw = 1e-06 (real) (not given)
+    delvto = 0 (real) (not given)
+    factuo = 1 (real) (not given)
+    delvtoedge = 0 (real) (not given)
+    factuoedge = 1 (real) (not given)
+    absource = 1e-12 (real) (not given)
+    lssource = 1e-06 (real) (not given)
+    lgsource = 1e-06 (real) (not given)
+    abdrain = 1e-12 (real) (not given)
+    lsdrain = 1e-06 (real) (not given)
+    lgdrain = 1e-06 (real) (not given)
+    as = 5e-12 (real)
+    ps = 2.1e-05 (real)
+    ad = 5e-12 (real)
+    pd = 2.1e-05 (real)
+    mult = 1 (real) (not given)
+System stats:
+  Low-level instances:             20
+  Subcircuit instances:            28
+  Number of nodes:                 174
+  Number of unknonws:              47
+  Initial number of nonzeros:      220
+  Initial sparsity:                0.0995926
+
+Clock resolution [ns]:             1
+
+Stats:
+  Parser invocations:              1
+  Parse time:                      0.00355983
+
+  Elaborations:                    1
+  Elaboration time:                0.00126125
+
+  Partial elaborations:            7
+  Partial elaboration time:        1.2625e-05
+
+  Eval and load calls:             372
+  Eval and load time:              0.00674546
+
+  NR solver calls:                 116
+  NR solver iterations:            371
+  NR solver time:                  0.0083797
+
+  Bypassable instance evaluations: 6678
+  Bypass opportunities:            2052
+  Bypassed evaluations:            2052
+
+  Real factorizations:             1
+  Real refactorizations:           370
+  Real solve calls:                371
+  Real factorization time:         1.7291e-05
+  Real refactorization time:       0.000312582
+  Real solve time:                 0.000118217
+
+  Complex factorizations:          0
+  Complex refactorizations:        0
+  Complex solve calls:             0
+  Complex factorization time:      0
+  Complex refactorization time:    0
+  Complex solve time:              0
+
+  Accepted timepoints:             115
+  Rejected timepoints:             0

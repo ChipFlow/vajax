@@ -1,0 +1,121 @@
+{
+  "simulator": "VACASK",
+  "circuit": "9-stage ring oscillator",
+  "system_size": {
+    "total_nodes": 174,
+    "unknowns": 47,
+    "jacobian_nonzeros": 220,
+    "sparsity_ratio": 0.0996
+  },
+  "evaluation_order": {
+    "description": "Devices evaluated in this order during each Newton-Raphson iteration",
+    "sequence": [
+      {"type": "builtin", "model": "isource", "instances": ["i0"]},
+      {"type": "builtin", "model": "vsource", "instances": ["vdd"]},
+      {"type": "osdi", "model": "psp103n", "instances": [
+        "u1:mn:m", "u2:mn:m", "u3:mn:m", "u4:mn:m", "u5:mn:m",
+        "u6:mn:m", "u7:mn:m", "u8:mn:m", "u9:mn:m"
+      ]},
+      {"type": "osdi", "model": "psp103p", "instances": [
+        "u1:mp:m", "u2:mp:m", "u3:mp:m", "u4:mp:m", "u5:mp:m",
+        "u6:mp:m", "u7:mp:m", "u8:mp:m", "u9:mp:m"
+      ]}
+    ]
+  },
+  "per_instance_operations": {
+    "description": "Operations performed for each instance",
+    "evalCore": {
+      "order": 1,
+      "description": "Evaluate device model equations",
+      "operations": [
+        "Check bypass conditions",
+        "Call OSDI descriptor->eval() to compute currents/charges/Jacobians",
+        "Process limiting flags",
+        "Store reactive residuals in state vector",
+        "Differentiate charges for transient (dQ/dt)",
+        "Check output convergence for future bypass"
+      ]
+    },
+    "loadCore": {
+      "order": 2,
+      "description": "Load computed values into system matrix",
+      "operations": [
+        "Load resistive Jacobian (dI/dV) via load_jacobian_resist()",
+        "Load reactive Jacobian (dQ/dV) via load_jacobian_react()",
+        "Load transient Jacobian (dI/dV + alpha*dQ/dV) via load_jacobian_tran()",
+        "Load residuals into RHS vector",
+        "Apply limiting corrections if needed",
+        "Track max contributions for tolerance"
+      ]
+    }
+  },
+  "instances": [
+    {
+      "name": "i0",
+      "model": "isource",
+      "type": "current_source",
+      "terminals": {"pos": "1", "neg": "0"},
+      "stamps_equations": [1],
+      "stamps_unknowns": [1]
+    },
+    {
+      "name": "vdd",
+      "model": "vsource",
+      "type": "voltage_source",
+      "terminals": {"pos": "vdd", "neg": "0"},
+      "stamps_equations": [10, 12],
+      "stamps_unknowns": [10, 12],
+      "internal_unknowns": ["branch_current"]
+    },
+    {
+      "name": "u1:mn:m",
+      "model": "psp103n",
+      "type": "nmos",
+      "terminals": {"D": "2", "G": "1", "S": "0", "B": "0"},
+      "collapsed_nodes": ["G->GP", "S->SI", "D->DI", "B->BI"],
+      "stamps_equations": [1, 2, 11],
+      "stamps_unknowns": [1, 2, 11, 12],
+      "internal_unknowns": ["nf1", "nf2"]
+    },
+    {
+      "name": "u1:mp:m",
+      "model": "psp103p",
+      "type": "pmos",
+      "terminals": {"D": "2", "G": "1", "S": "vdd", "B": "vdd"},
+      "collapsed_nodes": ["G->GP", "S->SI", "D->DI", "B->BI"],
+      "stamps_equations": [1, 2, 12, 13, 14],
+      "stamps_unknowns": [1, 2, 12, 13, 14],
+      "internal_unknowns": ["nf1", "nf2"]
+    },
+    {
+      "name": "u2:mn:m",
+      "model": "psp103n",
+      "type": "nmos",
+      "terminals": {"D": "3", "G": "2", "S": "0", "B": "0"},
+      "stamps_equations": [2, 3, 15, 16],
+      "stamps_unknowns": [2, 3, 15, 16]
+    },
+    {
+      "name": "u2:mp:m",
+      "model": "psp103p",
+      "type": "pmos",
+      "terminals": {"D": "3", "G": "2", "S": "vdd", "B": "vdd"},
+      "stamps_equations": [2, 3, 12, 17, 18],
+      "stamps_unknowns": [2, 3, 12, 17, 18]
+    }
+  ],
+  "jacobian_structure": {
+    "description": "Non-zero pattern of Jacobian matrix (row, col)",
+    "ring_coupling": [
+      {"from": 1, "to": 2, "via": "u1:mn, u1:mp"},
+      {"from": 2, "to": 1, "via": "u1:mn, u1:mp"},
+      {"from": 2, "to": 3, "via": "u2:mn, u2:mp"},
+      {"from": 3, "to": 2, "via": "u2:mn, u2:mp"},
+      {"from": 9, "to": 1, "via": "u9:mn, u9:mp (feedback)"}
+    ],
+    "supply_coupling": {
+      "description": "VDD (node 12) couples to all PMOS drains",
+      "connected_nodes": [1, 2, 3, 4, 5, 6, 7, 8, 9]
+    }
+  }
+}

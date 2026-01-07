@@ -74,6 +74,40 @@ DEFAULT_ABSTOL = 1e-12  # Match VACASK default
 
 
 @dataclass
+class DebugOptions:
+    """Debug options matching VACASK's debug output controls.
+
+    These options enable detailed debug output for comparison with VACASK:
+    - nr_debug: Newton-Raphson solver debug (0=off, 1=summary, 2=detailed, 4=dump linear system)
+    - tran_debug: Transient analysis debug (0=off, 1=timestep accept/reject, 2=detailed LTE/step)
+    - q_debug: Charge debug (0=off, 1=dump charges at DC, 2=dump charges each NR iteration)
+    - op_debug: Operating point debug (0=off, >0 = homotopy/OP solver debug)
+
+    Usage:
+        engine = CircuitEngine(sim_path)
+        engine.parse()
+        # Options are automatically extracted from netlist if present:
+        #   options nr_debug=1 tran_debug=2 q_debug=1
+        # Or set programmatically:
+        engine.debug_options.nr_debug = 2
+    """
+    nr_debug: int = 0      # NR solver debug level
+    tran_debug: int = 0    # Transient analysis debug level
+    q_debug: int = 0       # Charge (reactive residual) debug level
+    op_debug: int = 0      # Operating point debug level
+
+    @classmethod
+    def from_options_dict(cls, params: Dict[str, Any]) -> 'DebugOptions':
+        """Create DebugOptions from parsed options dict."""
+        return cls(
+            nr_debug=int(params.get('nr_debug', 0)),
+            tran_debug=int(params.get('tran_debug', 0)),
+            q_debug=int(params.get('q_debug', 0)),
+            op_debug=int(params.get('op_debug', 0)),
+        )
+
+
+@dataclass
 class TransientResult:
     """Result of a transient simulation.
 
@@ -237,6 +271,9 @@ class CircuitEngine:
         self.num_nodes = 0
         self.analysis_params = {}
         self.flat_instances = []
+
+        # Debug options (extracted from netlist 'options' directive)
+        self.debug_options = DebugOptions()
 
         # OpenVAF compiled models cache
         self._compiled_models: Dict[str, Any] = {}
@@ -1602,12 +1639,19 @@ class CircuitEngine:
         if self.circuit and self.circuit.control:
             control = self.circuit.control
 
-            # Extract tran_method from options
+            # Extract tran_method and debug options from options
             if control.options:
                 self.analysis_params['tran_method'] = get_method_from_options(
                     control.options.params
                 )
                 logger.debug(f"Integration method: {self.analysis_params['tran_method']}")
+
+                # Extract debug options
+                self.debug_options = DebugOptions.from_options_dict(control.options.params)
+                if self.debug_options.nr_debug or self.debug_options.tran_debug or self.debug_options.q_debug:
+                    logger.info(f"Debug options: nr_debug={self.debug_options.nr_debug}, "
+                               f"tran_debug={self.debug_options.tran_debug}, "
+                               f"q_debug={self.debug_options.q_debug}")
 
             # Extract analysis parameters from first tran analysis
             for analysis in control.analyses:
@@ -2841,7 +2885,69 @@ class CircuitEngine:
             name = next((n for n, idx in self.node_names.items() if idx == i), str(i))
             logger.info(f"    Node {name} (idx {i}): {float(V[i]):.6f}V")
 
+        # q_debug: Output charges at DC operating point
+        if self.debug_options.q_debug >= 1:
+            self._debug_output_charges(V, vsource_dc_vals, isource_dc_vals, device_arrays, "DC operating point")
+
         return V
+
+    def _debug_output_charges(self, V: jax.Array,
+                               vsource_vals: jax.Array,
+                               isource_vals: jax.Array,
+                               device_arrays: Dict[str, jax.Array],
+                               context: str = ""):
+        """Output reactive residual (charge) values for debugging.
+
+        Matches VACASK's q_debug output format:
+          Reactive residual (Q values) at DC operating point:
+            node_name : value C
+
+        Args:
+            V: Current voltage vector
+            vsource_vals: Voltage source values
+            isource_vals: Current source values
+            device_arrays: Device cache arrays for evaluation
+            context: Description of when this is called (e.g., "DC operating point")
+        """
+        n_external = self.num_nodes
+        n_unknowns = n_external - 1
+
+        print(f"\n{'='*60}")
+        print(f"Reactive residual (Q values) at {context}:")
+        print(f"{'='*60}")
+
+        Q_prev = jnp.zeros(n_unknowns, dtype=jnp.float64)
+
+        # Call build_system to get Q
+        try:
+            build_system = self._make_build_system(use_dense=True, n_unknowns=n_unknowns, max_nnz=10000)
+            J, f, Q = build_system(V, vsource_vals, isource_vals, Q_prev, 0.0, device_arrays)
+
+            # Output Q values by node
+            for name, idx in sorted(self.node_names.items(), key=lambda x: x[1]):
+                if idx > 0 and idx <= n_unknowns:  # Skip ground (0)
+                    q_val = float(Q[idx - 1])
+                    if q_val != 0.0:
+                        print(f"  {name} (node {idx}): {q_val:.6e} C")
+
+            # Summary statistics
+            q_max = float(jnp.max(Q))
+            q_min = float(jnp.min(Q))
+            q_abs_max = float(jnp.max(jnp.abs(Q)))
+            print(f"\nCharge summary:")
+            print(f"  Max: {q_max:.6e} C")
+            print(f"  Min: {q_min:.6e} C")
+            print(f"  Max |Q|: {q_abs_max:.6e} C")
+
+            # Warn if charges seem too large (should be femtoCoulombs for MOSFETs)
+            if q_abs_max > 1e-6:
+                print(f"\n⚠️  WARNING: Charges seem too large (>1µC)!")
+                print(f"   Expected: ~1e-13 to 1e-12 C for MOSFET capacitances")
+
+        except Exception as e:
+            print(f"  Error computing charges: {e}")
+
+        print(f"{'='*60}\n")
 
     def _run_transient_while_loop(self, t_stop: float, dt: float,
                                    backend: str = "cpu",
