@@ -234,3 +234,116 @@ def parse_mir_function(mir_text: str) -> MIRFunction:
         blocks=blocks,
         constants=constants
     )
+
+
+def parse_mir_dict(mir_dict: Dict) -> MIRFunction:
+    """Parse MIR function from dict format (from openvaf_py).
+
+    The dict has keys: 'params', 'instructions', 'blocks', 'constants', etc.
+    Instructions are dictionaries with 'block', 'opcode', 'operands', etc.
+
+    Example input:
+        {
+            'params': ['v18', 'v20', 'v32'],
+            'constants': {'v3': 0.0, 'v6': 1.0, ...},
+            'bool_constants': {'v1': False, 'v2': True},
+            'int_constants': {'v4': 0, 'v5': 1, ...},
+            'instructions': [
+                {'block': 'block2', 'result': 'v18', 'opcode': 'fmul', 'operands': ['v16', 'v17']},
+                {'block': 'block2', 'opcode': 'br', 'condition': 'v20', 'true_block': 'block5', 'false_block': 'block6'},
+                ...
+            ],
+            'blocks': {
+                'block2': {'predecessors': [...], 'successors': [...]},
+                ...
+            }
+        }
+    """
+    # Parse parameters
+    params = [MIRValue(name) for name in mir_dict['params']]
+
+    # Merge all constants into one dict
+    constants = {}
+    if 'constants' in mir_dict:
+        constants.update(mir_dict['constants'])
+    if 'bool_constants' in mir_dict:
+        constants.update(mir_dict['bool_constants'])
+    if 'int_constants' in mir_dict:
+        constants.update(mir_dict['int_constants'])
+
+    # Group instructions by block
+    blocks_dict: Dict[str, List[Dict]] = {}
+    for inst in mir_dict['instructions']:
+        block_name = inst['block']
+        if block_name not in blocks_dict:
+            blocks_dict[block_name] = []
+        blocks_dict[block_name].append(inst)
+
+    # Convert instructions to MIRInstruction objects
+    blocks = []
+    for block_name, insts_list in blocks_dict.items():
+        mir_insts = []
+        for inst in insts_list:
+            opcode = inst['opcode']
+            result = MIRValue(inst['result']) if 'result' in inst else None
+
+            if opcode == 'br':
+                # Branch instruction
+                cond = MIRValue(inst['condition'])
+                true_block = inst['true_block']
+                false_block = inst['false_block']
+                mir_inst = MIRInstruction(
+                    result=None,
+                    opcode='br',
+                    args=[cond],
+                    target_blocks=[true_block, false_block]
+                )
+            elif opcode == 'jmp':
+                # Jump instruction
+                target = inst['destination']
+                mir_inst = MIRInstruction(
+                    result=None,
+                    opcode='jmp',
+                    args=[],
+                    target_blocks=[target]
+                )
+            elif opcode == 'phi':
+                # PHI node
+                phi_operands = inst['phi_operands']
+                phi_args = [(op['value'], op['block']) for op in phi_operands]
+                mir_inst = MIRInstruction(
+                    result=result,
+                    opcode='phi',
+                    args=[],
+                    target_blocks=[],
+                    phi_args=phi_args
+                )
+            elif opcode == 'call':
+                # Function call
+                mir_inst = MIRInstruction(
+                    result=result,
+                    opcode='call',
+                    args=[],
+                    target_blocks=[]
+                )
+            else:
+                # Regular instruction
+                operands = inst.get('operands', [])
+                args = [MIRValue(op) for op in operands]
+                mir_inst = MIRInstruction(
+                    result=result,
+                    opcode=opcode,
+                    args=args,
+                    target_blocks=[]
+                )
+
+            mir_insts.append(mir_inst)
+
+        blocks.append(MIRBlock(block_name, mir_insts))
+
+    return MIRFunction(
+        name="init",
+        params=params,
+        blocks=blocks,
+        constants=constants
+    )

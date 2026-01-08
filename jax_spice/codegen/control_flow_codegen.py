@@ -30,10 +30,10 @@ def generate_python_with_control_flow(mir_func: MIRFunction, param_map: Dict[str
     for const_name, const_val in sorted(mir_func.constants.items()):
         mapped_name = param_map.get(const_name, const_name)
         # Handle special float values
-        if const_val == '+Inf':
-            func_lines.append(f'    {mapped_name} = float("inf")')
-        elif const_val == '-Inf':
-            func_lines.append(f'    {mapped_name} = float("-inf")')
+        if const_val == '+Inf' or (isinstance(const_val, float) and const_val > 1e308):
+            func_lines.append(f'    {mapped_name} = math.inf')
+        elif const_val == '-Inf' or (isinstance(const_val, float) and const_val < -1e308):
+            func_lines.append(f'    {mapped_name} = -math.inf')
         elif isinstance(const_val, str) and const_val.startswith('0x'):
             # Hex float literal
             func_lines.append(f'    {mapped_name} = float.fromhex("{const_val}")')
@@ -218,6 +218,16 @@ def translate_instruction_simple(inst: MIRInstruction, param_map: Dict[str, str]
         return f"{result} = math.sqrt({args[0]})"
     elif opcode == 'exp':
         return f"{result} = math.exp({args[0]})"
+
+    # Type conversions
+    elif opcode == 'ifcast':  # Integer to float cast
+        return f"{result} = float({args[0]})"
+    elif opcode == 'ficast':  # Float to integer cast
+        return f"{result} = int({args[0]})"
+
+    # Optimization barriers (just pass through the value)
+    elif opcode == 'optbarrier':
+        return f"{result} = {args[0]}  # optbarrier"
 
     else:
         return f"# Unsupported: {opcode}"

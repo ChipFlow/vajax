@@ -5,7 +5,7 @@ use pyo3::exceptions::PyValueError;
 
 use basedb::diagnostics::ConsoleSink;
 use hir::{CompilationDB, CompilationOpts, Expr, Literal, Type};
-use hir_lower::{CurrentKind, ParamKind, PlaceKind};
+use hir_lower::{CurrentKind, HirInterner, ParamKind, PlaceKind};
 use syntax::ast::UnaryOp;
 use lasso::Rodeo;
 use mir::{FuncRef, Function, Param, Value, F_ZERO, ValueDef};
@@ -157,6 +157,21 @@ struct VaModule {
     /// Maps operand name (e.g., "v123") to actual string value (e.g., "gmin")
     str_constant_values: HashMap<String, String>,
 
+    // Model parameter setup function (for validation/defaults)
+    /// The model_param_setup MIR function
+    model_param_setup_func: Function,
+    /// Model parameter setup interner
+    model_param_setup_intern: HirInterner,
+    /// Number of model_param_setup function parameters
+    #[pyo3(get)]
+    model_setup_num_params: usize,
+    /// Model parameter setup parameter names
+    #[pyo3(get)]
+    model_setup_param_names: Vec<String>,
+    /// Model parameter setup parameter kinds
+    #[pyo3(get)]
+    model_setup_param_kinds: Vec<String>,
+
     // OSDI descriptor metadata
     /// Number of terminal nodes (ports)
     #[pyo3(get)]
@@ -223,6 +238,36 @@ impl VaModule {
     /// Returns a dict mapping operand name (e.g., "v123") to actual string (e.g., "gmin")
     fn get_str_constants(&self) -> HashMap<String, String> {
         self.str_constant_values.clone()
+    }
+
+    /// Debug: Get model_param_setup outputs info
+    /// Returns list of (output_kind, value_idx) for debugging
+    fn debug_model_setup_outputs(&self) -> Vec<(String, u32)> {
+        let mut result = Vec::new();
+        for (place_kind, value_opt) in self.model_param_setup_intern.outputs.iter() {
+            let kind_str = format!("{:?}", place_kind);
+            if let Some(value) = value_opt.expand() {
+                let value_idx: u32 = value.into();
+                result.push((kind_str, value_idx));
+            }
+        }
+        result
+    }
+
+    /// Debug: Get all PHI nodes found in model_param_setup
+    /// Returns list of value indices for PHI node results
+    fn debug_model_setup_phi_nodes(&self) -> Vec<u32> {
+        let mut result = Vec::new();
+        for block in self.model_param_setup_func.layout.blocks() {
+            for inst in self.model_param_setup_func.layout.block_insts(block) {
+                if matches!(self.model_param_setup_func.dfg.insts[inst], mir::InstructionData::PhiNode(_)) {
+                    let result_val = self.model_param_setup_func.dfg.inst_results(inst)[0];
+                    let value_idx: u32 = result_val.into();
+                    result.push(value_idx);
+                }
+            }
+        }
+        result
     }
 
     /// Get OSDI-compatible descriptor metadata
@@ -1001,6 +1046,110 @@ impl VaModule {
         Ok(cache_values)
     }
 
+    /// Get comprehensive metadata for code generation and validation
+    ///
+    /// Returns a dictionary containing all metadata needed to:
+    /// - Map semantic parameter names to MIR variable names
+    /// - Call generated setup_instance and eval functions
+    /// - Extract and identify output values (residuals, Jacobian)
+    /// - Compare generated code against reference implementation
+    ///
+    /// Returns:
+    ///     Dict with the following keys:
+    ///       'eval_param_mapping': Dict[str, str] - semantic name → MIR var (e.g., 'c' → 'v16')
+    ///       'init_param_mapping': Dict[str, str] - semantic name → MIR var for init function
+    ///       'cache_info': List[(int, str, str)] - (cache_idx, init_var, eval_var) tuples
+    ///       'residuals': List[Dict] - residual metadata with MIR value indices
+    ///       'jacobian': List[Dict] - Jacobian entry metadata with MIR value indices
+    fn get_codegen_metadata(&self) -> PyResult<HashMap<String, PyObject>> {
+        use pyo3::types::{PyDict, PyList};
+
+        Python::with_gil(|py| {
+            let mut metadata = HashMap::new();
+
+            // 1. Eval parameter mapping: semantic name → MIR variable
+            //    Filters out hidden_state parameters (inlined by optimizer)
+            let eval_param_map = PyDict::new(py);
+            for ((name, value_idx), kind) in self.param_names.iter()
+                .zip(&self.param_value_indices)
+                .zip(&self.param_kinds)
+            {
+                if !kind.contains("hidden_state") {
+                    eval_param_map.set_item(name, format!("v{}", value_idx))?;
+                }
+            }
+            metadata.insert("eval_param_mapping".to_string(), eval_param_map.into());
+
+            // 2. Init parameter mapping: semantic name → MIR variable
+            let init_param_map = PyDict::new(py);
+            for ((name, value_idx), kind) in self.init_param_names.iter()
+                .zip(&self.init_param_value_indices)
+                .zip(&self.init_param_kinds)
+            {
+                if !kind.contains("hidden_state") {
+                    init_param_map.set_item(name, format!("v{}", value_idx))?;
+                }
+            }
+            metadata.insert("init_param_mapping".to_string(), init_param_map.into());
+
+            // 3. Cache slot information
+            //    Maps cache[idx] → (init_value, eval_param)
+            let cache_info = PyList::empty(py);
+            for (cache_idx, (init_val, eval_param)) in self.cache_mapping.iter().enumerate() {
+                let entry = PyDict::new(py);
+                entry.set_item("cache_idx", cache_idx)?;
+                entry.set_item("init_value", format!("v{}", init_val))?;
+                entry.set_item("eval_param", format!("v{}", eval_param))?;
+                cache_info.append(entry)?;
+            }
+            metadata.insert("cache_info".to_string(), cache_info.into());
+
+            // 4. Residual information
+            //    Each residual has resist and react components
+            let residuals = PyList::empty(py);
+            for i in 0..self.num_residuals {
+                let entry = PyDict::new(py);
+                entry.set_item("residual_idx", i)?;
+                entry.set_item("resist_var", format!("v{}", self.residual_resist_indices[i]))?;
+                entry.set_item("react_var", format!("v{}", self.residual_react_indices[i]))?;
+
+                // Include limiting RHS indices if available
+                if i < self.residual_resist_lim_rhs_indices.len() {
+                    entry.set_item("resist_lim_rhs_var", format!("v{}", self.residual_resist_lim_rhs_indices[i]))?;
+                }
+                if i < self.residual_react_lim_rhs_indices.len() {
+                    entry.set_item("react_lim_rhs_var", format!("v{}", self.residual_react_lim_rhs_indices[i]))?;
+                }
+
+                residuals.append(entry)?;
+            }
+            metadata.insert("residuals".to_string(), residuals.into());
+
+            // 5. Jacobian information
+            //    Each entry has row, col, resist, and react components
+            let jacobian = PyList::empty(py);
+            for i in 0..self.num_jacobian {
+                let entry = PyDict::new(py);
+                entry.set_item("jacobian_idx", i)?;
+                entry.set_item("row", self.jacobian_rows[i])?;
+                entry.set_item("col", self.jacobian_cols[i])?;
+                entry.set_item("resist_var", format!("v{}", self.jacobian_resist_indices[i]))?;
+                entry.set_item("react_var", format!("v{}", self.jacobian_react_indices[i]))?;
+                jacobian.append(entry)?;
+            }
+            metadata.insert("jacobian".to_string(), jacobian.into());
+
+            // 6. Basic model info (for convenience)
+            metadata.insert("model_name".to_string(), self.name.clone().into_py(py));
+            metadata.insert("num_terminals".to_string(), self.nodes.len().into_py(py));
+            metadata.insert("num_residuals".to_string(), self.num_residuals.into_py(py));
+            metadata.insert("num_jacobian".to_string(), self.num_jacobian.into_py(py));
+            metadata.insert("num_cache_slots".to_string(), self.num_cached_values.into_py(py));
+
+            Ok(metadata)
+        })
+    }
+
     fn __repr__(&self) -> String {
         format!(
             "VaModule(name='{}', params={}, nodes={}, residuals={}, jacobian={})",
@@ -1156,6 +1305,127 @@ impl VaModule {
             This requires deeper integration with OSDI compiled code. \
             For now, use run_init_eval() or compare against generated setup_model()."
         ))
+    }
+
+    /// Run model_param_setup MIR function for parameter validation/defaults
+    ///
+    /// This runs the actual MIR interpreter on the model_param_setup function,
+    /// which validates parameters and applies defaults.
+    ///
+    /// Args:
+    ///     params: Dict mapping parameter names to values
+    ///             Should include both parameter values and *_given flags
+    ///
+    /// Returns:
+    ///     Dict mapping parameter names to validated/defaulted values
+    ///     (only returns actual parameter values, not *_given flags)
+    ///
+    /// Example:
+    ///     result = module.run_model_param_setup({
+    ///         'r': 1000.0,
+    ///         'r_given': 1.0,
+    ///         'has_noise': 1.0,
+    ///         'has_noise_given': 0.0
+    ///     })
+    ///     # Returns: {'r': 1000.0, 'has_noise': 1.0}
+    fn run_model_param_setup(&self, params: HashMap<String, f64>) -> PyResult<HashMap<String, f64>> {
+        // Stub callback for function calls (validation callbacks like set_Invalid)
+        fn stub_callback(state: &mut InterpreterState, _args: &[Value], rets: &[Value], _data: *mut c_void) {
+            // For validation callbacks, we just ignore them for now
+            // In a full implementation, we'd track which params failed validation
+            for &ret in rets {
+                state.write(ret, 0.0f64);
+            }
+        }
+
+        // Build argument array from params HashMap
+        let mut setup_args: TiVec<Param, Data> = TiVec::new();
+        for i in 0..self.model_setup_num_params {
+            if i < self.model_setup_param_names.len() {
+                let param_name = &self.model_setup_param_names[i];
+                let param_kind = &self.model_setup_param_kinds[i];
+                let val = params.get(param_name).copied()
+                    .or_else(|| self.param_defaults.get(&param_name.to_lowercase()).copied())
+                    .unwrap_or(0.0);
+
+                // For param_given flags (booleans), store as i32 instead of f64
+                // This is critical because Data is a union and branch instructions
+                // read boolean values as int/bool, not float!
+                let data = if param_kind == "param_given" {
+                    Data::from(if val != 0.0 { 1i32 } else { 0i32 })
+                } else {
+                    Data::from(val)
+                };
+                setup_args.push(data);
+            } else {
+                setup_args.push(Data::from(0.0));
+            }
+        }
+
+        // Create callbacks array matching the signature count
+        let setup_callbacks: Vec<(mir_interpret::Func, *mut c_void)> =
+            (0..self.model_param_setup_func.dfg.signatures.len())
+                .map(|_| (stub_callback as mir_interpret::Func, std::ptr::null_mut()))
+                .collect();
+
+        // Convert to TiSlice references
+        let setup_calls: &TiSlice<FuncRef, _> = TiSlice::from_ref(&setup_callbacks);
+        let setup_args_slice: &TiSlice<Param, Data> = setup_args.as_ref();
+
+        // Create and run interpreter
+        let mut interpreter = Interpreter::new(&self.model_param_setup_func, setup_calls, setup_args_slice);
+        interpreter.run();
+
+        // Extract validated parameter values from interpreter state
+        // IMPORTANT: The outputs map contains intermediate/default values, NOT final values!
+        // For model_param_setup, the final values are PHI nodes in exit blocks.
+
+        // Strategy: Find PHI nodes that don't have successors or are in the last blocks
+        // For resistor MIR, the final PHI nodes are v21 (block4) and v34 (block19)
+
+        let mut result = HashMap::new();
+
+        // Get just the "param" entries (not param_given) with their input Param indices
+        let mut param_info: Vec<(String, usize)> = Vec::new();
+        for (i, (name, kind)) in self.model_setup_param_names.iter()
+            .zip(self.model_setup_param_kinds.iter())
+            .enumerate() {
+            if *kind == "param" {
+                param_info.push((name.clone(), i));
+            }
+        }
+
+        // Find all PHI nodes and match them to input parameters
+        // A PHI node's final value corresponds to the input parameter it references
+        for block in self.model_param_setup_func.layout.blocks() {
+            for inst in self.model_param_setup_func.layout.block_insts(block) {
+                if let mir::InstructionData::PhiNode(phi_node) = &self.model_param_setup_func.dfg.insts[inst] {
+                    let phi_result = self.model_param_setup_func.dfg.inst_results(inst)[0];
+
+                    // Check which input parameters this PHI node references
+                    // by examining its incoming values from phi_node.args
+                    for &incoming_value in phi_node.args.as_slice(&self.model_param_setup_func.dfg.insts.value_lists) {
+                        // Check if this incoming value is an input Param
+                        if let ValueDef::Param(param_idx) = self.model_param_setup_func.dfg.value_def(incoming_value) {
+                            let param_idx_u32: u32 = param_idx.into();
+                            let param_idx_usize = param_idx_u32 as usize;
+
+                            // Match this to one of our parameter names
+                            for (param_name, expected_idx) in &param_info {
+                                if param_idx_usize == *expected_idx {
+                                    // This PHI node is for this parameter!
+                                    let final_value: f64 = interpreter.state.read(phi_result);
+                                    result.insert(param_name.clone(), final_value);
+                                    break;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        Ok(result)
     }
 }
 
@@ -1633,6 +1903,40 @@ fn compile_va(path: &str, allow_analog_in_cond: bool, allow_builtin_primitives: 
             }
         }
 
+        // === Model parameter setup function support ===
+        // Extract model_param_setup parameter names, kinds, and Value indices
+        let mut model_setup_param_names = Vec::new();
+        let mut model_setup_param_kinds = Vec::new();
+
+        for (kind, _val) in compiled.model_param_intern.params.iter() {
+            let (kind_str, name) = match kind {
+                ParamKind::Param(param) => ("param".to_string(), param.name(&db).to_string()),
+                ParamKind::ParamGiven { param } => {
+                    // Append "_given" to match Python naming convention
+                    ("param_given".to_string(), format!("{}_given", param.name(&db)))
+                }
+                ParamKind::Temperature => ("temperature".to_string(), "$temperature".to_string()),
+                ParamKind::ParamSysFun(param) => {
+                    ("sysfun".to_string(), format!("{:?}", param))
+                }
+                _ => ("unknown".to_string(), "unknown".to_string()),
+            };
+            model_setup_param_kinds.push(kind_str);
+            model_setup_param_names.push(name);
+        }
+
+        // Count actual Param-defined values in the model_param_setup function
+        let mut model_setup_max_param_idx: i32 = -1;
+        for val in compiled.model_param_setup.dfg.values.iter() {
+            if let mir::ValueDef::Param(p) = compiled.model_param_setup.dfg.value_def(val) {
+                let p_idx: u32 = p.into();
+                if p_idx as i32 > model_setup_max_param_idx {
+                    model_setup_max_param_idx = p_idx as i32;
+                }
+            }
+        }
+        let model_setup_num_params = if model_setup_max_param_idx >= 0 { (model_setup_max_param_idx + 1) as usize } else { 0 };
+
         result.push(VaModule {
             name: module_info.module.name(&db).to_string(),
             param_names,
@@ -1668,6 +1972,12 @@ fn compile_va(path: &str, allow_analog_in_cond: bool, allow_builtin_primitives: 
             param_defaults,
             // String constant values
             str_constant_values,
+            // Model parameter setup function
+            model_param_setup_func: compiled.model_param_setup.clone(),
+            model_param_setup_intern: compiled.model_param_intern.clone(),
+            model_setup_num_params,
+            model_setup_param_names,
+            model_setup_param_kinds,
             // OSDI metadata
             num_terminals,
             osdi_params,
