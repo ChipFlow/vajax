@@ -2721,21 +2721,23 @@ class CircuitEngine:
                                      source_device_data: Optional[Dict[str, Any]] = None,
                                      vmapped_fns: Optional[Dict[str, Callable]] = None,
                                      static_inputs_cache: Optional[Dict[str, Tuple]] = None) -> jax.Array:
-        """Compute DC operating point using VACASK-style homotopy chain.
+        """Compute DC operating point matching VACASK's algorithm.
 
-        Uses the homotopy chain (gdev -> gshunt -> src) to find the DC operating
-        point even for difficult circuits like ring oscillators where simple
-        Newton-Raphson fails due to near-singular Jacobians.
+        VACASK approach (lib/nrsolver.cpp:119-123):
+        1. Initialize all nodes to V=0 (solution.zero())
+        2. Apply voltage sources to their DC values
+        3. Run Newton-Raphson (typically converges in 3-5 iterations)
+        4. If NR fails, fall back to homotopy chain
 
         Args:
             n_nodes: Number of nodes in the system
             n_vsources: Number of voltage sources
             n_isources: Number of current sources
-            nr_solve: The cached NR solver function (used for fallback)
+            nr_solve: The cached NR solver function
             device_arrays: Dict[model_type, cache] - passed to nr_solve
             backend: 'gpu' or 'cpu'
             use_dense: Whether using dense solver
-            max_iterations: Maximum NR iterations per homotopy step
+            max_iterations: Maximum NR iterations
             device_internal_nodes: Map of device name -> {node_name: circuit_node_idx}
             source_device_data: Pre-computed source device stamp templates
             vmapped_fns: Dict of vmapped OpenVAF functions per model type
@@ -2744,117 +2746,71 @@ class CircuitEngine:
         Returns:
             DC operating point voltages (shape: [n_nodes])
         """
-        logger.info("Computing DC operating point...")
+        logger.info("Computing DC operating point (VACASK-style)...")
 
-        # Find VDD value from voltage sources
-        vdd_value = self._get_vdd_value()
+        # Step 1: Initialize to V=0 (VACASK: solution.zero())
+        V = jnp.zeros(n_nodes, dtype=jnp.float64)
 
-        # Initialize V with a good starting point for convergence
-        # NOTE: Initial guess is critical for ring oscillators with multiple equilibria
-        # 0.55*VDD works well (converges to ~0.66V DC point)
-        # Bad guesses (e.g. 0.3*VDD) can converge to wrong equilibria or cause homotopy to fail
-        mid_rail = vdd_value * 0.55
-        V = jnp.full(n_nodes, mid_rail, dtype=jnp.float64)
-        V = V.at[0].set(0.0)  # Ground is always 0
-
-        # Set VDD nodes to full supply voltage (name-based heuristic)
-        for name, idx in self.node_names.items():
-            name_lower = name.lower()
-            if 'vdd' in name_lower or 'vcc' in name_lower:
-                V = V.at[idx].set(vdd_value)
-                logger.debug(f"  Initialized VDD node '{name}' (idx {idx}) to {vdd_value}V")
-            elif name_lower in ('gnd', 'vss', '0'):
-                V = V.at[idx].set(0.0)
-                logger.debug(f"  Initialized ground node '{name}' (idx {idx}) to 0V")
-
-        # Initialize ALL voltage source nodes to their target DC values
-        # This is critical for convergence - vsource stamps have G=1e12, so
-        # any deviation from target creates residuals of order 1e12 * delta_V
-        vsources_initialized = 0
+        # Step 2: Apply voltage source values
+        # Voltage sources are enforced with very high conductance (1e12 S)
+        # So we must initialize nodes to their target voltages
         for dev in self.devices:
             if dev['model'] == 'vsource':
                 nodes = dev.get('nodes', [])
                 if len(nodes) >= 2:
                     p_node, n_node = nodes[0], nodes[1]
                     dc_val = float(dev['params'].get('dc', 0.0))
+
                     if n_node == 0:
-                        # Negative node is ground, set positive node to DC value
+                        # vsource between p_node and ground
                         if p_node > 0:
                             V = V.at[p_node].set(dc_val)
-                            vsources_initialized += 1
                     else:
-                        # Both nodes non-ground - set relative voltage
-                        # Set p_node = n_node_voltage + dc_val
-                        # For now, if n_node is already set, adjust p_node
+                        # vsource between two non-ground nodes
+                        # V(p) - V(n) = dc_val
                         if p_node > 0:
                             V = V.at[p_node].set(float(V[n_node]) + dc_val)
-                            vsources_initialized += 1
-        if vsources_initialized > 0:
-            logger.debug(f"  Initialized {vsources_initialized} voltage source nodes to target DC values")
 
-        # Initialize PSP103 internal nodes
+        # Step 3: Initialize PSP103 internal noise nodes to 0V
+        # NOI node has G=1e40 to ground, so any non-zero value causes explosion
         noi_indices = []
         if device_internal_nodes:
-            noi_nodes_initialized = 0
-            body_nodes_initialized = 0
-            device_external_nodes = {dev['name']: dev.get('nodes', []) for dev in self.devices}
-
             for dev_name, internal_nodes in device_internal_nodes.items():
                 if 'node4' in internal_nodes:
                     noi_idx = internal_nodes['node4']
                     V = V.at[noi_idx].set(0.0)
                     noi_indices.append(noi_idx)
-                    noi_nodes_initialized += 1
-
-                ext_nodes = device_external_nodes.get(dev_name, [])
-                if len(ext_nodes) >= 4:
-                    b_circuit_node = ext_nodes[3]
-                    b_voltage = float(V[b_circuit_node])
-                    for body_node_name in ['node8', 'node9', 'node10', 'node11']:
-                        if body_node_name in internal_nodes:
-                            body_idx = internal_nodes[body_node_name]
-                            if body_idx > 0 and abs(V[body_idx] - mid_rail) < 0.01:
-                                V = V.at[body_idx].set(b_voltage)
-                                body_nodes_initialized += 1
-
-            if noi_nodes_initialized > 0:
-                logger.debug(f"  Initialized {noi_nodes_initialized} NOI nodes to 0V")
-            if body_nodes_initialized > 0:
-                logger.debug(f"  Initialized {body_nodes_initialized} body internal nodes")
 
         noi_indices = jnp.array(noi_indices, dtype=jnp.int32) if noi_indices else None
-        logger.debug(f"  Initial V: ground=0V, VDD={vdd_value}V, others={mid_rail}V")
 
-        # Get DC source values
+        logger.info(f"  Initial: V(all)=0V, V(vsources)=DC values")
+
+        # Step 4: Get DC source values for stamping
         vsource_dc_vals, isource_dc_vals = self._get_dc_source_values(n_vsources, n_isources)
-
         n_unknowns = n_nodes - 1
         Q_prev = jnp.zeros(n_unknowns, dtype=jnp.float64)
 
-        # First try direct NR without homotopy (works for well-initialized circuits)
-        # Uses analytic jacobians from OpenVAF via the cached nr_solve
-        logger.info("  Trying direct NR solver first...")
-        logger.info(f"  Initial guess: V(1) = {float(V[1]):.6f}V")
+        # Step 5: Run Newton-Raphson
+        logger.info("  Running Newton-Raphson from V=0...")
         V_new, nr_iters, is_converged, max_f, _ = nr_solve(
-            V, vsource_dc_vals, isource_dc_vals, Q_prev, 0.0, device_arrays  # inv_dt=0 for DC
+            V, vsource_dc_vals, isource_dc_vals, Q_prev, 0.0, device_arrays
         )
-        logger.info(f"  After NR: V(1) = {float(V_new[1]):.6f}V, converged={is_converged}, iters={nr_iters}, residual={max_f:.2e}")
+
+        logger.info(f"  NR result: V(1)={float(V_new[1]):.6f}V, iters={nr_iters}, converged={is_converged}, residual={max_f:.2e}")
 
         if is_converged:
             V = V_new
-            logger.info(f"  DC operating point converged via direct NR "
-                       f"({nr_iters} iters, residual={max_f:.2e})")
+            logger.info(f"  ✓ DC converged in {nr_iters} iterations (VACASK typically: 3-5)")
         else:
-            # Fall back to homotopy chain using the cached NR solver
-            # This uses analytic jacobians (NOT autodiff)
-            logger.info("  Direct NR failed, trying homotopy chain...")
+            # Step 6: Fall back to homotopy if NR fails
+            logger.warning(f"  NR failed to converge from V=0 (VACASK would succeed)")
+            logger.info("  Falling back to homotopy chain...")
 
-            # Configure homotopy with conservative settings
             homotopy_config = HomotopyConfig(
                 gmin=1e-12,
-                gdev_start=1e-3,   # Start from moderate GMIN
+                gdev_start=1e-3,
                 gdev_target=1e-13,
-                gmin_factor=3.0,   # Conservative stepping factor
+                gmin_factor=3.0,
                 gmin_factor_min=1.1,
                 gmin_factor_max=10.0,
                 gmin_max=1.0,
@@ -2864,8 +2820,8 @@ class CircuitEngine:
                 source_max_steps=100,
                 chain=("gdev", "gshunt", "src"),
                 max_iterations=max_iterations,
-                abstol=1e-12,  # Match standard SPICE tolerance
-                debug=0,  # Disable debug output for normal runs
+                abstol=1e-12,
+                debug=0,
             )
 
             result = run_homotopy_chain(
@@ -2874,27 +2830,22 @@ class CircuitEngine:
 
             if result.converged:
                 V = result.V
-                logger.info(f"  DC operating point converged via {result.method} "
-                           f"({result.iterations} total iters, {result.homotopy_steps} homotopy steps)")
+                logger.info(f"  ✓ Homotopy converged via {result.method}")
             else:
-                logger.warning(f"  Homotopy chain did not converge (method={result.method})")
-                # For oscillator circuits, accept the best solution we have
-                # The DC operating point might be metastable anyway
+                logger.error(f"  ✗ Homotopy failed - using best available solution")
                 V = result.V
-                logger.info("  Using best available solution for metastable circuit")
 
-        # Clamp NOI nodes after DC solution
+        # Step 7: Clamp NOI nodes (high-G to ground)
         if noi_indices is not None:
             V = V.at[noi_indices].set(0.0)
 
-        # Log key node voltages
-        n_external = self.num_nodes
-        logger.info(f"  DC solution: {min(n_external, 5)} node voltages:")
-        for i in range(min(n_external, 5)):
+        # Log result
+        logger.info(f"  Final DC voltages:")
+        for i in range(min(5, self.num_nodes)):
             name = next((n for n, idx in self.node_names.items() if idx == i), str(i))
-            logger.info(f"    Node {name} (idx {i}): {float(V[i]):.6f}V")
+            logger.info(f"    {name}: {float(V[i]):.6f}V")
 
-        # q_debug: Output charges at DC operating point
+        # q_debug output
         if self.debug_options.q_debug >= 1:
             self._debug_output_charges(V, vsource_dc_vals, isource_dc_vals, device_arrays, "DC operating point")
 
