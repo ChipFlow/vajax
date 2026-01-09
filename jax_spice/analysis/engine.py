@@ -679,7 +679,7 @@ class CircuitEngine:
         # Base paths for different VA model sources
         project_root = Path(__file__).parent.parent.parent
         base_paths = {
-            'integration_tests': project_root / "openvaf-py" / "vendor" / "OpenVAF" / "integration_tests",
+            'integration_tests': project_root / "vendor" / "OpenVAF" / "integration_tests",
             'vacask': project_root / "vendor" / "VACASK" / "devices",
         }
 
