@@ -5,13 +5,59 @@ Uses the MIR interpreter for init (one-time setup) and generates
 traced JAX code for eval (hot path).
 """
 
+import hashlib
+import logging
 import math
-from typing import Any, Callable, Dict, List, Tuple
-from dataclasses import dataclass
+from typing import Any, Callable, Dict, List, Tuple, Optional
+from dataclasses import dataclass, field
 
 import jax
 import jax.numpy as jnp
 from jax import lax
+
+logger = logging.getLogger("jax_spice.openvaf")
+
+# Module-level caches for function reuse
+_vmapped_jit_cache: Dict[Tuple[str, Tuple], Callable] = {}
+
+
+def get_vmapped_jit(code_hash: str, fn: Callable, in_axes: Tuple) -> Callable:
+    """Get a cached vmapped+jit'd version of a function.
+
+    This caches the entire jax.jit(jax.vmap(fn, in_axes=in_axes)) result,
+    avoiding repeated JIT compilation for the same function.
+
+    Args:
+        code_hash: Hash identifying the function
+        fn: The function to vmap and jit
+        in_axes: vmap in_axes specification
+
+    Returns:
+        vmapped and jit'd function
+    """
+    cache_key = (code_hash, in_axes)
+
+    if cache_key in _vmapped_jit_cache:
+        logger.debug(f"    vmapped_jit: using cached (hash={code_hash[:8]}, in_axes={in_axes})")
+        return _vmapped_jit_cache[cache_key]
+
+    vmapped_jit_fn = jax.jit(jax.vmap(fn, in_axes=in_axes))
+    _vmapped_jit_cache[cache_key] = vmapped_jit_fn
+    logger.debug(f"    vmapped_jit: cached new (hash={code_hash[:8]}, in_axes={in_axes})")
+    return vmapped_jit_fn
+
+
+def clear_cache():
+    """Clear all function caches."""
+    global _vmapped_jit_cache
+    _vmapped_jit_cache.clear()
+
+
+def cache_stats() -> Dict[str, int]:
+    """Get cache statistics."""
+    return {
+        'vmapped_jit_count': len(_vmapped_jit_cache),
+    }
 
 
 # JAX-compatible MIR operations
@@ -134,11 +180,274 @@ class OpenVAFToJAX:
     _init_fn: Callable = None
     _eval_fn: Callable = None
     _cache_size: int = 0
+    _metadata: Dict = None
+    _init_mir: Dict = None
+
+    # Feature tracking (for engine compatibility)
+    uses_simparam_gmin: bool = False
+    uses_analysis: bool = False
+    analysis_type_map: Dict = None
 
     def __post_init__(self):
         """Initialize data from module."""
         self.dae_data = self.module.get_dae_system()
         self._cache_size = self.module.num_cached_values
+        self._metadata = self.module.get_codegen_metadata()
+        self._init_mir = self.module.get_init_mir_instructions()
+
+        # Default analysis type map
+        if self.analysis_type_map is None:
+            self.analysis_type_map = {
+                'dc': 0, 'static': 0,
+                'ac': 1,
+                'tran': 2, 'transient': 2,
+                'noise': 3,
+                'nodeset': 4,
+            }
+
+    def get_dae_metadata(self) -> Dict:
+        """Get DAE system metadata.
+
+        Returns:
+            Dict with node_names, jacobian_keys, terminals, internal_nodes, etc.
+        """
+        residuals = self.dae_data.get('residuals', [])
+        jacobian = self.dae_data.get('jacobian', [])
+
+        return {
+            'node_names': [r.get('node_name', f'node{i}') for i, r in enumerate(residuals)],
+            'jacobian_keys': [
+                (j.get('row_node_name', ''), j.get('col_node_name', ''))
+                for j in jacobian
+            ],
+            'terminals': self.dae_data.get('terminals', []),
+            'internal_nodes': self.dae_data.get('internal_nodes', []),
+            'num_terminals': self.dae_data.get('num_terminals', 0),
+            'num_internal': self.dae_data.get('num_internal', 0),
+        }
+
+    def translate_init_array(self) -> Tuple[Callable, Dict]:
+        """Generate a vmappable init function.
+
+        Returns:
+            Tuple of (init_fn, metadata) where:
+            - init_fn takes an input array and returns (cache_array, collapse_decisions)
+            - metadata contains param_names, param_kinds, cache_size, etc.
+        """
+        self._build_init_fn()
+
+        # Get init param info from module
+        init_param_names = list(self.module.init_param_names)
+        init_param_kinds = list(self.module.init_param_kinds)
+        cache_mapping = list(self._init_mir.get('cache_mapping', []))
+        collapsible_pairs = list(self.module.collapsible_pairs)
+        collapse_outputs = list(self.module.collapse_decision_outputs)
+
+        # Wrap the Python init_fn to work with arrays
+        python_init_fn = self._init_fn
+        n_cache = self._cache_size
+        n_collapse = max(len(collapse_outputs), 1)
+
+        # Create a pure callback version for vmap compatibility
+        def _python_init_impl(inputs_np):
+            """Pure Python implementation for callback."""
+            import numpy as np
+
+            # Get dtype from input
+            out_dtype = inputs_np.dtype
+
+            inputs_list = inputs_np.tolist() if hasattr(inputs_np, 'tolist') else list(inputs_np)
+
+            # Build kwargs from input array
+            # Use param_kinds to detect param_given types (add _given suffix)
+            kwargs = {}
+            for i, (name, kind) in enumerate(zip(init_param_names, init_param_kinds)):
+                if i < len(inputs_list):
+                    val = inputs_list[i]
+                    # Handle param_given kind as booleans with _given suffix
+                    if kind == 'param_given':
+                        actual_name = f"{name}_given"
+                        kwargs[actual_name] = val != 0.0
+                    else:
+                        kwargs[name] = val
+
+            # Call Python init
+            cache_list = python_init_fn(**kwargs)
+
+            # Convert to numpy arrays with matching dtype
+            cache = np.array([v if v is not None else 0.0 for v in cache_list], dtype=out_dtype)
+            collapse = np.zeros(n_collapse, dtype=out_dtype)
+
+            return cache, collapse
+
+        def array_init_fn(inputs: jnp.ndarray) -> Tuple[jnp.ndarray, jnp.ndarray]:
+            """Array-based init function (vmap-compatible via pure_callback).
+
+            Args:
+                inputs: Array of init parameters
+
+            Returns:
+                (cache_array, collapse_decisions_array)
+            """
+            # Use the same dtype as inputs for output
+            out_dtype = inputs.dtype
+
+            # Define result shapes for pure_callback
+            result_shape = (
+                jax.ShapeDtypeStruct((n_cache,), out_dtype),
+                jax.ShapeDtypeStruct((n_collapse,), out_dtype),
+            )
+
+            # Use pure_callback to call Python from within JAX tracing
+            # vmap_method='sequential' makes vmap call the function once per batch element
+            cache, collapse = jax.pure_callback(
+                _python_init_impl,
+                result_shape,
+                inputs,
+                vmap_method='sequential',
+            )
+
+            return cache, collapse
+
+        metadata = {
+            'param_names': init_param_names,
+            'param_kinds': init_param_kinds,
+            'cache_size': n_cache,
+            'cache_mapping': cache_mapping,
+            'collapsible_pairs': collapsible_pairs,
+            'collapse_decision_outputs': collapse_outputs,
+            'param_defaults': {},
+        }
+
+        return array_init_fn, metadata
+
+    def translate_init_array_split(
+        self,
+        shared_indices: List[int],
+        varying_indices: List[int],
+        init_to_eval: List[int]
+    ) -> Tuple[Callable, Dict]:
+        """Generate split init function (for GPU optimization).
+
+        Args:
+            shared_indices: Indices into eval param array that are shared (constant across devices)
+            varying_indices: Indices into eval param array that vary per device
+            init_to_eval: Mapping from init param index to eval param index
+                         e.g. [0, 4, 0] means init[0]=eval[0], init[1]=eval[4], init[2]=eval[0]
+        """
+        base_fn, metadata = self.translate_init_array()
+
+        n_eval_params = len(shared_indices) + len(varying_indices)
+
+        # Create JAX arrays for index mapping (for use inside JIT)
+        shared_idx_arr = jnp.array(shared_indices, dtype=jnp.int32)
+        varying_idx_arr = jnp.array(varying_indices, dtype=jnp.int32)
+        init_to_eval_arr = jnp.array(init_to_eval, dtype=jnp.int32)
+
+        def split_init_fn(shared_params: jnp.ndarray, device_params: jnp.ndarray) -> Tuple[jnp.ndarray, jnp.ndarray]:
+            # 1. Reconstruct full eval params array in original order
+            eval_params = jnp.zeros(n_eval_params, dtype=shared_params.dtype)
+            eval_params = eval_params.at[shared_idx_arr].set(shared_params)
+            eval_params = eval_params.at[varying_idx_arr].set(device_params)
+
+            # 2. Extract init params from eval params using init_to_eval mapping
+            init_params = eval_params[init_to_eval_arr]
+
+            # 3. Call base init function with correctly ordered init params
+            return base_fn(init_params)
+
+        # Generate a code hash for caching
+        code_hash = hashlib.sha256(
+            f"{self.module.name}:{shared_indices}:{varying_indices}".encode()
+        ).hexdigest()
+
+        metadata['shared_indices'] = shared_indices
+        metadata['varying_indices'] = varying_indices
+        metadata['code_hash'] = code_hash
+
+        return split_init_fn, metadata
+
+    def release_mir_data(self):
+        """Release MIR data after code generation is complete.
+
+        Call this after all translate_*() methods have been called to free memory.
+        """
+        self._init_mir = None
+        # Keep dae_data as it may be needed for metadata queries
+
+    def translate_eval_array_with_cache_split(
+        self,
+        shared_indices: List[int],
+        varying_indices: List[int],
+        shared_cache_indices: List[int] = None,
+        varying_cache_indices: List[int] = None
+    ) -> Tuple[Callable, Dict]:
+        """Generate split eval function with cache (for GPU optimization).
+
+        Returns eval function that takes split params and cache arrays.
+        """
+        self._build_eval_fn()
+        eval_fn = self._eval_fn
+
+        residuals_meta = self._metadata['residuals']
+        jacobian_meta = self._metadata['jacobian']
+
+        n_residuals = len(residuals_meta)
+        n_jacobian = len(jacobian_meta)
+        n_params = len(shared_indices) + len(varying_indices)
+
+        # Build reverse mapping: original_idx -> (is_shared, position_in_split_array)
+        # shared_indices and varying_indices are original param indices
+        shared_set = set(shared_indices)
+        varying_set = set(varying_indices)
+
+        # Create JAX arrays for index mapping (for use inside JIT)
+        shared_idx_arr = jnp.array(shared_indices, dtype=jnp.int32)
+        varying_idx_arr = jnp.array(varying_indices, dtype=jnp.int32)
+
+        use_cache_split = shared_cache_indices is not None and varying_cache_indices is not None
+
+        if use_cache_split:
+            shared_cache_idx_arr = jnp.array(shared_cache_indices, dtype=jnp.int32)
+            varying_cache_idx_arr = jnp.array(varying_cache_indices, dtype=jnp.int32)
+            n_cache = len(shared_cache_indices) + len(varying_cache_indices)
+
+            def split_eval_fn(shared_params, device_params, shared_cache, device_cache):
+                # Reconstruct full params array in original order
+                full_params = jnp.zeros(n_params, dtype=shared_params.dtype)
+                full_params = full_params.at[shared_idx_arr].set(shared_params)
+                full_params = full_params.at[varying_idx_arr].set(device_params)
+
+                # Reconstruct full cache array in original order
+                full_cache = jnp.zeros(n_cache, dtype=shared_cache.dtype)
+                full_cache = full_cache.at[shared_cache_idx_arr].set(shared_cache)
+                full_cache = full_cache.at[varying_cache_idx_arr].set(device_cache)
+
+                (res_resist, res_react), (jac_resist, jac_react) = eval_fn(full_params, full_cache)
+                lim_rhs_resist = jnp.zeros_like(res_resist)
+                lim_rhs_react = jnp.zeros_like(res_react)
+                return res_resist, res_react, jac_resist, jac_react, lim_rhs_resist, lim_rhs_react
+        else:
+            def split_eval_fn(shared_params, device_params, cache):
+                # Reconstruct full params array in original order
+                full_params = jnp.zeros(n_params, dtype=shared_params.dtype)
+                full_params = full_params.at[shared_idx_arr].set(shared_params)
+                full_params = full_params.at[varying_idx_arr].set(device_params)
+
+                (res_resist, res_react), (jac_resist, jac_react) = eval_fn(full_params, cache)
+                lim_rhs_resist = jnp.zeros_like(res_resist)
+                lim_rhs_react = jnp.zeros_like(res_react)
+                return res_resist, res_react, jac_resist, jac_react, lim_rhs_resist, lim_rhs_react
+
+        metadata = {
+            'node_names': [r.get('node_name', f'node{i}') for i, r in enumerate(residuals_meta)],
+            'jacobian_keys': [(j['row'], j['col']) for j in jacobian_meta],
+            'num_residuals': n_residuals,
+            'num_jacobian': n_jacobian,
+            'use_cache_split': use_cache_split,
+        }
+
+        return split_eval_fn, metadata
 
     def translate(self) -> Callable:
         """Generate the eval function.
