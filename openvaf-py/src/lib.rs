@@ -1087,7 +1087,13 @@ impl VaModule {
                 .zip(&self.init_param_kinds)
             {
                 if !kind.contains("hidden_state") {
-                    init_param_map.set_item(name, format!("v{}", value_idx))?;
+                    // For param_given, append "_given" suffix to distinguish from value param
+                    let map_name = if kind.contains("param_given") {
+                        format!("{}_given", name)
+                    } else {
+                        name.to_string()
+                    };
+                    init_param_map.set_item(map_name, format!("v{}", value_idx))?;
                 }
             }
             metadata.insert("init_param_mapping".to_string(), init_param_map.into());
