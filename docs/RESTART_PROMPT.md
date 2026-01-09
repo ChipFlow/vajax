@@ -15,12 +15,19 @@ The approach is:
 
 ## Previous Work to IGNORE
 
-**CRITICAL**: The following code from November 2024 is **BROKEN** and should be ignored:
-- `openvaf-py/src/lib.rs::run_init_eval()` - Our old broken MIR interpreter
-- Most of the existing `openvaf-py` validation code
-- Any references to "our implementation working"
+**CRITICAL**: The following code from November 2024 is **BROKEN** and has been archived:
 
-These were implemented without proper validation against OSDI and are known to be incorrect.
+**Location**: `archive/code-november-2024/openvaf-py/`
+
+**What's broken**:
+- `run_init_eval()` - Broken MIR interpreter
+- `evaluate()`, `evaluate_full()` - Broken eval interpreters
+- All interpreter functions - Never validated against OSDI
+- Any tests/validation code comparing against these interpreters
+
+**Why archived**: These were implemented without proper validation against OSDI and are known to produce incorrect results.
+
+**What can be salvaged**: See `archive/code-november-2024/README.md` for details on metadata extraction functions that may be reusable (with review).
 
 ## Where We Started (Before Getting Derailed)
 

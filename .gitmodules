@@ -1,5 +1,5 @@
 [submodule "openvaf-py/vendor/OpenVAF"]
-	path = openvaf-py/vendor/OpenVAF
+	path = archive/code-november-2024/openvaf-py/vendor/OpenVAF
 	url = https://github.com/robtaylor/OpenVAF.git
 	branch = builtin-primitive-support
 [submodule "vendor/VACASK"]

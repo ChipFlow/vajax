@@ -11,6 +11,44 @@
 2. Diode (16 cache, nonlinear with conditionals)
 3. PSP103 (462 cache, complex control flow)
 
+---
+
+## Archived November 2024 Code
+
+**Location**: `archive/code-november-2024/openvaf-py/`
+
+The entire openvaf-py from November 2024 has been archived because it contains broken MIR interpreters that were never validated against OSDI.
+
+### ❌ Known Bad - Do NOT Reuse
+
+**Interpreter functions** (all broken, do not salvage):
+- `run_init_eval()` - Broken init interpreter
+- `evaluate()`, `evaluate_full()` - Broken eval interpreters
+- `debug_init_cache()` - Uses broken interpreter
+- `run_model_param_setup()` - Model parameter interpreter
+
+**Why**: These have bugs in control flow, parameter mapping, cache computation. They produce incorrect results.
+
+### ✅ Known Good - CAN Salvage (with review)
+
+**Metadata extraction functions** (review before reusing):
+- `get_codegen_metadata()` ⭐ - Has the parameter mapping fix at lines 1091-1096
+  - **Fix**: Appends "_given" suffix for param_given kinds (avoid duplicate 'c' collision)
+  - **Status**: This fix is correct and should be preserved
+- `get_init_mir_instructions()` - Extracts init MIR structure
+- `get_mir_instructions()` - Extracts eval MIR structure
+- `get_osdi_descriptor()` - Extracts OSDI descriptor
+- `get_cache_mapping()` - Cache slot mapping
+
+**Pure data extraction** (likely safe):
+- `get_param_defaults()` - Parameter defaults
+- `get_str_constants()` - String constants
+- PHI node info functions
+
+**Action for Phase 2**: When rebuilding openvaf-py, salvage metadata extraction functions (especially the parameter mapping fix) but discard all interpreter functions.
+
+See `archive/code-november-2024/README.md` for complete details.
+
 ## Phase 1: OSDI Reference Implementation (CRITICAL FOUNDATION)
 
 **Goal**: Establish VACASK OSDI as our reference implementation we can call from Python.
@@ -97,11 +135,29 @@ print(f"Jacobian: {result['jacobian']}")
 
 ## Phase 2: Rebuild openvaf-py with Metadata Fix
 
-**Goal**: Get corrected parameter metadata from OpenVAF.
+**Goal**: Rebuild openvaf-py with only metadata extraction (no broken interpreters).
 
-### Task 2.1: Compile Metadata Fix
+**Note**: Original openvaf-py archived to `archive/code-november-2024/openvaf-py/`. We'll rebuild from scratch, salvaging only the working parts.
 
-**Already done**: `openvaf-py/src/lib.rs:1091-1096`
+### Task 2.1: Create New openvaf-py Structure
+
+**Action**: Create fresh openvaf-py/ with:
+- Cargo.toml, pyproject.toml (copy structure from archive)
+- src/lib.rs with ONLY metadata extraction functions
+- NO interpreter functions (run_init_eval, evaluate, etc.)
+
+**Salvage from archive** (`archive/code-november-2024/openvaf-py/src/lib.rs`):
+- `get_codegen_metadata()` with parameter fix (lines 1091-1096) ⭐
+- `get_init_mir_instructions()`
+- `get_mir_instructions()`
+- `get_osdi_descriptor()`
+- Other metadata/data extraction functions
+
+**Do NOT salvage**:
+- `run_init_eval()`, `evaluate()`, `evaluate_full()` - All broken
+- Any interpreter code
+
+### Task 2.2: Compile New openvaf-py
 
 ```bash
 cd openvaf-py
@@ -109,7 +165,7 @@ maturin develop
 cd ..
 ```
 
-### Task 2.2: Verify Metadata Correction
+### Task 2.3: Verify Metadata Correction
 
 **File**: `scripts/test_metadata_fix.py` (create new)
 
