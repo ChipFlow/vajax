@@ -545,9 +545,9 @@ class EvalFunctionBuilder(FunctionBuilder):
 
         cache_idx_mapping: Dict[int, Tuple[str, int]] = {}
         if use_cache_split:
-            for new_idx, orig_idx in enumerate(shared_cache_indices):
+            for new_idx, orig_idx in enumerate(shared_cache_indices or []):
                 cache_idx_mapping[orig_idx] = ('shared_cache', new_idx)
-            for new_idx, orig_idx in enumerate(varying_cache_indices):
+            for new_idx, orig_idx in enumerate(varying_cache_indices or []):
                 cache_idx_mapping[orig_idx] = ('device_cache', new_idx)
 
         # Create context
