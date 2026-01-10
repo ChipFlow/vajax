@@ -22,6 +22,12 @@ from openvaf_ast import (
     subscript, unaryop,
 )
 
+# Import pre-allocated constant ValueIds
+from mir.types import (
+    V_GRAVESTONE, V_FALSE, V_TRUE, V_F_ZERO,
+    V_ZERO, V_ONE, V_F_ONE, V_F_N_ONE,
+)
+
 
 @dataclass
 class CodeGenContext:
@@ -44,12 +50,20 @@ class CodeGenContext:
     # Input array name
     input_array: str = 'inputs'
 
-    # Names for zero/one constants
-    zero_var: str = '_ZERO'
-    one_var: str = '_ONE'
-
     # String constants (for $simparam, etc.)
     str_constants: Dict[str, str] = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        """Initialize pre-allocated OpenVAF constants."""
+        # Pre-allocated MIR constants (from OpenVAF mir/src/dfg/values.rs:57-76)
+        # These are always present at fixed positions but not shown in MIR dumps
+        self.bool_constants.setdefault(V_FALSE, False)
+        self.bool_constants.setdefault(V_TRUE, True)
+        self.constants.setdefault(V_F_ZERO, 0.0)
+        self.int_constants.setdefault(V_ZERO, 0)
+        self.int_constants.setdefault(V_ONE, 1)
+        self.constants.setdefault(V_F_ONE, 1.0)
+        self.constants.setdefault(V_F_N_ONE, -1.0)
 
     def define_var(self, var: str) -> str:
         """Mark a variable as defined and return its prefixed name."""
@@ -69,8 +83,8 @@ class CodeGenContext:
         """Resolve an operand to an AST expression.
 
         Order of resolution:
-        1. Check if it's a defined variable (with prefix)
-        2. Check constants (float, bool, int)
+        1. Check constants (float, bool, int) - includes pre-allocated v0-v7
+        2. Check if it's a defined variable (with prefix)
         3. If allow_undefined=True, return as bare name
         4. Otherwise return zero as fallback
 
@@ -81,22 +95,7 @@ class CodeGenContext:
         Returns:
             AST expression for the operand
         """
-        # Handle special zero/one references
-        if op == '_ZERO':
-            return ast_name(self.zero_var)
-        if op == '_ONE':
-            return ast_name(self.one_var)
-
-        # Check prefixed defined variable
-        prefixed = f"{self.var_prefix}{op}"
-        if prefixed in self.defined_vars:
-            return ast_name(prefixed)
-
-        # Check unprefixed defined variable (for PHI references)
-        if op in self.defined_vars:
-            return ast_name(op)
-
-        # Check float constants
+        # Check float constants (includes pre-allocated v3, v6, v7)
         if op in self.constants:
             value = self.constants[op]
             if value == float('inf'):
@@ -108,13 +107,22 @@ class CodeGenContext:
             else:
                 return ast_const(value)
 
-        # Check bool constants
+        # Check bool constants (includes pre-allocated v1, v2)
         if op in self.bool_constants:
             return jnp_bool(ast_const(self.bool_constants[op]))
 
-        # Check int constants
+        # Check int constants (includes pre-allocated v4, v5)
         if op in self.int_constants:
             return ast_const(self.int_constants[op])
+
+        # Check prefixed defined variable
+        prefixed = f"{self.var_prefix}{op}"
+        if prefixed in self.defined_vars:
+            return ast_name(prefixed)
+
+        # Check unprefixed defined variable (for PHI references)
+        if op in self.defined_vars:
+            return ast_name(op)
 
         # If allow_undefined, return name (will be defined later)
         if allow_undefined:
@@ -122,22 +130,14 @@ class CodeGenContext:
 
         # Fallback to zero for undefined operands
         # This happens when PHI references values from unexecuted branches
-        return ast_name(self.zero_var)
+        return ast_const(0.0)
 
     def get_operand_str(self, op: str) -> str:
         """Get the string representation of an operand.
 
         Used for code generation that doesn't use AST.
         """
-        if op == '_ZERO':
-            return self.zero_var
-        if op == '_ONE':
-            return self.one_var
-
-        prefixed = f"{self.var_prefix}{op}"
-        if prefixed in self.defined_vars:
-            return prefixed
-
+        # Check float constants (includes pre-allocated v3, v6, v7)
         if op in self.constants:
             value = self.constants[op]
             if value == float('inf'):
@@ -149,11 +149,18 @@ class CodeGenContext:
             else:
                 return repr(value)
 
+        # Check bool constants (includes pre-allocated v1, v2)
         if op in self.bool_constants:
             return f"jnp.bool_({self.bool_constants[op]})"
 
+        # Check int constants (includes pre-allocated v4, v5)
         if op in self.int_constants:
             return repr(self.int_constants[op])
+
+        # Check defined variables
+        prefixed = f"{self.var_prefix}{op}"
+        if prefixed in self.defined_vars:
+            return prefixed
 
         return prefixed
 
@@ -169,12 +176,12 @@ class CodeGenContext:
         )
 
     def zero(self) -> ast.expr:
-        """Get AST expression for zero constant."""
-        return ast_name(self.zero_var)
+        """Get AST expression for zero constant (0.0)."""
+        return ast_const(0.0)
 
     def one(self) -> ast.expr:
-        """Get AST expression for one constant."""
-        return ast_name(self.one_var)
+        """Get AST expression for one constant (1.0)."""
+        return ast_const(1.0)
 
 
 @dataclass

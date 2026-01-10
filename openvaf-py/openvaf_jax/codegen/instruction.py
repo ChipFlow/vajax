@@ -18,7 +18,7 @@ from openvaf_ast import (
     safe_divide, nested_where,
 )
 
-from ..mir.types import MIRInstruction
+from ..mir.types import MIRInstruction, V_F_ZERO
 from ..mir.ssa import SSAAnalyzer, PHIResolution, PHIResolutionType
 from .context import CodeGenContext
 
@@ -226,7 +226,7 @@ class InstructionTranslator:
     def _apply_phi_resolution(self, res: PHIResolution) -> ast.expr:
         """Generate AST from PHI resolution."""
         if res.type == PHIResolutionType.FALLBACK:
-            return self.ctx.get_operand(res.single_value or '_ZERO')
+            return self.ctx.get_operand(res.single_value or V_F_ZERO)
 
         if res.type == PHIResolutionType.TWO_WAY:
             assert res.condition is not None

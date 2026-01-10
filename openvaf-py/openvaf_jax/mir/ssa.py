@@ -10,7 +10,7 @@ from dataclasses import dataclass
 from typing import Dict, List, Optional, Tuple, FrozenSet
 from enum import Enum
 
-from .types import MIRFunction, MIRInstruction, BlockId, ValueId
+from .types import MIRFunction, MIRInstruction, BlockId, ValueId, V_F_ZERO
 from .cfg import CFGAnalyzer, LoopInfo
 
 
@@ -308,7 +308,7 @@ class SSAAnalyzer:
         # Group predecessors by value
         val_to_preds: Dict[ValueId, List[BlockId]] = {}
         for pred in pred_blocks:
-            val = val_by_pred.get(pred, ValueId('_ZERO'))
+            val = val_by_pred.get(pred, V_F_ZERO)
             if val not in val_to_preds:
                 val_to_preds[val] = []
             val_to_preds[val].append(pred)

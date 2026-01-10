@@ -17,6 +17,18 @@ ValueId = NewType('ValueId', str)
 """Identifier for an SSA value (e.g., 'v123')."""
 
 
+# Pre-allocated MIR constants (from OpenVAF mir/src/dfg/values.rs:57-76)
+# These are always present at fixed positions but not shown in MIR dumps
+V_GRAVESTONE = ValueId('v0')  # Dead value placeholder
+V_FALSE = ValueId('v1')       # bool: false
+V_TRUE = ValueId('v2')        # bool: true
+V_F_ZERO = ValueId('v3')      # f64: 0.0
+V_ZERO = ValueId('v4')        # i32: 0
+V_ONE = ValueId('v5')         # i32: 1
+V_F_ONE = ValueId('v6')       # f64: 1.0
+V_F_N_ONE = ValueId('v7')     # f64: -1.0
+
+
 @dataclass
 class PhiOperand:
     """An operand of a PHI node.

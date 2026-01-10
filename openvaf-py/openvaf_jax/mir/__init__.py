@@ -9,6 +9,16 @@ This module provides:
 from .types import (
     BlockId,
     ValueId,
+    # Pre-allocated MIR constants
+    V_GRAVESTONE,
+    V_FALSE,
+    V_TRUE,
+    V_F_ZERO,
+    V_ZERO,
+    V_ONE,
+    V_F_ONE,
+    V_F_N_ONE,
+    # Data structures
     MIRInstruction,
     PhiOperand,
     Block,
@@ -22,6 +32,16 @@ __all__ = [
     # types
     "BlockId",
     "ValueId",
+    # Pre-allocated MIR constants
+    "V_GRAVESTONE",
+    "V_FALSE",
+    "V_TRUE",
+    "V_F_ZERO",
+    "V_ZERO",
+    "V_ONE",
+    "V_F_ONE",
+    "V_F_N_ONE",
+    # Data structures
     "MIRInstruction",
     "PhiOperand",
     "Block",
