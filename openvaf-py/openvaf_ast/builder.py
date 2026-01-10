@@ -4,7 +4,7 @@ Provides a structured way to build Python AST for device evaluation functions.
 """
 
 import ast
-from typing import Any, Callable, Dict, List, Optional, Set, Tuple, Union
+from typing import Any, Dict, List, Optional, Set, Tuple, Union
 
 from .expressions import (
     name, const, binop, unaryop, compare, call, attr, subscript,
@@ -13,7 +13,7 @@ from .expressions import (
 )
 from .statements import (
     assign, assign_tuple, function_def, return_stmt, import_stmt,
-    import_from, expr_stmt, pass_stmt, build_module, fix_and_compile,
+    import_from, build_module, fix_and_compile,
 )
 
 
@@ -202,8 +202,8 @@ class ASTBuilder:
             arrays: Dict mapping array names to lists of variable names
         """
         return_items = []
-        for array_name, var_names in arrays.items():
-            elements = [name(v) for v in var_names]
+        for _, var_names in arrays.items():
+            elements: List[ast.expr] = [name(v) for v in var_names]
             return_items.append(jnp_call('array', list_expr(elements)))
 
         if len(return_items) == 1:
@@ -224,7 +224,11 @@ class ASTBuilder:
 
         Returns:
             The completed FunctionDef node
+
+        Raises:
+            AssertionError: If no function is currently being built.
         """
+        assert self._current_function is not None, "No function is being built"
         func = function_def(
             self._current_function,
             self._function_args,

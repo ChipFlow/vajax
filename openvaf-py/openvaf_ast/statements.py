@@ -26,22 +26,23 @@ def assign(targets: Union[str, ast.expr, List[Union[str, ast.expr]]],
         >>> assign(['a', 'b'], tuple_expr([const(1), const(2)]))
         # Generates: a, b = (1, 2)
     """
+    target_nodes: List[ast.expr] = []
     if isinstance(targets, str):
         target_nodes = [name(targets, ast.Store())]
     elif isinstance(targets, ast.expr):
         # Ensure the expression has Store context
-        if hasattr(targets, 'ctx'):
+        if isinstance(targets, (ast.Name, ast.Attribute, ast.Subscript)):
             targets.ctx = ast.Store()
         target_nodes = [targets]
     else:
         # List of targets
-        target_nodes = []
         for t in targets:
             if isinstance(t, str):
                 target_nodes.append(name(t, ast.Store()))
+            elif isinstance(t, (ast.Name, ast.Attribute, ast.Subscript)):
+                t.ctx = ast.Store()
+                target_nodes.append(t)
             else:
-                if hasattr(t, 'ctx'):
-                    t.ctx = ast.Store()
                 target_nodes.append(t)
 
     return ast.Assign(targets=target_nodes, value=value)
@@ -68,12 +69,13 @@ def assign_tuple(target_names: List[str], value: ast.expr) -> ast.Assign:
     return ast.Assign(targets=[target], value=value)
 
 
-def aug_assign(target: Union[str, ast.expr], op: ast.operator,
+def aug_assign(target: Union[str, ast.Name, ast.Attribute, ast.Subscript],
+               op: ast.operator,
                value: ast.expr) -> ast.AugAssign:
     """Create an augmented assignment statement.
 
     Args:
-        target: Target variable name or expression
+        target: Target variable name or expression (must be Name, Attribute, or Subscript)
         op: Operator (ast.Add(), ast.Sub(), etc.)
         value: Value expression
 
@@ -83,11 +85,11 @@ def aug_assign(target: Union[str, ast.expr], op: ast.operator,
     Example:
         >>> aug_assign('x', ast.Add(), const(1))  # Generates: x += 1
     """
+    target_node: Union[ast.Name, ast.Attribute, ast.Subscript]
     if isinstance(target, str):
         target_node = name(target, ast.Store())
     else:
-        if hasattr(target, 'ctx'):
-            target.ctx = ast.Store()
+        target.ctx = ast.Store()
         target_node = target
 
     return ast.AugAssign(target=target_node, op=op, value=value)
@@ -243,14 +245,14 @@ def if_stmt(test: ast.expr,
     return ast.If(test=test, body=body, orelse=orelse or [])
 
 
-def for_stmt(target: Union[str, ast.expr],
+def for_stmt(target: Union[str, ast.Name, ast.Tuple, ast.List],
              iter_expr: ast.expr,
              body: List[ast.stmt],
              orelse: Optional[List[ast.stmt]] = None) -> ast.For:
     """Create a for loop statement.
 
     Args:
-        target: Loop variable name or expression
+        target: Loop variable name or expression (Name, Tuple, or List for unpacking)
         iter_expr: Iterator expression
         body: List of body statements
         orelse: List of else statements
@@ -265,12 +267,12 @@ def for_stmt(target: Union[str, ast.expr],
         # for i in range(10):
         #     print(i)
     """
+    target_node: Union[ast.Name, ast.Tuple, ast.List]
     if isinstance(target, str):
         target_node = name(target, ast.Store())
     else:
+        target.ctx = ast.Store()
         target_node = target
-        if hasattr(target_node, 'ctx'):
-            target_node.ctx = ast.Store()
 
     return ast.For(target=target_node, iter=iter_expr,
                    body=body, orelse=orelse or [])
