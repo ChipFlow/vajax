@@ -60,14 +60,14 @@ class MIRInstruction:
     """
     opcode: str
     block: str
-    result: Optional[str] = None
-    operands: List[str] = field(default_factory=list)
+    result: Optional[ValueId] = None
+    operands: List[ValueId] = field(default_factory=list)
 
     # PHI-specific fields
     phi_operands: Optional[List[PhiOperand]] = None
 
     # Branch-specific fields
-    condition: Optional[str] = None
+    condition: Optional[ValueId] = None
     true_block: Optional[str] = None
     false_block: Optional[str] = None
     target_block: Optional[str] = None  # For JMP
@@ -159,7 +159,7 @@ class MIRFunction:
             result.extend(block.instructions)
         return result
 
-    def get_instruction_by_result(self, result: str) -> Optional[MIRInstruction]:
+    def get_instruction_by_result(self, result: ValueId) -> Optional[MIRInstruction]:
         """Find instruction that produces a given result value."""
         for block in self.blocks.values():
             for inst in block.instructions:
@@ -232,11 +232,18 @@ def _parse_instruction(inst_data: Dict[str, Any]) -> MIRInstruction:
     """Parse a single instruction from MIR data."""
     opcode = inst_data.get('opcode', '').lower()
 
+    # Wrap result with ValueId if present
+    result_str = inst_data.get('result')
+    result = ValueId(result_str) if result_str else None
+
+    # Wrap operands with ValueId
+    operands = [ValueId(op) for op in inst_data.get('operands', [])]
+
     inst = MIRInstruction(
         opcode=opcode,
         block=inst_data.get('block', ''),
-        result=inst_data.get('result'),
-        operands=list(inst_data.get('operands', [])),
+        result=result,
+        operands=operands,
     )
 
     # Parse PHI operands
@@ -249,7 +256,8 @@ def _parse_instruction(inst_data: Dict[str, Any]) -> MIRInstruction:
 
     # Parse branch-specific fields
     if opcode == 'br':
-        inst.condition = inst_data.get('condition')
+        cond_str = inst_data.get('condition')
+        inst.condition = ValueId(cond_str) if cond_str else None
         inst.true_block = inst_data.get('true_block')
         inst.false_block = inst_data.get('false_block')
     elif opcode == 'jmp':

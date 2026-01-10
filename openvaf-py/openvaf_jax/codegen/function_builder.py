@@ -22,7 +22,7 @@ from openvaf_ast import (
 )
 from openvaf_ast.statements import build_module, fix_and_compile
 
-from ..mir.types import MIRFunction, MIRInstruction, Block, parse_mir_function
+from ..mir.types import MIRFunction, MIRInstruction, Block, parse_mir_function, ValueId
 from ..mir.cfg import CFGAnalyzer, LoopInfo
 from ..mir.ssa import SSAAnalyzer, PHIResolutionType
 from .context import CodeGenContext, SplitParamContext, build_context_from_mir
@@ -43,15 +43,10 @@ class FunctionBuilder:
         self.ssa = SSAAnalyzer(mir_func, self.cfg)
 
     def _emit_preamble(self, body: List[ast.stmt], ctx: CodeGenContext):
-        """Emit function preamble: imports and constants."""
+        """Emit function preamble: imports."""
         # JAX imports: from jax import numpy as jnp, lax
         body.append(import_from('jax', [('numpy', 'jnp'), 'lax']))
-
-        # Zero and one constants
-        body.append(assign(ctx.zero_var, jnp_float64(ast_const(0.0))))
-        body.append(assign(ctx.one_var, jnp_float64(ast_const(1.0))))
-        ctx.defined_vars.add(ctx.zero_var)
-        ctx.defined_vars.add(ctx.one_var)
+        # Note: 0.0 and 1.0 constants are now inlined via ctx.zero() and ctx.one()
 
     def _emit_constants(self, body: List[ast.stmt], ctx: CodeGenContext):
         """Emit constant definitions."""
@@ -112,10 +107,14 @@ class FunctionBuilder:
             return
 
         # Extract loop-carried state from PHIs
-        loop_state: List[Tuple[str, str, str]] = []  # (result, init_val, update_val)
+        loop_state: List[Tuple[ValueId, ValueId, ValueId]] = []  # (result, init_val, update_val)
         for phi in phi_nodes:
             resolution = self.ssa.resolve_phi(phi, loop)
             if resolution.type == PHIResolutionType.LOOP_INIT:
+                # All values must be present for LOOP_INIT resolution
+                assert phi.result is not None
+                assert resolution.init_value is not None
+                assert resolution.update_value is not None
                 loop_state.append((
                     phi.result,
                     resolution.init_value,
@@ -166,9 +165,9 @@ class FunctionBuilder:
                 body.append(assign(var_name, ast_name('_loop_result')))
 
     def _build_loop_cond(self, ctx: CodeGenContext, loop: LoopInfo,
-                         loop_state: List[Tuple[str, str, str]],
+                         loop_state: List[Tuple[ValueId, ValueId, ValueId]],
                          translator: InstructionTranslator,
-                         branch_cond: Optional[str]) -> List[ast.stmt]:
+                         branch_cond: Optional[ValueId]) -> List[ast.stmt]:
         """Build loop condition function body."""
         cond_body = []
 
@@ -205,7 +204,7 @@ class FunctionBuilder:
         return cond_body
 
     def _build_loop_body(self, ctx: CodeGenContext, loop: LoopInfo,
-                         loop_state: List[Tuple[str, str, str]],
+                         loop_state: List[Tuple[ValueId, ValueId, ValueId]],
                          translator: InstructionTranslator) -> List[ast.stmt]:
         """Build loop body function."""
         loop_body = []
@@ -293,7 +292,7 @@ class InitFunctionBuilder(FunctionBuilder):
 
         # Ensure v3 exists (commonly used for zero)
         if 'v3' not in ctx.defined_vars:
-            body.append(assign('v3', ast_name(ctx.zero_var)))
+            body.append(assign('v3', ctx.zero()))
             ctx.defined_vars.add('v3')
 
         # Map init params from input array
@@ -345,7 +344,7 @@ class InitFunctionBuilder(FunctionBuilder):
                     subscript(ast_name('inputs'), ast_const(init_idx))))
             else:
                 # Fallback to zero
-                body.append(assign(var_name, ast_name(ctx.zero_var)))
+                body.append(assign(var_name, ctx.zero()))
 
             ctx.defined_vars.add(var_name)
 
@@ -382,7 +381,7 @@ class InitFunctionBuilder(FunctionBuilder):
 
         # Ensure v3 exists (commonly used for zero)
         if 'v3' not in ctx.defined_vars:
-            body.append(assign('v3', ast_name(ctx.zero_var)))
+            body.append(assign('v3', ctx.zero()))
             ctx.defined_vars.add('v3')
 
         # Map init params from split arrays
@@ -447,7 +446,7 @@ class InitFunctionBuilder(FunctionBuilder):
                     subscript(ast_name('device_params'), ast_const(pos))))
             else:
                 # Fallback to zero
-                body.append(assign(var_name, ast_name(ctx.zero_var)))
+                body.append(assign(var_name, ctx.zero()))
 
             ctx.defined_vars.add(var_name)
 
@@ -461,7 +460,7 @@ class InitFunctionBuilder(FunctionBuilder):
             if var_name in ctx.defined_vars or init_val in ctx.defined_vars:
                 cache_vals.append(ast_name(var_name if var_name in ctx.defined_vars else init_val))
             else:
-                cache_vals.append(ast_name(ctx.zero_var))
+                cache_vals.append(ctx.zero())
 
         if cache_vals:
             body.append(assign('cache', jnp_call('array', list_expr(cache_vals))))
@@ -489,7 +488,7 @@ class InitFunctionBuilder(FunctionBuilder):
                     attr(ast_name('jnp'), 'float32'), [val_expr]))
             else:
                 # Default based on negation
-                collapse_vals.append(ast_name(ctx.one_var if negate else ctx.zero_var))
+                collapse_vals.append(ctx.one() if negate else ctx.zero())
 
         if collapse_vals:
             body.append(assign('collapse_decisions',
@@ -565,7 +564,7 @@ class EvalFunctionBuilder(FunctionBuilder):
 
         # Ensure v3 exists
         if 'v3' not in ctx.defined_vars:
-            body.append(assign('v3', ast_name(ctx.zero_var)))
+            body.append(assign('v3', ctx.zero()))
             ctx.defined_vars.add('v3')
 
         # Map params from split arrays
@@ -673,10 +672,10 @@ class EvalFunctionBuilder(FunctionBuilder):
 
             resist_exprs.append(
                 ast_name(resist_var) if resist_var in ctx.defined_vars
-                else ast_name(ctx.zero_var))
+                else ctx.zero())
             react_exprs.append(
                 ast_name(react_var) if react_var in ctx.defined_vars
-                else ast_name(ctx.zero_var))
+                else ctx.zero())
 
         body.append(assign('residuals_resist', jnp_call('array', list_expr(resist_exprs))))
         body.append(assign('residuals_react', jnp_call('array', list_expr(react_exprs))))
@@ -692,10 +691,10 @@ class EvalFunctionBuilder(FunctionBuilder):
 
             resist_exprs.append(
                 ast_name(resist_var) if resist_var in ctx.defined_vars
-                else ast_name(ctx.zero_var))
+                else ctx.zero())
             react_exprs.append(
                 ast_name(react_var) if react_var in ctx.defined_vars
-                else ast_name(ctx.zero_var))
+                else ctx.zero())
 
         body.append(assign('jacobian_resist', jnp_call('array', list_expr(resist_exprs))))
         body.append(assign('jacobian_react', jnp_call('array', list_expr(react_exprs))))
@@ -721,10 +720,10 @@ class EvalFunctionBuilder(FunctionBuilder):
 
             resist_exprs.append(
                 ast_name(resist_lim_rhs_var) if resist_lim_rhs_var in ctx.defined_vars
-                else ast_name(ctx.zero_var))
+                else ctx.zero())
             react_exprs.append(
                 ast_name(react_lim_rhs_var) if react_lim_rhs_var in ctx.defined_vars
-                else ast_name(ctx.zero_var))
+                else ctx.zero())
 
         body.append(assign('lim_rhs_resist', jnp_call('array', list_expr(resist_exprs))))
         body.append(assign('lim_rhs_react', jnp_call('array', list_expr(react_exprs))))
