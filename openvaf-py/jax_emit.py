@@ -841,19 +841,31 @@ def _compute_reverse_postorder(
             if inst.jump_dest not in successors[inst.block_idx]:
                 successors[inst.block_idx].append(inst.jump_dest)
 
-    # DFS postorder traversal
+    # Iterative DFS postorder traversal (avoids recursion limit for large CFGs)
     visited = set()
     postorder = []
 
-    def dfs(block_idx: int):
-        if block_idx in visited:
-            return
-        visited.add(block_idx)
-        for succ in successors[block_idx]:
-            dfs(succ)
-        postorder.append(block_idx)
+    # Stack entries: (block_idx, phase)
+    # phase 0: first visit - mark visited, push children
+    # phase 1: post-visit - add to postorder
+    stack = [(entry_block_idx, 0)]
 
-    dfs(entry_block_idx)
+    while stack:
+        block_idx, phase = stack.pop()
+
+        if phase == 0:
+            if block_idx in visited:
+                continue
+            visited.add(block_idx)
+            # Push post-visit phase first (will be processed after children)
+            stack.append((block_idx, 1))
+            # Push children in reverse order so first child is processed first
+            for succ in reversed(successors[block_idx]):
+                if succ not in visited:
+                    stack.append((succ, 0))
+        else:
+            # Post-visit: add to postorder
+            postorder.append(block_idx)
 
     # Reverse postorder = topological order for DAGs
     return list(reversed(postorder))
@@ -1090,6 +1102,257 @@ def emit_init(module) -> Callable:
         return cache
 
     return init_fn
+
+
+def emit_init_lax_loop(module) -> Callable:
+    """Generate init function using lax.fori_loop for large models.
+
+    For models with >1000 instructions, using a loop-based interpreter
+    avoids XLA compilation timeout from unrolling.
+
+    Args:
+        module: openvaf_py VaModule
+
+    Returns:
+        init_fn(init_params) -> cache_values
+    """
+    import numpy as np
+
+    mir = module.get_init_mir_instructions()
+    metadata = module.get_codegen_metadata()
+    cache_info = metadata['cache_info']
+    n_cache = module.num_cached_values
+
+    output_vars = [ci['init_value'] for ci in cache_info]
+    cache_slots = [ci['cache_idx'] for ci in cache_info]
+
+    ctx, compiled, entry_block_idx = _build_generic_emit_context(mir, output_vars)
+    n_instructions = len(compiled)
+
+    # Encode instructions as arrays for lax.fori_loop
+    INST_SIZE = 8
+
+    OPCODE_MAP = {
+        'fadd': 0, 'fsub': 1, 'fmul': 2, 'fdiv': 3,
+        'flt': 4, 'fle': 5, 'fgt': 6, 'fge': 7, 'feq': 8, 'fne': 9,
+        'fneg': 10, 'ln': 11, 'exp': 12, 'sqrt': 13,
+        'sin': 14, 'cos': 15, 'tan': 16, 'atan': 17, 'abs': 18,
+        'pow': 19, 'min': 20, 'max': 21, 'atan2': 22,
+        'ifcast': 23, 'optbarrier': 24, 'call': 25,
+        'ilt': 26, 'ile': 27, 'igt': 28, 'ige': 29, 'ieq': 30, 'ine': 31,
+        'ineg': 32, 'bnot': 33, 'inot': 34, 'bfcast': 35,
+        'asin': 36, 'acos': 37, 'sinh': 38, 'cosh': 39,
+        'tanh': 40, 'asinh': 41, 'acosh': 42, 'atanh': 43, 'log': 44, 'hypot': 45,
+        'ficast': 46, 'bicast': 47, 'ibcast': 48, 'fbcast': 49,
+        'floor': 50, 'ceil': 51,
+        'phi': 100, 'br': 101, 'jmp': 102, 'noop': 127,
+    }
+
+    inst_data = []
+    phi_data = []
+
+    for inst in compiled:
+        opcode = inst.opcode
+        opcode_int = OPCODE_MAP.get(opcode, 127)
+
+        if opcode == 'phi':
+            phi_start = len(phi_data)
+            phi_data.append(len(inst.phi_operands))
+            for val_idx, pred_idx in inst.phi_operands:
+                phi_data.extend([val_idx, pred_idx])
+            inst_data.extend([100, inst.result_idx, phi_start, 0, inst.block_idx, 0, 0, 0])
+        elif opcode == 'br':
+            if inst.branch_info is not None:
+                cond_idx, true_idx, false_idx = inst.branch_info
+                inst_data.extend([101, 0, cond_idx, 0, inst.block_idx, true_idx, false_idx, 0])
+        elif opcode == 'jmp':
+            jump_dest = inst.jump_dest if inst.jump_dest is not None else 0
+            inst_data.extend([102, 0, 0, 0, inst.block_idx, jump_dest, jump_dest, 0])
+        else:
+            ops = inst.operand_indices
+            op1 = ops[0] if len(ops) > 0 else 0
+            op2 = ops[1] if len(ops) > 1 else 0
+            inst_data.extend([opcode_int, inst.result_idx, op1, op2, inst.block_idx, 0, 0, 0])
+
+    inst_array = jnp.array(inst_data, dtype=jnp.int32)
+    phi_array = jnp.array(phi_data if phi_data else [0], dtype=jnp.int32)
+
+    const_array = ctx.const_array
+    param_indices = jnp.array(ctx.param_indices, dtype=jnp.int32)
+    n_params = ctx.n_params
+    n_blocks = ctx.n_blocks
+    output_indices = jnp.array(ctx.resist_res_indices, dtype=jnp.int32)
+    cache_slots_arr = jnp.array(cache_slots, dtype=jnp.int32)
+
+    def init_fn(init_params: jnp.ndarray) -> jnp.ndarray:
+        """Compute cache values using lax.fori_loop interpreter."""
+        vals = const_array.copy()
+
+        # Load params
+        def load_param(i, v):
+            return v.at[param_indices[i]].set(init_params[i])
+        vals = lax.fori_loop(0, jnp.minimum(init_params.shape[0], n_params), load_param, vals)
+
+        block_reached = jnp.zeros(n_blocks).at[entry_block_idx].set(1.0)
+
+        def exec_inst(i, state):
+            vals, block_reached = state
+            base = i * INST_SIZE
+
+            opcode = inst_array[base]
+            result_idx = inst_array[base + 1]
+            op1_idx = inst_array[base + 2]
+            op2_idx = inst_array[base + 3]
+            block_idx = inst_array[base + 4]
+            extra1 = inst_array[base + 5]
+            extra2 = inst_array[base + 6]
+
+            a = vals[op1_idx]
+            b = vals[op2_idx]
+
+            # Compute result based on opcode
+            is_binary = (opcode <= 3) | ((opcode >= 19) & (opcode <= 22)) | \
+                       ((opcode >= 26) & (opcode <= 31)) | (opcode == 45)
+
+            binary_result = jnp.where(opcode == 0, safe_add(a, b),
+                           jnp.where(opcode == 1, safe_sub(a, b),
+                           jnp.where(opcode == 2, safe_mul(a, b),
+                           jnp.where(opcode == 3, safe_div(a, b),
+                           jnp.where(opcode == 4, jnp.float64(a < b),
+                           jnp.where(opcode == 5, jnp.float64(a <= b),
+                           jnp.where(opcode == 6, jnp.float64(a > b),
+                           jnp.where(opcode == 7, jnp.float64(a >= b),
+                           jnp.where(opcode == 8, jnp.float64(a == b),
+                           jnp.where(opcode == 9, jnp.float64(a != b),
+                           jnp.where(opcode == 19, safe_pow(a, b),
+                           jnp.where(opcode == 20, jnp.minimum(a, b),
+                           jnp.where(opcode == 21, jnp.maximum(a, b),
+                           jnp.where(opcode == 22, jnp.arctan2(a, b),
+                           jnp.where(opcode == 45, jnp.hypot(a, b),
+                           0.0)))))))))))))))
+
+            unary_result = jnp.where(opcode == 10, -a,
+                          jnp.where(opcode == 11, safe_ln(a),
+                          jnp.where(opcode == 12, safe_exp(a),
+                          jnp.where(opcode == 13, safe_sqrt(a),
+                          jnp.where(opcode == 14, jnp.sin(a),
+                          jnp.where(opcode == 15, jnp.cos(a),
+                          jnp.where(opcode == 16, jnp.tan(a),
+                          jnp.where(opcode == 17, jnp.arctan(a),
+                          jnp.where(opcode == 18, jnp.abs(a),
+                          jnp.where(opcode == 23, jnp.float64(a),
+                          jnp.where(opcode == 24, a,
+                          jnp.where(opcode == 25, safe_exp(jnp.minimum(a, 700.0)),
+                          jnp.where(opcode == 33, jnp.float64(a == 0.0),
+                          jnp.where(opcode == 34, jnp.float64(a == 0.0),
+                          jnp.where(opcode == 35, jnp.float64(a),
+                          jnp.where(opcode == 36, jnp.arcsin(a),
+                          jnp.where(opcode == 37, jnp.arccos(a),
+                          jnp.where(opcode == 38, jnp.sinh(a),
+                          jnp.where(opcode == 39, jnp.cosh(a),
+                          jnp.where(opcode == 40, jnp.tanh(a),
+                          jnp.where(opcode == 41, jnp.arcsinh(a),
+                          jnp.where(opcode == 42, jnp.arccosh(a),
+                          jnp.where(opcode == 43, jnp.arctanh(a),
+                          jnp.where(opcode == 44, jnp.log10(jnp.maximum(a, 1e-300)),
+                          jnp.where(opcode == 50, jnp.floor(a),
+                          jnp.where(opcode == 51, jnp.ceil(a),
+                          0.0))))))))))))))))))))))))))
+
+            arith_result = jnp.where(is_binary, binary_result, unary_result)
+
+            # PHI handling
+            is_phi = (opcode == 100)
+            phi_start = op1_idx
+            n_phi_ops = phi_array[phi_start]
+
+            first_val_idx = phi_array[phi_start + 1]
+            phi_result = vals[first_val_idx]
+
+            def select_phi(result, op_num):
+                val_idx = phi_array[phi_start + 1 + op_num * 2]
+                pred_idx = phi_array[phi_start + 2 + op_num * 2]
+                return jnp.where(block_reached[pred_idx] > 0.5, vals[val_idx], result)
+
+            phi_result = jnp.where(n_phi_ops > 0, select_phi(phi_result, 0), phi_result)
+            phi_result = jnp.where(n_phi_ops > 1, select_phi(phi_result, 1), phi_result)
+            phi_result = jnp.where(n_phi_ops > 2, select_phi(phi_result, 2), phi_result)
+            phi_result = jnp.where(n_phi_ops > 3, select_phi(phi_result, 3), phi_result)
+
+            # Branch handling
+            is_br = (opcode == 101)
+            is_jmp = (opcode == 102)
+            cond = vals[op1_idx]
+            this_reached = block_reached[block_idx]
+
+            true_reaches = jnp.where(is_br, this_reached * cond,
+                           jnp.where(is_jmp, this_reached, 0.0))
+            false_reaches = jnp.where(is_br, this_reached * (1.0 - cond), 0.0)
+
+            new_block_reached = jnp.where(
+                is_br | is_jmp,
+                block_reached.at[extra1].set(jnp.maximum(block_reached[extra1], true_reaches)),
+                block_reached
+            )
+            new_block_reached = jnp.where(
+                is_br,
+                new_block_reached.at[extra2].set(jnp.maximum(new_block_reached[extra2], false_reaches)),
+                new_block_reached
+            )
+
+            # Choose result
+            final_val = jnp.where(is_phi, phi_result, arith_result)
+
+            is_arith = (opcode < 100)
+            should_update = (is_arith | is_phi) & (result_idx >= 0)
+            new_vals = jnp.where(should_update, vals.at[result_idx].set(final_val), vals)
+
+            return (new_vals, new_block_reached)
+
+        vals, _ = lax.fori_loop(0, n_instructions, exec_inst, (vals, block_reached))
+
+        # Extract outputs and place in cache
+        cache = jnp.zeros(n_cache)
+
+        def fill_cache(i, c):
+            return c.at[cache_slots_arr[i]].set(vals[output_indices[i]])
+
+        cache = lax.fori_loop(0, len(cache_slots), fill_cache, cache)
+
+        return cache
+
+    return init_fn
+
+
+def build_init_fn(module, force_lax_loop: bool = False) -> Tuple[Callable, Dict]:
+    """Build JAX init function from module.
+
+    Args:
+        module: openvaf_py VaModule
+        force_lax_loop: Force use of lax_loop interpreter
+
+    Returns:
+        (init_fn, metadata)
+    """
+    mir = module.get_init_mir_instructions()
+    n_instructions = len(mir['instructions'])
+
+    # Use lax_loop for large models (>1000 instructions)
+    use_lax_loop = force_lax_loop or n_instructions > 1000
+
+    if use_lax_loop:
+        init_fn = emit_init_lax_loop(module)
+        strategy = 'lax_loop'
+    else:
+        init_fn = emit_init(module)
+        strategy = 'branchless'
+
+    metadata = {
+        'strategy': strategy,
+        'n_instructions': n_instructions,
+    }
+
+    return init_fn, metadata
 
 
 def build_eval_fn(module, force_lax_loop: bool = False) -> Tuple[Callable, Dict]:
