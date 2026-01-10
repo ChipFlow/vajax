@@ -229,12 +229,17 @@ class InstructionTranslator:
             return self.ctx.get_operand(res.single_value or '_ZERO')
 
         if res.type == PHIResolutionType.TWO_WAY:
+            assert res.condition is not None
+            assert res.true_value is not None
+            assert res.false_value is not None
             cond = self.ctx.get_operand(res.condition)
             true_val = self.ctx.get_operand(res.true_value)
             false_val = self.ctx.get_operand(res.false_value)
             return jnp_where(cond, true_val, false_val)
 
         if res.type == PHIResolutionType.MULTI_WAY:
+            assert res.cases is not None
+            assert res.default is not None
             # Build nested where
             cases = []
             for cond_str, val_str in res.cases:
@@ -250,6 +255,7 @@ class InstructionTranslator:
             return nested_where(cases, default)
 
         if res.type in (PHIResolutionType.LOOP_INIT, PHIResolutionType.LOOP_UPDATE):
+            assert res.init_value is not None
             # For loop PHIs, we return the init value
             # The update is handled by the loop body
             return self.ctx.get_operand(res.init_value)

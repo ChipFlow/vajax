@@ -43,21 +43,22 @@ class PHIResolution:
     """
     type: PHIResolutionType
 
-    # For TWO_WAY
+    # For TWO_WAY: condition may be negated (e.g., '!v5')
     condition: Optional[str] = None
-    true_value: Optional[str] = None
-    false_value: Optional[str] = None
+    true_value: Optional[ValueId] = None
+    false_value: Optional[ValueId] = None
 
-    # For MULTI_WAY: list of (condition, value) pairs + default
-    cases: Optional[List[Tuple[str, str]]] = None
-    default: Optional[str] = None
+    # For MULTI_WAY: list of (condition_expr, value) pairs + default
+    # condition_expr may have negation prefix (e.g., '!v5')
+    cases: Optional[List[Tuple[str, ValueId]]] = None
+    default: Optional[ValueId] = None
 
     # For LOOP_INIT/LOOP_UPDATE
-    init_value: Optional[str] = None  # Value from outside loop
-    update_value: Optional[str] = None  # Value from loop iteration
+    init_value: Optional[ValueId] = None  # Value from outside loop
+    update_value: Optional[ValueId] = None  # Value from loop iteration
 
     # For FALLBACK
-    single_value: Optional[str] = None
+    single_value: Optional[ValueId] = None
 
 
 class SSAAnalyzer:
@@ -78,11 +79,11 @@ class SSAAnalyzer:
         self.cfg = cfg
 
         # Cached analysis - built lazily
-        self._branch_conditions: Optional[Dict[str, Dict[str, Tuple[str, bool]]]] = None
+        self._branch_conditions: Optional[Dict[str, Dict[str, Tuple[ValueId, bool]]]] = None
         self._succ_pair_map: Optional[Dict[FrozenSet[str], List[str]]] = None
 
     @property
-    def branch_conditions(self) -> Dict[str, Dict[str, Tuple[str, bool]]]:
+    def branch_conditions(self) -> Dict[str, Dict[str, Tuple[ValueId, bool]]]:
         """Get branch condition info for all branching blocks.
 
         Returns:
@@ -123,7 +124,7 @@ class SSAAnalyzer:
         num_ops = len(phi.phi_operands)
 
         if num_ops == 0:
-            return PHIResolution(type=PHIResolutionType.FALLBACK, single_value='0')
+            return PHIResolution(type=PHIResolutionType.FALLBACK, single_value=ValueId('0'))
 
         if num_ops == 1:
             return PHIResolution(
@@ -136,12 +137,12 @@ class SSAAnalyzer:
 
         return self._resolve_multi_way_phi(phi)
 
-    def _build_branch_conditions(self) -> Dict[str, Dict[str, Tuple[str, bool]]]:
+    def _build_branch_conditions(self) -> Dict[str, Dict[str, Tuple[ValueId, bool]]]:
         """Build map of block -> {successor: (condition, is_true_branch)}.
 
         For each block with a branch instruction, maps to its condition and targets.
         """
-        conditions: Dict[str, Dict[str, Tuple[str, bool]]] = {}
+        conditions: Dict[str, Dict[str, Tuple[ValueId, bool]]] = {}
 
         for block_name, block in self.mir_func.blocks.items():
             terminator = block.terminator
@@ -150,9 +151,10 @@ class SSAAnalyzer:
                 true_block = terminator.true_block
                 false_block = terminator.false_block
                 if cond and true_block and false_block:
+                    cond_id = ValueId(cond)
                     conditions[block_name] = {
-                        true_block: (cond, True),
-                        false_block: (cond, False),
+                        true_block: (cond_id, True),
+                        false_block: (cond_id, False),
                     }
 
         return conditions
@@ -330,7 +332,7 @@ class SSAAnalyzer:
                 )
 
         # Build nested cases
-        cases: List[Tuple[str, str]] = []
+        cases: List[Tuple[str, ValueId]] = []
         remaining = list(pred_blocks)
 
         # Try to peel off predecessors one at a time
