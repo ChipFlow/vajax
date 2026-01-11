@@ -145,7 +145,7 @@ Confirmed that PSP103 can be compiled and evaluated via openvaf_jax:
 import openvaf_py
 import openvaf_jax
 
-va_path = 'openvaf-py/vendor/OpenVAF/integration_tests/PSP103/psp103.va'
+va_path = 'vendor/OpenVAF/integration_tests/PSP103/psp103.va'
 modules = openvaf_py.compile_va(va_path)
 module = modules[0]
 

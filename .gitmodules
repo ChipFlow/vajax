@@ -1,5 +1,5 @@
-[submodule "openvaf_jax/openvaf_py/vendor/OpenVAF"]
-	path = openvaf_jax/openvaf_py/vendor/OpenVAF
+[submodule "vendor/OpenVAF"]
+	path = vendor/OpenVAF
 	url = https://github.com/robtaylor/OpenVAF.git
 	branch = builtin-primitive-support
 [submodule "vendor/VACASK"]

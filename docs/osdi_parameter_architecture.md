@@ -319,14 +319,14 @@ After this flow, **HiddenState is no longer needed** - it's been replaced by the
 
 - [VACASK OSDI Inputs](vacask_osdi_inputs.md) - How VACASK interfaces with OSDI
 - [Architecture Overview](architecture_overview.md) - Overall JAX-SPICE architecture
-- [OpenVAF CLAUDE.md](../openvaf-py/vendor/OpenVAF/CLAUDE.md) - OpenVAF compiler architecture
+- [OpenVAF CLAUDE.md](../vendor/OpenVAF/CLAUDE.md) - OpenVAF compiler architecture
 
 ## 9. File References
 
 | Purpose | File |
 |---------|------|
-| OSDI header definitions | `openvaf-py/vendor/OpenVAF/openvaf/osdi/header/osdi.h` |
-| Rust MIR interpreter | `openvaf-py/src/lib.rs` |
-| JAX code translator | `openvaf-py/openvaf_jax.py` |
+| OSDI header definitions | `vendor/OpenVAF/openvaf/osdi/header/osdi.h` |
+| Rust MIR interpreter | `openvaf_jax/openvaf_py/src/lib.rs` |
+| JAX code translator | `openvaf_jax/__init__.py` |
 | Benchmark runner | `jax_spice/benchmarks/runner.py` |
 | VACASK OSDI interface | `vendor/VACASK/lib/osdiinstance.cpp` |

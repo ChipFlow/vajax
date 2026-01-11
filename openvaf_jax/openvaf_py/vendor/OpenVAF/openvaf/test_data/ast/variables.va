@@ -1,7 +1,0 @@
-module test ();
-    real x=1.0;
-    integer y=0,z;
-    real t;
-    int rt;
-    analog x = 2==y;
-endmodule

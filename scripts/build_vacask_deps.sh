@@ -19,7 +19,7 @@ set -e
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(dirname "$SCRIPT_DIR")"
-OPENVAF_DIR="$PROJECT_ROOT/openvaf_jax/openvaf_py/vendor/OpenVAF"
+OPENVAF_DIR="$PROJECT_ROOT/vendor/OpenVAF"
 VACASK_DIR="$PROJECT_ROOT/vendor/VACASK"
 
 # LLVM 18 path (adjust if needed)

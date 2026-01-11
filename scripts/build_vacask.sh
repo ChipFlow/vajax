@@ -123,7 +123,7 @@ esac
 OPENVAF_COMPILER=""
 
 # First check our built version
-LOCAL_OPENVAF="$PROJECT_ROOT/openvaf_jax/openvaf_py/vendor/OpenVAF/target/release/openvaf-r"
+LOCAL_OPENVAF="$PROJECT_ROOT/vendor/OpenVAF/target/release/openvaf-r"
 if [ -x "$LOCAL_OPENVAF" ]; then
     OPENVAF_COMPILER="$LOCAL_OPENVAF"
 fi

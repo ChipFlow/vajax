@@ -1,7 +1,0 @@
-module diode;
-    analog function real test;
-        input x,y;
-        real x,y;
-        test = x*y;
-    endfunction
-endmodule

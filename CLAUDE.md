@@ -115,7 +115,7 @@ All devices are routed through OpenVAF except voltage/current sources:
 - **OpenVAF path**: resistor, capacitor, diode, psp103, and other VA models
   - Batched evaluation via `vmap` for GPU efficiency
   - VA models from `vendor/VACASK/devices/` (resistor.va, capacitor.va, diode.va)
-  - Complex models from `openvaf-py/vendor/OpenVAF/integration_tests/` (PSP103)
+  - Complex models from `vendor/OpenVAF/integration_tests/` (PSP103)
 
 - **Source path**: vsource, isource only
   - Time-varying behavior (pulse, sine, DC)

@@ -12,7 +12,7 @@ set -e
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
-OPENVAF_SRC="$PROJECT_ROOT/openvaf_jax/openvaf_py/vendor/OpenVAF"
+OPENVAF_SRC="$PROJECT_ROOT/vendor/OpenVAF"
 
 # Check if OpenVAF source exists
 if [ ! -d "$OPENVAF_SRC" ]; then
