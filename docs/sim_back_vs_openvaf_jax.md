@@ -168,6 +168,7 @@ fn ensure_cache_slot(inst, res, ty) -> CacheSlot {
 | Parameter caching (init/eval split) | ✅ | ✅ |
 | Limiting (lim_rhs correction) | ✅ | ✅ |
 | mfactor scaling | ✅ | ✅ (pre-computed) |
+| Small-signal data extraction | ✅ | ✅ |
 
 ### Partially Supported
 
@@ -176,13 +177,11 @@ fn ensure_cache_slot(inst, res, ty) -> CacheSlot {
 | Implicit equations | ✅ | ⚠️ Partial | We handle pre-resolved implicit eqns |
 | Switch branches | ✅ | ⚠️ Partial | Not fully tested |
 | Temperature dependence | ✅ | ⚠️ | Need to verify param mapping |
-| Small-signal analysis | ✅ | ⚠️ Partial | Data extracted & generated, AC solver not implemented |
 
 ### Not Supported
 
 | Feature | sim_back | openvaf_jax | Reason |
 |---------|----------|-------------|--------|
-| AC analysis | ✅ | ❌ | Solver not implemented (small-signal data available) |
 | Noise analysis | ✅ | ❌ | Not in scope |
 | Runtime branch switching | ✅ | ❌ | Complex control flow |
 
