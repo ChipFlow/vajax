@@ -261,8 +261,8 @@ class TestVACASKResistorSim:
         # Calculate expected current
         expected_I = 1.0 / 2000.0  # 0.5mA
 
-        # The 'sim_node0' should have the current flowing
-        node0_current = float(residuals['sim_node0']['resist'])
+        # The 'A' should have the current flowing
+        node0_current = float(residuals['A']['resist'])
 
         # Current magnitude should match (sign depends on convention)
         assert abs(abs(node0_current) - expected_I) < 1e-9, \
@@ -287,7 +287,7 @@ class TestVACASKResistorSim:
         # With mfactor=3, current should be 3x
         expected_I = (1.0 / 2000.0) * 3.0  # 1.5mA
 
-        node0_current = float(residuals['sim_node0']['resist'])
+        node0_current = float(residuals['A']['resist'])
 
         assert abs(abs(node0_current) - expected_I) < 1e-9, \
             f"Expected I={expected_I} (mfactor=3), got {node0_current}"
@@ -387,7 +387,7 @@ class TestFullVACASKTestResistor:
 
         # Step 6: Verify results match VACASK expected values
         expected_I = V / R
-        actual_I = abs(float(residuals['sim_node0']['resist']))
+        actual_I = abs(float(residuals['A']['resist']))
 
         rel_err = abs(actual_I - expected_I) / expected_I
         assert rel_err < 1e-6, f"Current mismatch: expected {expected_I}, got {actual_I}"

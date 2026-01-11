@@ -171,6 +171,9 @@ class OpenVAFToJAX:
         Returns a function with signature:
             f(inputs: List[float]) -> (residuals: Dict, jacobian: Dict)
 
+        Where residuals is a dict mapping node names to dicts with 'resist' and 'react' keys,
+        and jacobian is a dict mapping (row, col) tuples to dicts with 'resist' and 'react' keys.
+
         The inputs should be ordered according to module.param_names
         """
         # Get array-based function and metadata
@@ -179,10 +182,16 @@ class OpenVAFToJAX:
         jacobian_keys = metadata['jacobian_keys']
 
         def dict_wrapper(inputs):
-            residuals_arr, jacobian_arr = eval_fn(inputs)
-            # Convert arrays to dicts
-            residuals = {name: residuals_arr[i] for i, name in enumerate(node_names)}
-            jacobian = {key: jacobian_arr[i] for i, key in enumerate(jacobian_keys)}
+            res_resist, res_react, jac_resist, jac_react = eval_fn(inputs)
+            # Convert arrays to nested dicts with resist/react keys
+            residuals = {
+                name: {'resist': res_resist[i], 'react': res_react[i]}
+                for i, name in enumerate(node_names)
+            }
+            jacobian = {
+                key: {'resist': jac_resist[i], 'react': jac_react[i]}
+                for i, key in enumerate(jacobian_keys)
+            }
             return residuals, jacobian
 
         return dict_wrapper
@@ -197,10 +206,14 @@ class OpenVAFToJAX:
         Returns a function with signature:
             f(inputs: Array[N]) -> (residuals: Array[num_nodes], jacobian: Array[num_jac_entries])
 
+        The inputs array should be ordered according to module.param_names.
+
         Also returns metadata dict with:
             - 'node_names': list of node names in residual array order
             - 'jacobian_keys': list of (row, col) tuples in jacobian array order
         """
+        import jax.numpy as jnp
+
         # Generate init and eval functions
         init_fn, init_metadata = self.translate_init_array()
 
@@ -213,27 +226,68 @@ class OpenVAFToJAX:
             varying_indices=all_indices,
         )
 
-        # Create combined function
+        # Build mapping from user param index -> init param index
+        # User params are module.param_names, init params are module.init_param_names
+        user_param_names = list(self.module.param_names)
+        user_param_value_ids = list(self.module.param_value_indices)
+        init_param_names = list(self.module.init_param_names)
+        init_param_value_ids = list(self.module.init_param_value_indices)
+
+        # Map user param index -> init param index (by matching value IDs or names)
+        user_to_init_mapping = []  # list of (user_idx, init_idx) for each init param
+        for init_idx, (init_name, init_vid) in enumerate(zip(init_param_names, init_param_value_ids)):
+            # Try to find matching user param by value ID first
+            if init_vid in user_param_value_ids:
+                user_idx = user_param_value_ids.index(init_vid)
+                user_to_init_mapping.append((user_idx, init_idx))
+            # Otherwise try by name (for param_given which has different value ID)
+            elif init_name in user_param_names:
+                user_idx = user_param_names.index(init_name)
+                user_to_init_mapping.append((user_idx, init_idx))
+            # Else default to 0 (will be handled below)
+
+        # Build mapping from user param index -> eval MIR param index
+        # all_func_params gives (mir_idx, value_id) pairs
+        all_func_params = list(self.module.get_all_func_params())
+        value_id_to_mir_idx = {p[1]: p[0] for p in all_func_params}
+        user_to_eval_mapping = []  # list of (user_idx, mir_idx)
+        for user_idx, vid in enumerate(user_param_value_ids):
+            mir_idx = value_id_to_mir_idx.get(vid)
+            if mir_idx is not None:
+                user_to_eval_mapping.append((user_idx, mir_idx))
+
+        n_init_params = len(init_param_names)
+        n_user_params = len(user_param_names)
+
+        # Create combined function with proper mapping
         def combined_fn(inputs):
-            # Split inputs into init params and eval params (voltages)
-            # The input array contains: [init_params..., voltages...]
-            n_init = len(init_metadata['param_names'])
-            init_inputs = inputs[:n_init]
-            voltages = inputs[n_init:]
+            inputs_arr = jnp.asarray(inputs)
+
+            # Build init inputs array
+            init_inputs = jnp.zeros(n_init_params)
+            for user_idx, init_idx in user_to_init_mapping:
+                init_inputs = init_inputs.at[init_idx].set(inputs_arr[user_idx])
 
             # Run init to get cache
             cache, _collapse = init_fn(init_inputs)
 
-            # Run eval with empty shared params, voltages as device params, and cache
-            residuals, jacobian = eval_fn([], voltages, cache)
-            return residuals, jacobian
+            # Build eval inputs array (device_params)
+            device_params = jnp.zeros(n_eval_params)
+            for user_idx, mir_idx in user_to_eval_mapping:
+                device_params = device_params.at[mir_idx].set(inputs_arr[user_idx])
+
+            # Run eval with empty shared params, device_params, and cache
+            res_resist, res_react, jac_resist, jac_react, _, _ = eval_fn([], device_params, cache)
+
+            # Return separate resist and react arrays
+            return res_resist, res_react, jac_resist, jac_react
 
         # Build combined metadata
         metadata = {
             'node_names': eval_metadata['node_names'],
             'jacobian_keys': eval_metadata['jacobian_keys'],
             'init_param_names': init_metadata['param_names'],
-            'eval_param_names': list(self.module.param_names) if hasattr(self.module, 'param_names') else [],
+            'eval_param_names': user_param_names,
         }
 
         return combined_fn, metadata
