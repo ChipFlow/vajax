@@ -454,11 +454,15 @@ class OpenVAFToJAX:
 
         Function signature (if cache is split):
             eval_fn(shared_params, device_params, shared_cache, device_cache)
-                -> (res_resist, res_react, jac_resist, jac_react)
+                -> (res_resist, res_react, jac_resist, jac_react,
+                    lim_rhs_resist, lim_rhs_react,
+                    small_signal_resist, small_signal_react)
 
         Or (if cache is not split):
             eval_fn(shared_params, device_params, cache)
-                -> (res_resist, res_react, jac_resist, jac_react)
+                -> (res_resist, res_react, jac_resist, jac_react,
+                    lim_rhs_resist, lim_rhs_react,
+                    small_signal_resist, small_signal_react)
 
         Should be vmapped with in_axes=(None, 0, None, 0) for split cache
         or in_axes=(None, 0, 0) for unsplit cache.

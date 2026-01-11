@@ -11,6 +11,7 @@ resolution-markers = [
 members = [
     "jax-spice",
     "openvaf-py",
+    "osdi-py",
 ]
 
 [[package]]
@@ -463,6 +464,7 @@ cuda12 = [
 ]
 dev = [
     { name = "beartype" },
+    { name = "osdi-py" },
     { name = "pyright" },
     { name = "pytest" },
     { name = "pytest-cov" },
@@ -474,6 +476,7 @@ sax = [
 ]
 test = [
     { name = "beartype" },
+    { name = "osdi-py" },
     { name = "pytest" },
     { name = "pytest-cov" },
 ]
@@ -497,6 +500,8 @@ requires-dist = [
     { name = "matplotlib", specifier = ">=3.7.0" },
     { name = "numpy", specifier = ">=1.24.0" },
     { name = "openvaf-py", editable = "openvaf_jax/openvaf_py" },
+    { name = "osdi-py", marker = "extra == 'dev'", editable = "openvaf_jax/osdi_py" },
+    { name = "osdi-py", marker = "extra == 'test'", editable = "openvaf_jax/osdi_py" },
     { name = "pyright", marker = "extra == 'dev'" },
     { name = "pytest", marker = "extra == 'dev'", specifier = ">=7.4.0" },
     { name = "pytest", marker = "extra == 'test'", specifier = ">=7.4.0" },
@@ -1216,6 +1221,11 @@ wheels = [
     { url = "https://files.pythonhosted.org/packages/c0/a9/967be009ddf0a1fffd7a67de9c36656b28c763659ef91352acc02cbe364c/orjson-3.11.4-cp313-cp313-win_amd64.whl", hash = "sha256:09bf242a4af98732db9f9a1ec57ca2604848e16f132e3f72edfd3c5c96de009a", size = 131314, upload-time = "2025-10-24T15:49:51.248Z" },
     { url = "https://files.pythonhosted.org/packages/cb/db/399abd6950fbd94ce125cb8cd1a968def95174792e127b0642781e040ed4/orjson-3.11.4-cp313-cp313-win_arm64.whl", hash = "sha256:a85f0adf63319d6c1ba06fb0dbf997fced64a01179cf17939a6caca662bf92de", size = 126152, upload-time = "2025-10-24T15:49:52.922Z" },
 ]
+
+[[package]]
+name = "osdi-py"
+version = "0.1.0"
+source = { editable = "openvaf_jax/osdi_py" }
 
 [[package]]
 name = "packaging"

@@ -15,11 +15,12 @@ dependencies = [
     "simpleeval>=1.0.0",
 ]
 
-[tool.uv]
-sources = { openvaf-py = { workspace = true } }
-
 [tool.uv.workspace]
-members = ["openvaf_jax/openvaf_py"]
+members = ["openvaf_jax/openvaf_py", "openvaf_jax/osdi_py"]
+
+[tool.uv.sources]
+openvaf-py = { workspace = true }
+osdi-py = { workspace = true }
 
 [project.optional-dependencies]
 cuda12 = [
@@ -43,6 +44,7 @@ test = [
     "pytest>=7.4.0",
     "pytest-cov",
     "beartype>=0.18.0",  # Runtime type checking with jaxtyping
+    "osdi-py",  # For OSDI vs JAX comparison tests
 ]
 # Full dev dependencies - includes test + linting + CPU sparse solver
 dev = [
@@ -52,6 +54,7 @@ dev = [
     "ruff",
     "pyright",
     "scikit-umfpack>=0.4.2",  # Requires libsuitesparse-dev + swig
+    "osdi-py",  # For OSDI vs JAX comparison tests
 ]
 
 [build-system]

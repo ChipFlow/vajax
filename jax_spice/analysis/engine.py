@@ -653,7 +653,7 @@ class CircuitEngine:
         # Base paths for different VA model sources
         project_root = Path(__file__).parent.parent.parent
         base_paths = {
-            'integration_tests': project_root / "openvaf_jax" / "openvaf_py" / "vendor" / "OpenVAF" / "integration_tests",
+            'integration_tests': project_root / "vendor" / "OpenVAF" / "integration_tests",
             'vacask': project_root / "vendor" / "VACASK" / "devices",
         }
 
@@ -3561,14 +3561,18 @@ class CircuitEngine:
 
                 vmapped_split_eval = split_info['vmapped_split_eval']
                 # cache here is device_cache (or full cache if not split)
-                # Returns: (res_resist, res_react, jac_resist, jac_react, lim_rhs_resist, lim_rhs_react)
+                # Returns: (res_resist, res_react, jac_resist, jac_react,
+                #           lim_rhs_resist, lim_rhs_react,
+                #           small_signal_resist, small_signal_react)
                 if use_cache_split:
                     batch_res_resist, batch_res_react, batch_jac_resist, batch_jac_react, \
-                        batch_lim_rhs_resist, batch_lim_rhs_react = \
+                        batch_lim_rhs_resist, batch_lim_rhs_react, \
+                        _batch_ss_resist, _batch_ss_react = \
                         vmapped_split_eval(shared_params, device_params_updated, shared_cache, cache)
                 else:
                     batch_res_resist, batch_res_react, batch_jac_resist, batch_jac_react, \
-                        batch_lim_rhs_resist, batch_lim_rhs_react = \
+                        batch_lim_rhs_resist, batch_lim_rhs_react, \
+                        _batch_ss_resist, _batch_ss_react = \
                         vmapped_split_eval(shared_params, device_params_updated, cache)
 
                 # NOTE: Huge value masking removed - NOI constraint enforcement in NR solver
@@ -4091,13 +4095,15 @@ class CircuitEngine:
                 device_params_updated = device_params_updated.at[:, -1].set(1e-12)
 
             # cache here is device_cache (or full cache if not split)
-            # Returns: (res_resist, res_react, jac_resist, jac_react, lim_rhs_resist, lim_rhs_react)
+            # Returns: (res_resist, res_react, jac_resist, jac_react,
+            #           lim_rhs_resist, lim_rhs_react,
+            #           small_signal_resist, small_signal_react)
             if use_cache_split:
-                _, _, batch_jac_resist, batch_jac_react, _, _ = vmapped_split_eval(
+                _, _, batch_jac_resist, batch_jac_react, _, _, _, _ = vmapped_split_eval(
                     shared_params, device_params_updated, shared_cache, cache
                 )
             else:
-                _, _, batch_jac_resist, batch_jac_react, _, _ = vmapped_split_eval(
+                _, _, batch_jac_resist, batch_jac_react, _, _, _, _ = vmapped_split_eval(
                     shared_params, device_params_updated, cache
                 )
 
