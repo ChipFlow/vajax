@@ -182,7 +182,7 @@ class OpenVAFToJAX:
         jacobian_keys = metadata['jacobian_keys']
 
         def dict_wrapper(inputs):
-            res_resist, res_react, jac_resist, jac_react = eval_fn(inputs)
+            res_resist, res_react, jac_resist, jac_react = eval_fn(inputs)[:4]
             # Convert arrays to nested dicts with resist/react keys
             residuals = {
                 name: {'resist': res_resist[i], 'react': res_react[i]}
@@ -277,7 +277,10 @@ class OpenVAFToJAX:
                 device_params = device_params.at[mir_idx].set(inputs_arr[user_idx])
 
             # Run eval with empty shared params, device_params, and cache
-            res_resist, res_react, jac_resist, jac_react, _, _ = eval_fn([], device_params, cache)
+            # Returns: (res_resist, res_react, jac_resist, jac_react,
+            #           lim_rhs_resist, lim_rhs_react, small_signal_resist, small_signal_react)
+            result = eval_fn([], device_params, cache)
+            res_resist, res_react, jac_resist, jac_react = result[:4]
 
             # Return separate resist and react arrays
             return res_resist, res_react, jac_resist, jac_react

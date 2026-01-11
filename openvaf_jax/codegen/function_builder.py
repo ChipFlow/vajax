@@ -599,8 +599,11 @@ class EvalFunctionBuilder(FunctionBuilder):
         self._emit_residual_arrays(body, ctx)
         self._emit_jacobian_arrays(body, ctx)
         self._emit_lim_rhs_arrays(body, ctx)
+        self._emit_small_signal_arrays(body, ctx)
 
-        # Return statement: (res_resist, res_react, jac_resist, jac_react, lim_rhs_resist, lim_rhs_react)
+        # Return statement: (res_resist, res_react, jac_resist, jac_react,
+        #                    lim_rhs_resist, lim_rhs_react,
+        #                    small_signal_resist, small_signal_react)
         body.append(return_stmt(tuple_expr([
             ast_name('residuals_resist'),
             ast_name('residuals_react'),
@@ -608,6 +611,8 @@ class EvalFunctionBuilder(FunctionBuilder):
             ast_name('jacobian_react'),
             ast_name('lim_rhs_resist'),
             ast_name('lim_rhs_react'),
+            ast_name('small_signal_resist'),
+            ast_name('small_signal_react'),
         ])))
 
         # Build function
@@ -737,6 +742,31 @@ class EvalFunctionBuilder(FunctionBuilder):
 
         body.append(assign('lim_rhs_resist', jnp_call('array', list_expr(resist_exprs))))
         body.append(assign('lim_rhs_react', jnp_call('array', list_expr(react_exprs))))
+
+    def _emit_small_signal_arrays(self, body: List[ast.stmt], ctx: CodeGenContext):
+        """Emit small-signal residual output arrays.
+
+        These values are known to be zero in large-signal (DC) analysis but
+        are needed for AC small-signal analysis. The separation allows the
+        simulator to avoid unnecessary derivative computations during DC.
+        """
+        resist_exprs: List[ast.expr] = []
+        react_exprs: List[ast.expr] = []
+
+        for res in self.dae_data['residuals']:
+            # Get small-signal variables if they exist
+            resist_ss_var = self._mir_to_var(res.get('resist_small_signal_var', ''), ctx)
+            react_ss_var = self._mir_to_var(res.get('react_small_signal_var', ''), ctx)
+
+            resist_exprs.append(
+                ast_name(resist_ss_var) if resist_ss_var in ctx.defined_vars
+                else ctx.zero())
+            react_exprs.append(
+                ast_name(react_ss_var) if react_ss_var in ctx.defined_vars
+                else ctx.zero())
+
+        body.append(assign('small_signal_resist', jnp_call('array', list_expr(resist_exprs))))
+        body.append(assign('small_signal_react', jnp_call('array', list_expr(react_exprs))))
 
     def _mir_to_var(self, mir_ref: str, ctx: CodeGenContext) -> str:
         """Convert MIR reference (e.g., 'mir_123') to variable name."""

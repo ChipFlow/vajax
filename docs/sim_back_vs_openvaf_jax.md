@@ -176,13 +176,13 @@ fn ensure_cache_slot(inst, res, ty) -> CacheSlot {
 | Implicit equations | ✅ | ⚠️ Partial | We handle pre-resolved implicit eqns |
 | Switch branches | ✅ | ⚠️ Partial | Not fully tested |
 | Temperature dependence | ✅ | ⚠️ | Need to verify param mapping |
+| Small-signal analysis | ✅ | ⚠️ Partial | Data extracted & generated, AC solver not implemented |
 
 ### Not Supported
 
 | Feature | sim_back | openvaf_jax | Reason |
 |---------|----------|-------------|--------|
-| Small-signal analysis | ✅ | ❌ | No small_signal_vals handling |
-| AC analysis | ✅ | ❌ | Not in scope |
+| AC analysis | ✅ | ❌ | Solver not implemented (small-signal data available) |
 | Noise analysis | ✅ | ❌ | Not in scope |
 | Runtime branch switching | ✅ | ❌ | Complex control flow |
 
@@ -195,15 +195,17 @@ fn ensure_cache_slot(inst, res, ty) -> CacheSlot {
 ```
 sim_back:                          openvaf_jax:
 Residual {                         dae_data['residuals'][i] = {
-  resist: Value,                     'resist': 'mir_XX',
-  react: Value,                      'react': 'mir_YY',
-  resist_small_signal: Value,        (not exposed)
-  react_small_signal: Value,         (not exposed)
-  resist_lim_rhs: Value,             'resist_lim_rhs': 'mir_ZZ',
-  react_lim_rhs: Value,              'react_lim_rhs': 'mir_WW',
+  resist: Value,                     'resist_var': 'mir_XX',
+  react: Value,                      'react_var': 'mir_YY',
+  resist_small_signal: Value,        'resist_small_signal_var': 'mir_SS1',
+  react_small_signal: Value,         'react_small_signal_var': 'mir_SS2',
+  resist_lim_rhs: Value,             'resist_lim_rhs_var': 'mir_ZZ',
+  react_lim_rhs: Value,              'react_lim_rhs_var': 'mir_WW',
   nature_kind: Flow|Potential|Switch 'node_name': 'A'
 }                                  }
 ```
+
+Additionally, `dae_data['small_signal_params']` lists parameters known to be zero in large-signal analysis.
 
 ### Jacobian
 

@@ -96,6 +96,12 @@ struct VaModule {
     /// lim_rhs = J(lim_x) * (lim_x - x) where lim_x is the limited voltage
     residual_resist_lim_rhs_indices: Vec<u32>,
     residual_react_lim_rhs_indices: Vec<u32>,
+    /// MIR Value indices for small-signal residual components (for AC analysis)
+    /// These values are known to be zero in large-signal (DC) analysis
+    residual_resist_small_signal_indices: Vec<u32>,
+    residual_react_small_signal_indices: Vec<u32>,
+    /// MIR Value indices for parameters known to be small-signal (always zero in DC)
+    small_signal_param_indices: Vec<u32>,
     /// MIR Value indices for Jacobian components (internal, used by interpreter)
     /// Maps: jacobian entry index -> MIR Value index
     /// For JAX code generation, use get_dae_system()['jacobian'][i]['resist_var'] instead
@@ -768,6 +774,9 @@ impl VaModule {
                 // Limiting RHS correction terms - subtracted from residuals during NR iteration
                 res_dict.set_item("resist_lim_rhs_var", format!("mir_{}", self.residual_resist_lim_rhs_indices[i])).unwrap();
                 res_dict.set_item("react_lim_rhs_var", format!("mir_{}", self.residual_react_lim_rhs_indices[i])).unwrap();
+                // Small-signal components - values known to be zero in large-signal (DC) analysis
+                res_dict.set_item("resist_small_signal_var", format!("mir_{}", self.residual_resist_small_signal_indices[i])).unwrap();
+                res_dict.set_item("react_small_signal_var", format!("mir_{}", self.residual_react_small_signal_indices[i])).unwrap();
                 residuals_list.append(res_dict).unwrap();
             }
             result.insert("residuals".to_string(), residuals_list.into());
@@ -855,6 +864,14 @@ impl VaModule {
             }
             result.insert("collapsible_pairs".to_string(), collapsible_list.into());
             result.insert("num_collapsible".to_string(), self.collapsible_pairs.len().into_py(py));
+
+            // Small-signal parameters - MIR value indices known to be zero in large-signal analysis
+            let small_signal_list = PyList::empty(py);
+            for &idx in &self.small_signal_param_indices {
+                small_signal_list.append(format!("mir_{}", idx)).unwrap();
+            }
+            result.insert("small_signal_params".to_string(), small_signal_list.into());
+            result.insert("num_small_signal_params".to_string(), self.small_signal_param_indices.len().into_py(py));
 
             result
         })
@@ -1182,13 +1199,25 @@ fn compile_va(path: &str, allow_analog_in_cond: bool, allow_builtin_primitives: 
         let mut residual_react_indices = Vec::new();
         let mut residual_resist_lim_rhs_indices = Vec::new();
         let mut residual_react_lim_rhs_indices = Vec::new();
+        // Small-signal indices - values known to be zero in large-signal analysis
+        let mut residual_resist_small_signal_indices = Vec::new();
+        let mut residual_react_small_signal_indices = Vec::new();
         for residual in compiled.dae_system.residual.iter() {
             residual_resist_indices.push(u32::from(residual.resist));
             residual_react_indices.push(u32::from(residual.react));
             // Limiting RHS corrections - subtracted from residuals when limiting is applied
             residual_resist_lim_rhs_indices.push(u32::from(residual.resist_lim_rhs));
             residual_react_lim_rhs_indices.push(u32::from(residual.react_lim_rhs));
+            // Small-signal parts - for AC analysis
+            residual_resist_small_signal_indices.push(u32::from(residual.resist_small_signal));
+            residual_react_small_signal_indices.push(u32::from(residual.react_small_signal));
         }
+
+        // Extract small-signal parameters - parameters known to be zero in large-signal analysis
+        let small_signal_param_indices: Vec<u32> = compiled.dae_system.small_signal_parameters
+            .iter()
+            .map(|&v| u32::from(v))
+            .collect();
 
         // Extract Jacobian structure
         let mut jacobian_resist_indices = Vec::new();
@@ -1572,6 +1601,9 @@ fn compile_va(path: &str, allow_analog_in_cond: bool, allow_builtin_primitives: 
             residual_react_indices,
             residual_resist_lim_rhs_indices,
             residual_react_lim_rhs_indices,
+            residual_resist_small_signal_indices,
+            residual_react_small_signal_indices,
+            small_signal_param_indices,
             jacobian_resist_indices,
             jacobian_react_indices,
             jacobian_rows,
