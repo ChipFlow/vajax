@@ -211,3 +211,108 @@ inlined (see above), the issue must be elsewhere. Possible causes to investigate
 2. **Inf values in cache**: Found 2 inf values at indices 662, 741 - may cause issues
 3. **Voltage mapping**: Check that terminal voltages are correctly extracted
 4. **Transient integration**: Verify ddt() operator and charge integration
+
+## OSDI vs openvaf_jax Jacobian Format Differences
+
+**CRITICAL**: OSDI and openvaf_jax return Jacobians in different formats. Direct array comparison will fail.
+
+### Format Comparison
+
+| Aspect | OSDI (osdi_py) | openvaf_jax |
+|--------|----------------|-------------|
+| **Ordering** | Column-major (Fortran-style) | Row-major (C-style) |
+| **Sparsity** | Sparse (only `has_resist=True` entries) | Dense (all N×N entries) |
+| **Array length** | Variable (sum of has_resist flags) | Fixed (N×N where N=num_nodes) |
+
+### Example: 4-terminal device (D, G, S, B)
+
+For a 4-terminal device with 2 internal nodes (6 total), OSDI returns ~20 entries while JAX returns 32 (for resistive Jacobian).
+
+**OSDI sparse indices** (has_resist=True only):
+```
+[0, 1, 2, 3, 4, 6, 7, 8, 9, 11, 16, 17, 18, 19]
+```
+
+**JAX dense indices** (same physical entries):
+```
+[0, 1, 2, 3, 4, 10, 11, 12, 13, 15, 20, 21, 26, 31]
+```
+
+### Mapping Between Formats
+
+Use `jax_spice.debug.jacobian` helpers for comparison:
+
+```python
+from jax_spice.debug.jacobian import (
+    osdi_to_dense_jacobian,
+    compare_jacobians,
+)
+
+# Convert OSDI sparse to dense for comparison
+osdi_dense = osdi_to_dense_jacobian(osdi_jac, n_nodes, jacobian_keys)
+
+# Or use compare helper directly
+passed, report = compare_jacobians(osdi_jac, jax_jac, n_nodes, jacobian_keys)
+```
+
+### Why This Matters
+
+When debugging openvaf_jax vs OSDI:
+1. **Don't compare arrays directly** - indices don't match
+2. **Non-zero counts should match** - both should have same sparsity pattern
+3. **Value differences ~1%** are real computational differences
+4. **Zeros at wrong positions** indicate PHI node or control flow issues
+
+---
+
+## MIR SSA Debugging
+
+When debugging openvaf_jax discrepancies with OSDI, use the MIR CFG analysis script to trace
+SSA value dependencies and PHI node resolution. This is especially useful for complex models
+with conditional control flow (NMOS/PMOS branches, etc.).
+
+### MIR Analysis Script
+
+```bash
+# Generate DOT and analyze CFG for a model
+uv run scripts/analyze_mir_cfg.py vendor/OpenVAF/integration_tests/EKV/ekv.va --func eval
+
+# Analyze existing DOT file
+uv run scripts/analyze_mir_cfg.py --dot /tmp/model_eval.dot
+
+# Find all PHI nodes (merge points in control flow)
+uv run scripts/analyze_mir_cfg.py model.va --func eval --find-phis
+
+# Trace paths to a specific block
+uv run scripts/analyze_mir_cfg.py model.va --func eval --target block4654
+
+# Trace dependencies of an SSA value through PHI nodes
+uv run scripts/analyze_mir_cfg.py model.va --func eval --trace-value v12345
+
+# Analyze a specific block with PHIs
+uv run scripts/analyze_mir_cfg.py model.va --func eval --analyze-block block4654
+
+# List all branch points (T/F conditional branches)
+uv run scripts/analyze_mir_cfg.py model.va --func eval --branches
+```
+
+### Prerequisites
+
+The script requires `openvaf-viz` to generate DOT files from Verilog-A:
+```bash
+cd vendor/OpenVAF && cargo build --release -p openvaf-viz
+```
+
+### Common Debugging Patterns
+
+1. **PHI node gets wrong value for one branch**: Use `--analyze-block` to see which
+   predecessor provides which value. Check if one branch uses `v3` (constant 0.0).
+
+2. **Value computed incorrectly**: Use `--trace-value` to find where it's defined
+   and what PHI sources feed into it.
+
+3. **Understanding control flow**: Use `--target` to see all paths to a block,
+   with branch labels (T/F) shown.
+
+4. **Finding NMOS/PMOS split**: Use `--branches` to list all conditional branches,
+   then trace paths to find where device type selection occurs.
