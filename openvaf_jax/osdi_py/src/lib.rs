@@ -4,10 +4,11 @@
 //! compiled to OSDI format by OpenVAF.
 
 use std::alloc::{alloc_zeroed, handle_alloc_error, Layout};
-use std::cell::Cell;
+use std::cell::{Cell, RefCell};
 use std::ffi::{c_void, CStr, CString};
 use std::mem::align_of;
 use std::os::raw::c_char;
+use std::panic::catch_unwind;
 use std::ptr;
 use std::slice;
 use std::sync::Arc;
@@ -61,6 +62,16 @@ pub const EVAL_RET_FLAG_FATAL: u32 = 2;
 pub const EVAL_RET_FLAG_FINISH: u32 = 4;
 pub const EVAL_RET_FLAG_STOP: u32 = 8;
 pub const INIT_ERR_OUT_OF_BOUNDS: u32 = 1;
+
+// Log level constants for osdi_log callback
+pub const LOG_LVL_MASK: u32 = 7;
+pub const LOG_LVL_DEBUG: u32 = 0;
+pub const LOG_LVL_DISPLAY: u32 = 1;
+pub const LOG_LVL_INFO: u32 = 2;
+pub const LOG_LVL_WARN: u32 = 3;
+pub const LOG_LVL_ERR: u32 = 4;
+pub const LOG_LVL_FATAL: u32 = 5;
+pub const LOG_FMT_ERR: u32 = 16;
 
 #[repr(C)]
 pub struct OsdiLimFunction {
@@ -320,6 +331,97 @@ fn osdi_param_type_str(flags: u32) -> &'static str {
 }
 
 // ============================================================================
+// OSDI Logging
+// ============================================================================
+
+/// A log entry captured from OSDI $display/$strobe/$write calls.
+#[derive(Clone, Debug)]
+pub struct OsdiLogEntry {
+    pub instance: String,
+    pub message: String,
+    pub level: u32,
+    pub level_name: String,
+}
+
+thread_local! {
+    /// Thread-local storage for captured log messages.
+    static OSDI_LOGS: RefCell<Vec<OsdiLogEntry>> = const { RefCell::new(Vec::new()) };
+
+    /// Whether logging is enabled (if false, logs are printed to stdout but not captured).
+    static OSDI_LOG_CAPTURE: Cell<bool> = const { Cell::new(true) };
+}
+
+/// The osdi_log callback that OSDI libraries call for $display/$strobe/$write.
+unsafe extern "C" fn osdi_log(handle: *mut c_void, msg: *const c_char, lvl: u32) {
+    let _ = catch_unwind(|| osdi_log_impl(handle, msg, lvl));
+}
+
+unsafe fn osdi_log_impl(handle: *mut c_void, msg: *const c_char, lvl: u32) {
+    let instance = if handle.is_null() {
+        "unknown".to_string()
+    } else {
+        let instance_ptr = handle as *const c_char;
+        CStr::from_ptr(instance_ptr)
+            .to_str()
+            .unwrap_or("invalid-utf8")
+            .to_string()
+    };
+
+    let message = CStr::from_ptr(msg)
+        .to_str()
+        .unwrap_or("invalid-utf8")
+        .to_string();
+
+    let level_name = if (lvl & LOG_FMT_ERR) != 0 {
+        "format_error".to_string()
+    } else {
+        match lvl & LOG_LVL_MASK {
+            LOG_LVL_DEBUG => "debug".to_string(),
+            LOG_LVL_DISPLAY => "display".to_string(),
+            LOG_LVL_INFO => "info".to_string(),
+            LOG_LVL_WARN => "warn".to_string(),
+            LOG_LVL_ERR => "error".to_string(),
+            LOG_LVL_FATAL => "fatal".to_string(),
+            _ => format!("unknown({})", lvl),
+        }
+    };
+
+    let entry = OsdiLogEntry {
+        instance: instance.clone(),
+        message: message.clone(),
+        level: lvl,
+        level_name: level_name.clone(),
+    };
+
+    // Always print to stdout for visibility
+    println!("[OSDI {}] {} - {}", level_name, instance, message);
+
+    // Capture if enabled
+    OSDI_LOG_CAPTURE.with(|capture| {
+        if capture.get() {
+            OSDI_LOGS.with(|logs| {
+                logs.borrow_mut().push(entry);
+            });
+        }
+    });
+}
+
+/// Get all captured OSDI log entries.
+fn get_osdi_logs() -> Vec<OsdiLogEntry> {
+    OSDI_LOGS.with(|logs| logs.borrow().clone())
+}
+
+/// Clear all captured OSDI log entries.
+fn clear_osdi_logs() {
+    OSDI_LOGS.with(|logs| logs.borrow_mut().clear());
+}
+
+/// Set whether log capture is enabled.
+fn set_osdi_log_capture(enabled: bool) {
+    OSDI_LOG_CAPTURE.with(|capture| capture.set(enabled));
+}
+
+// ============================================================================
 // Python classes
 // ============================================================================
 
@@ -339,6 +441,15 @@ impl OsdiLibrary {
         // Load the library
         let library =
             unsafe { Library::new(path) }.map_err(|e| PyRuntimeError::new_err(e.to_string()))?;
+
+        // Set up the osdi_log callback for $display/$strobe/$write
+        unsafe {
+            if let Ok(osdi_log_ptr) =
+                library.get::<*mut unsafe extern "C" fn(*mut c_void, *const c_char, u32)>(b"osdi_log\0")
+            {
+                osdi_log_ptr.write(osdi_log);
+            }
+        }
 
         // Get OSDI_NUM_DESCRIPTORS
         let num_descriptors: u32 = unsafe {
@@ -406,6 +517,12 @@ impl OsdiLibrary {
     #[getter]
     fn model_size(&self) -> u32 {
         self.descriptor.model_size
+    }
+
+    /// Get the number of state variables.
+    #[getter]
+    fn num_states(&self) -> u32 {
+        self.descriptor.num_states
     }
 
     /// Get a list of node names.
@@ -723,12 +840,26 @@ impl OsdiInstance {
     /// prev_solve: array of node voltages
     /// flags: simulation flags (CALC_* and ANALYSIS_* constants)
     /// abstime: absolute simulation time
-    fn eval(&self, prev_solve: Vec<f64>, flags: u32, abstime: f64) -> PyResult<u32> {
+    /// gmin: minimum conductance for convergence (default 1e-12, use 0.0 for comparison tests)
+    #[pyo3(signature = (prev_solve, flags, abstime, gmin=None))]
+    fn eval(&self, prev_solve: Vec<f64>, flags: u32, abstime: f64, gmin: Option<f64>) -> PyResult<u32> {
+        // Set up default simulation parameters (simparams)
+        // These are needed for models that call $simparam() like diode's $simparam("gmin")
+        let gmin_val = gmin.unwrap_or(1e-12);
+        let gmin_name = b"gmin\0".as_ptr() as *mut c_char;
+        let gdev_name = b"gdev\0".as_ptr() as *mut c_char;
+        let mut sim_names: [*mut c_char; 3] = [gmin_name, gdev_name, ptr::null_mut()];
+        let mut sim_vals: [f64; 2] = [gmin_val, 0.0]; // gmin=user-provided or 1e-12, gdev=0
+
+        // String params (none needed for most models)
+        let mut sim_names_str: [*mut c_char; 1] = [ptr::null_mut()];
+        let mut sim_vals_str: [*mut c_char; 1] = [ptr::null_mut()];
+
         let sim_params = OsdiSimParas {
-            names: &mut ptr::null_mut(),
-            vals: ptr::null_mut(),
-            names_str: &mut ptr::null_mut(),
-            vals_str: ptr::null_mut(),
+            names: sim_names.as_mut_ptr(),
+            vals: sim_vals.as_mut_ptr(),
+            names_str: sim_names_str.as_mut_ptr(),
+            vals_str: sim_vals_str.as_mut_ptr(),
         };
 
         let mut info = OsdiSimInfo {
@@ -813,6 +944,175 @@ impl OsdiInstance {
     fn num_reactive_jacobian_entries(&self) -> u32 {
         self.descriptor.num_reactive_jacobian_entries
     }
+
+    /// Get a real-valued parameter from the instance.
+    fn get_real_param(&self, param_id: u32) -> PyResult<f64> {
+        let ptr = (self.descriptor.access)(
+            self.data,
+            self.model_data,
+            param_id,
+            ACCESS_FLAG_READ | ACCESS_FLAG_INSTANCE,
+        );
+        if ptr.is_null() {
+            return Err(PyValueError::new_err(format!(
+                "Invalid parameter id: {}",
+                param_id
+            )));
+        }
+        Ok(unsafe { *(ptr as *const f64) })
+    }
+
+    /// Get an integer parameter from the instance.
+    fn get_int_param(&self, param_id: u32) -> PyResult<i32> {
+        let ptr = (self.descriptor.access)(
+            self.data,
+            self.model_data,
+            param_id,
+            ACCESS_FLAG_READ | ACCESS_FLAG_INSTANCE,
+        );
+        if ptr.is_null() {
+            return Err(PyValueError::new_err(format!(
+                "Invalid parameter id: {}",
+                param_id
+            )));
+        }
+        Ok(unsafe { *(ptr as *const i32) })
+    }
+
+    /// Get the number of state variables.
+    #[getter]
+    fn num_states(&self) -> u32 {
+        self.descriptor.num_states
+    }
+
+    /// Get a state value by index.
+    fn get_state(&self, state_idx: u32) -> PyResult<f64> {
+        if state_idx >= self.descriptor.num_states {
+            return Err(PyValueError::new_err(format!(
+                "State index {} out of range (num_states={})",
+                state_idx, self.descriptor.num_states
+            )));
+        }
+        let ptr = self.data as *mut u8;
+        let state_ptr = unsafe {
+            ptr.add(self.descriptor.state_idx_off as usize)
+                .add((state_idx as usize) * std::mem::size_of::<f64>()) as *const f64
+        };
+        Ok(unsafe { *state_ptr })
+    }
+
+    /// Dump all state values.
+    fn get_all_states(&self) -> Vec<f64> {
+        let mut states = Vec::with_capacity(self.descriptor.num_states as usize);
+        let ptr = self.data as *mut u8;
+        for i in 0..self.descriptor.num_states {
+            let state_ptr = unsafe {
+                ptr.add(self.descriptor.state_idx_off as usize)
+                    .add((i as usize) * std::mem::size_of::<f64>()) as *const f64
+            };
+            states.push(unsafe { *state_ptr });
+        }
+        states
+    }
+
+    /// Dump all parameter values (for debugging).
+    /// Returns a list of dicts with param info and current values.
+    /// Tries both instance and model level access.
+    fn dump_all_params<'py>(&self, py: Python<'py>) -> Bound<'py, PyList> {
+        let params = PyList::empty(py);
+        for (i, param) in self.descriptor.params().iter().enumerate() {
+            let d = PyDict::new(py);
+            let name = unsafe { osdi_str(*param.name) };
+            let param_type = osdi_param_type_str(param.flags);
+            let is_instance = (param.flags & PARA_KIND_INST) != 0;
+
+            d.set_item("id", i).unwrap();
+            d.set_item("name", name).unwrap();
+            d.set_item("type", param_type).unwrap();
+            d.set_item("is_instance", is_instance).unwrap();
+
+            // Try instance-level access first, then model-level
+            let mut ptr = (self.descriptor.access)(
+                self.data,
+                self.model_data,
+                i as u32,
+                ACCESS_FLAG_READ | ACCESS_FLAG_INSTANCE,
+            );
+
+            // If instance access returned null, try model-level
+            if ptr.is_null() {
+                ptr = (self.descriptor.access)(
+                    ptr::null_mut(),
+                    self.model_data,
+                    i as u32,
+                    ACCESS_FLAG_READ,
+                );
+            }
+
+            if !ptr.is_null() {
+                match param.flags & PARA_TY_MASK {
+                    PARA_TY_REAL => {
+                        let val = unsafe { *(ptr as *const f64) };
+                        d.set_item("value", val).unwrap();
+                    }
+                    PARA_TY_INT => {
+                        let val = unsafe { *(ptr as *const i32) };
+                        d.set_item("value", val).unwrap();
+                    }
+                    PARA_TY_STR => {
+                        let val_ptr = unsafe { *(ptr as *const *const c_char) };
+                        if !val_ptr.is_null() {
+                            let val = unsafe { CStr::from_ptr(val_ptr).to_string_lossy() };
+                            d.set_item("value", val.to_string()).unwrap();
+                        } else {
+                            d.set_item("value", py.None()).unwrap();
+                        }
+                    }
+                    _ => {
+                        d.set_item("value", py.None()).unwrap();
+                    }
+                }
+            } else {
+                d.set_item("value", py.None()).unwrap();
+            }
+
+            params.append(d).unwrap();
+        }
+        params
+    }
+}
+
+// ============================================================================
+// Module-level functions for OSDI logging
+// ============================================================================
+
+/// Get all captured OSDI log entries as a list of dicts.
+#[pyfunction]
+fn get_logs(py: Python<'_>) -> Bound<'_, PyList> {
+    let logs = get_osdi_logs();
+    let result = PyList::empty(py);
+    for entry in logs {
+        let d = PyDict::new(py);
+        d.set_item("instance", &entry.instance).unwrap();
+        d.set_item("message", &entry.message).unwrap();
+        d.set_item("level", entry.level).unwrap();
+        d.set_item("level_name", &entry.level_name).unwrap();
+        result.append(d).unwrap();
+    }
+    result
+}
+
+/// Clear all captured OSDI log entries.
+#[pyfunction]
+fn clear_logs() {
+    clear_osdi_logs();
+}
+
+/// Set whether log capture is enabled.
+/// If disabled, logs are still printed to stdout but not captured.
+#[pyfunction]
+fn set_log_capture(enabled: bool) {
+    set_osdi_log_capture(enabled);
 }
 
 // ============================================================================
@@ -825,6 +1125,11 @@ fn osdi_py(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<OsdiLibrary>()?;
     m.add_class::<OsdiModel>()?;
     m.add_class::<OsdiInstance>()?;
+
+    // Export log functions
+    m.add_function(wrap_pyfunction!(get_logs, m)?)?;
+    m.add_function(wrap_pyfunction!(clear_logs, m)?)?;
+    m.add_function(wrap_pyfunction!(set_log_capture, m)?)?;
 
     // Export constants
     m.add("PARA_TY_REAL", PARA_TY_REAL)?;
@@ -845,6 +1150,14 @@ fn osdi_py(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add("ANALYSIS_AC", ANALYSIS_AC)?;
     m.add("ANALYSIS_TRAN", ANALYSIS_TRAN)?;
     m.add("ANALYSIS_STATIC", ANALYSIS_STATIC)?;
+
+    // Log level constants
+    m.add("LOG_LVL_DEBUG", LOG_LVL_DEBUG)?;
+    m.add("LOG_LVL_DISPLAY", LOG_LVL_DISPLAY)?;
+    m.add("LOG_LVL_INFO", LOG_LVL_INFO)?;
+    m.add("LOG_LVL_WARN", LOG_LVL_WARN)?;
+    m.add("LOG_LVL_ERR", LOG_LVL_ERR)?;
+    m.add("LOG_LVL_FATAL", LOG_LVL_FATAL)?;
 
     Ok(())
 }

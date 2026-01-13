@@ -1182,6 +1182,9 @@ fn compile_va(path: &str, allow_analog_in_cond: bool, allow_builtin_primitives: 
                 ParamKind::ParamSysFun(param) => {
                     ("sysfun".to_string(), format!("{:?}", param))
                 }
+                ParamKind::ImplicitUnknown(eq) => {
+                    ("implicit_unknown".to_string(), format!("{:?}", eq))
+                }
                 _ => ("unknown".to_string(), "unknown".to_string()),
             };
             param_kinds.push(kind_str);
@@ -1295,6 +1298,9 @@ fn compile_va(path: &str, allow_analog_in_cond: bool, allow_builtin_primitives: 
                 }
                 ParamKind::ParamSysFun(param) => {
                     ("sysfun".to_string(), format!("{:?}", param))
+                }
+                ParamKind::ImplicitUnknown(eq) => {
+                    ("implicit_unknown".to_string(), format!("{:?}", eq))
                 }
                 _ => ("unknown".to_string(), "unknown".to_string()),
             };

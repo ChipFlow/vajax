@@ -104,8 +104,9 @@ reportInvalidTypeForm = "warning"
 reportOperatorIssue = "warning"
 reportOptionalOperand = "warning"
 
-[tool.pytest.ini_options]
+[tool.pytest]
 testpaths = ["tests"]
 filterwarnings = [
     "ignore::DeprecationWarning",
 ]
+
