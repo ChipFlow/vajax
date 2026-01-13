@@ -15,16 +15,15 @@ Example usage:
     translator = OpenVAFToJAX(module)
 
     # Generate init function (computes cache from params)
-    init_fn, init_meta = translator.translate_init_array_split(
-        shared_indices=[...],
-        varying_indices=[...],
-        init_to_eval=[...]
+    init_fn, init_meta = translator.translate_init(
+        params={'VTO': 0.5, 'KP': 150e-6},
+        temperature=300.0,
     )
 
     # Generate eval function (computes residuals/Jacobian)
-    eval_fn, eval_meta = translator.translate_eval_array_with_cache_split(
-        shared_indices=[...],
-        varying_indices=[...]
+    eval_fn, eval_meta = translator.translate_eval(
+        params={'VTO': 0.5, 'KP': 150e-6},
+        temperature=300.0,
     )
 """
 
@@ -69,9 +68,12 @@ class OpenVAFToJAX:
         self.dae_data = module.get_dae_system()
         self.init_mir_data = module.get_init_mir_instructions()
 
+        # String constants (needed for $display support, must be parsed before MIR)
+        self.str_constants = dict(module.get_str_constants())
+
         # Parse into structured MIR
-        self.eval_mir = parse_mir_function('eval', self.mir_data)
-        self.init_mir = parse_mir_function('init', self.init_mir_data)
+        self.eval_mir = parse_mir_function('eval', self.mir_data, self.str_constants)
+        self.init_mir = parse_mir_function('init', self.init_mir_data, self.str_constants)
 
         # Extract metadata
         self.params = list(self.mir_data['params'])
@@ -81,9 +83,6 @@ class OpenVAFToJAX:
 
         self.init_params = list(self.init_mir_data['params'])
         self.cache_mapping = list(self.init_mir_data['cache_mapping'])
-
-        # String constants
-        self.str_constants = dict(module.get_str_constants())
 
         # Node collapse support
         self.collapse_decision_outputs = list(module.collapse_decision_outputs)
@@ -161,12 +160,587 @@ class OpenVAFToJAX:
             'num_internal': self.dae_data['num_internal'],
         }
 
+    def get_params(self, include_internal: bool = False) -> List[Dict]:
+        """Get parameter metadata from the Verilog-A model.
+
+        Returns a list of parameter info dicts, preserving the order from the .va file.
+        Each dict contains:
+            - 'name': Parameter name
+            - 'type': 'real', 'int', or 'str'
+            - 'default': Default value (None if not specified)
+            - 'units': Units string from `_P(units="...")`
+            - 'description': Description from `_P(info="...")` or comments
+            - 'aliases': List of alternative names
+            - 'is_instance': True if instance parameter
+            - 'is_model_param': True if model parameter
+
+        Args:
+            include_internal: If True, include internal parameters (hidden_state, etc.)
+                             Default False returns only user-facing model parameters.
+
+        Returns:
+            List of parameter info dicts.
+
+        Example:
+            >>> translator = OpenVAFToJAX.from_file("diode.va")
+            >>> params = translator.get_params()
+            >>> for p in params[:3]:
+            ...     print(f"{p['name']}: {p['description']} (default={p['default']})")
+            Is: Saturation current (default=1e-14)
+            N: Emission coefficient (default=1.0)
+            Rs: Ohmic resistance (default=0.0)
+        """
+        desc = self.module.get_osdi_descriptor()
+        defaults = dict(self.module.get_param_defaults())
+
+        params = []
+        for p in desc['params']:
+            name = p['name']
+
+            # Skip internal params unless requested
+            if not include_internal:
+                # Skip system params and hidden state
+                if name.startswith('$') or name == 'mfactor':
+                    continue
+
+            # Type is encoded in flags: 0=real, 1=int, 2=str
+            flags = p.get('flags', 0)
+            type_code = flags & 3
+            type_str = {0: 'real', 1: 'int', 2: 'str'}.get(type_code, 'real')
+
+            # Get default - lookup case-insensitive
+            default = defaults.get(name)
+            if default is None:
+                default = defaults.get(name.lower())
+
+            params.append({
+                'name': name,
+                'type': type_str,
+                'default': default,
+                'units': p.get('units', ''),
+                'description': p.get('description', ''),
+                'aliases': p.get('aliases', []),
+                'is_instance': p.get('is_instance', False),
+                'is_model_param': p.get('is_model_param', True),
+            })
+
+        return params
+
+    def print_params(self, include_internal: bool = False) -> None:
+        """Print parameter table to stdout.
+
+        Convenience method to display all parameters with their metadata
+        in a formatted table.
+
+        Args:
+            include_internal: If True, include internal parameters.
+
+        Example:
+            >>> translator = OpenVAFToJAX.from_file("diode.va")
+            >>> translator.print_params()
+            === Parameters for diode ===
+            Name                 Type   Default      Units    Description
+            --------------------------------------------------------------------------------
+            Is                   real   1e-14        A        Saturation current
+            N                    real   1            -        Emission coefficient
+            ...
+        """
+        params = self.get_params(include_internal=include_internal)
+        model_name = self.module.name if hasattr(self.module, 'name') else 'model'
+
+        print(f"\n=== Parameters for {model_name} ({len(params)} params) ===")
+        print(f"{'Name':<20} {'Type':<6} {'Default':<12} {'Units':<8} Description")
+        print("-" * 80)
+
+        for p in params:
+            default_str = "None"
+            if p['default'] is not None:
+                if isinstance(p['default'], float):
+                    if abs(p['default']) < 1e-3 or abs(p['default']) >= 1e6:
+                        default_str = f"{p['default']:.4g}"
+                    else:
+                        default_str = f"{p['default']}"
+                else:
+                    default_str = str(p['default'])
+
+            units = p['units'] if p['units'] else '-'
+            desc = p['description'][:40] if p['description'] else ''
+
+            print(f"{p['name']:<20} {p['type']:<6} {default_str:<12} {units:<8} {desc}")
+
+        # Show aliases if any
+        aliases_found = [(p['name'], p['aliases']) for p in params if p['aliases']]
+        if aliases_found:
+            print(f"\nAliases:")
+            for name, aliases in aliases_found:
+                print(f"  {name}: {', '.join(aliases)}")
+
+    def _get_param_info(self) -> Dict[str, Dict]:
+        """Get comprehensive parameter info from OSDI descriptor and defaults.
+
+        Internal method used by translate_init/translate_eval.
+        For user code, use get_params() instead.
+
+        Returns:
+            Dict mapping param name -> param info dict
+        """
+        desc = self.module.get_osdi_descriptor()
+        defaults = dict(self.module.get_param_defaults())
+
+        param_info = {}
+        for p in desc['params']:
+            name = p['name']
+            # Type is encoded in flags: 0=real, 1=int, 2=str
+            flags = p.get('flags', 0)
+            type_code = flags & 3
+            type_str = {0: 'real', 1: 'int', 2: 'str'}.get(type_code, 'real')
+
+            # Get default - lookup case-insensitive
+            default = defaults.get(name)
+            if default is None:
+                default = defaults.get(name.lower())
+
+            param_info[name] = {
+                'name': name,
+                'type': type_str,
+                'default': default,
+                'units': p.get('units', ''),
+                'description': p.get('description', ''),
+                'is_instance': p.get('is_instance', False),
+                'is_model_param': p.get('is_model_param', True),
+            }
+
+        return param_info
+
+    def _build_param_inputs(
+        self,
+        param_names: List[str],
+        param_kinds: List[str],
+        params: Dict[str, float],
+        temperature: float,
+        mfactor: float,
+        param_info: Dict[str, Dict],
+        context: str = "eval",
+    ) -> Tuple[List[float], List[str]]:
+        """Build validated input array for init or eval function.
+
+        Args:
+            param_names: List of param names (from module.init_param_names or param_names)
+            param_kinds: List of param kinds
+            params: User-provided params dict (case-insensitive)
+            temperature: Device temperature in Kelvin
+            mfactor: Device multiplier
+            param_info: Dict from _get_param_info()
+            context: 'init' or 'eval' for error messages
+
+        Returns:
+            Tuple of (inputs_list, warnings_list)
+        """
+        # Build case-insensitive param lookup
+        params_lower = {k.lower(): v for k, v in params.items()}
+
+        # Sentinel value for TEMP/TNOM meaning "use $temperature"
+        SENTINEL = 1e21
+
+        warnings = []
+        inputs = []
+
+        for name, kind in zip(param_names, param_kinds):
+            name_lower = name.lower()
+            value = None
+
+            # Handle by kind first
+            if kind == 'voltage':
+                # Voltage params are set at runtime, use 0.0 placeholder
+                value = 0.0
+            elif kind == 'temperature' or name == '$temperature':
+                # System temperature
+                value = temperature
+            elif kind == 'sysfun' and name == 'mfactor':
+                value = mfactor
+            elif kind in ('hidden_state', 'current'):
+                # Placeholders - filled by init or eval
+                value = 0.0
+            elif kind == 'implicit_unknown':
+                # Internal node voltage for implicit equations
+                # These are set at runtime from the voltage array, same as 'voltage'
+                value = 0.0
+            elif kind == 'param_given':
+                # Check if the corresponding param was explicitly set
+                # param_given names are like "VTO_given" -> check for "VTO"
+                base_name = name.replace('_given', '').lower()
+                value = 1.0 if base_name in params_lower else 0.0
+            elif kind == 'port_connected':
+                # Assume all ports are connected (LRM 9.19)
+                # TODO: Add support for optional ports by tracking connections
+                warnings.append(f"{context}: $port_connected({name}) assumed true - optional ports not supported")
+                value = 1.0
+            elif kind == 'abstime':
+                # Absolute simulation time (LRM 9.7)
+                # For DC analysis, abstime=0.0. For transient, caller must update this.
+                warnings.append(f"{context}: $abstime used - defaults to 0.0 (DC). For transient, update input array.")
+                value = 0.0
+            else:
+                # Regular param - check user params first
+                if name in params:
+                    value = float(params[name])
+                elif name_lower in params_lower:
+                    value = float(params_lower[name_lower])
+                else:
+                    # Check for default from OSDI info
+                    info = param_info.get(name) or param_info.get(name.upper())
+                    if info and info['default'] is not None:
+                        value = float(info['default'])
+                    else:
+                        # Special handling for TEMP/TNOM
+                        if name_lower in ('temp', 'tnom'):
+                            value = SENTINEL
+                        elif kind == 'unknown':
+                            warnings.append(f"{context}: '{name}' (kind={kind}) has no value, using 0.0")
+                            value = 0.0
+                        elif kind == 'sysfun':
+                            # Other system functions default to appropriate values
+                            if 'scale' in name_lower:
+                                value = 1.0
+                            elif 'shrink' in name_lower:
+                                value = 0.0
+                            else:
+                                warnings.append(f"{context}: sysfun '{name}' has no handler, using 0.0")
+                                value = 0.0
+                        else:
+                            warnings.append(f"{context}: param '{name}' (kind={kind}) has no value or default, using 0.0")
+                            value = 0.0
+
+            assert value is not None, f"Failed to compute value for {name}"
+            inputs.append(value)
+
+        return inputs, warnings
+
+    def translate_init(
+        self,
+        params: Dict[str, float] = None,
+        temperature: float = 300.0,
+        mfactor: float = 1.0,
+        debug: bool = False,
+    ) -> Tuple[Callable, Dict]:
+        """Generate init function with validated parameters.
+
+        This is the main API for generating init functions. It validates parameters,
+        handles special cases (sentinel values, $temperature, mfactor), and returns
+        a function plus comprehensive metadata.
+
+        Args:
+            params: Dict of parameter name -> value. Case-insensitive lookup.
+            temperature: Device temperature in Kelvin (default 300K).
+            mfactor: Device multiplier (default 1.0).
+            debug: If True, print parameter table for debugging.
+
+        Returns:
+            Tuple of (init_fn, metadata)
+
+            init_fn signature:
+                init_fn(inputs: Array[N_init]) -> (cache: Array[N_cache], collapse: Array[N_collapse])
+
+            metadata dict:
+                - 'param_names': list of init param names
+                - 'param_kinds': list of init param kinds
+                - 'init_inputs': validated input array (ready to use)
+                - 'param_info': list of {name, type, default, value, units, desc}
+                - 'cache_size': number of cached values
+                - 'warnings': validation warnings
+        """
+        from .codegen.function_builder import InitFunctionBuilder
+
+        assert self.init_mir is not None, "init_mir released, call before release_mir_data()"
+
+        if params is None:
+            params = {}
+
+        # Get OSDI param info
+        param_info = self._get_param_info()
+
+        # Get init param names/kinds
+        init_param_names = list(self.module.init_param_names)
+        init_param_kinds = list(self.module.init_param_kinds)
+
+        # Build validated inputs
+        init_inputs, warnings = self._build_param_inputs(
+            init_param_names, init_param_kinds,
+            params, temperature, mfactor, param_info,
+            context="init"
+        )
+
+        # Build detailed param info list for metadata
+        detailed_param_info = []
+        for i, (name, kind) in enumerate(zip(init_param_names, init_param_kinds)):
+            info = param_info.get(name) or param_info.get(name.upper()) or {}
+            detailed_param_info.append({
+                'name': name,
+                'kind': kind,
+                'type': info.get('type', 'real'),
+                'default': info.get('default'),
+                'value': init_inputs[i],
+                'units': info.get('units', ''),
+                'description': info.get('description', ''),
+            })
+
+        # Debug output
+        if debug:
+            print(f"\n=== Init Parameters ({len(init_param_names)}) ===")
+            print(f"{'Name':<20} {'Kind':<15} {'Type':<6} {'Default':<12} {'Value':<12} {'Units':<8} Description")
+            print("-" * 100)
+            for p in detailed_param_info:
+                default_str = f"{p['default']:.4g}" if p['default'] is not None else "None"
+                value_str = f"{p['value']:.4g}" if isinstance(p['value'], float) else str(p['value'])
+                print(f"{p['name']:<20} {p['kind']:<15} {p['type']:<6} {default_str:<12} {value_str:<12} {p['units']:<8} {p['description'][:30]}")
+            if warnings:
+                print(f"\nWarnings: {len(warnings)}")
+                for w in warnings:
+                    print(f"  - {w}")
+
+        # Generate code
+        t0 = time.perf_counter()
+        logger.info("    translate_init: generating code...")
+
+        n_init_params = len(init_param_names)
+        all_indices = list(range(n_init_params))
+
+        builder = InitFunctionBuilder(
+            self.init_mir,
+            self.cache_mapping,
+            self.collapse_decision_outputs
+        )
+        fn_name, code_lines = builder.build_simple(all_indices)
+
+        # Collect codegen warnings (unknown $simparam, $discontinuity, etc.)
+        warnings.extend(builder.codegen_warnings)
+
+        t1 = time.perf_counter()
+        logger.info(f"    translate_init: code generated ({len(code_lines)} lines) in {t1-t0:.1f}s")
+
+        code = '\n'.join(code_lines)
+
+        # Compile with caching
+        logger.info("    translate_init: exec()...")
+        init_fn = exec_with_cache(code, fn_name)
+        t2 = time.perf_counter()
+        logger.info(f"    translate_init: exec() done in {t2-t1:.1f}s")
+
+        metadata = {
+            'param_names': init_param_names,
+            'param_kinds': init_param_kinds,
+            'init_inputs': init_inputs,
+            'param_info': detailed_param_info,
+            'cache_size': len(self.cache_mapping),
+            'cache_mapping': self.cache_mapping,
+            'collapsible_pairs': self.collapsible_pairs,
+            'collapse_decision_outputs': self.collapse_decision_outputs,
+            'temperature': temperature,
+            'mfactor': mfactor,
+            'warnings': warnings,
+        }
+
+        return init_fn, metadata
+
+    def translate_eval(
+        self,
+        params: Dict[str, float] = None,
+        temperature: float = 300.0,
+        mfactor: float = 1.0,
+        debug: bool = False,
+        cache_split: Optional[Tuple[List[int], List[int]]] = None,
+    ) -> Tuple[Callable, Dict]:
+        """Generate eval function with validated parameters.
+
+        This is the main API for generating eval functions. It validates parameters,
+        computes voltage/shared indices, and returns a function plus comprehensive metadata.
+
+        Args:
+            params: Dict of parameter name -> value. Case-insensitive lookup.
+            temperature: Device temperature in Kelvin (default 300K).
+            mfactor: Device multiplier (default 1.0).
+            debug: If True, print parameter table for debugging.
+            cache_split: Optional tuple of (shared_cache_indices, varying_cache_indices)
+                         for advanced cache splitting optimization.
+
+        Returns:
+            Tuple of (eval_fn, metadata)
+
+            eval_fn signature:
+                eval_fn(shared_params, varying_params, cache, simparams)
+                    -> (res_resist, res_react, jac_resist, jac_react,
+                        lim_rhs_resist, lim_rhs_react, ss_resist, ss_react)
+
+            simparams array layout:
+                - simparams[0] = analysis_type (0=DC, 1=AC, 2=transient, 3=noise)
+                - simparams[1] = gmin (minimum conductance for convergence)
+
+            metadata dict:
+                - 'param_names': list of eval param names
+                - 'param_kinds': list of eval param kinds
+                - 'shared_inputs': validated shared param array (ready to use)
+                - 'shared_indices': indices of shared params (non-voltage)
+                - 'voltage_indices': indices of voltage params
+                - 'param_info': list of {name, type, default, value, units, desc}
+                - 'node_names': list of node names for voltage mapping
+                - 'jacobian_keys': list of (row, col) tuples
+                - 'simparams_layout': dict describing simparams array layout
+                - 'warnings': validation warnings
+        """
+        from .codegen.function_builder import EvalFunctionBuilder
+
+        assert self.eval_mir is not None, "eval_mir released, call before release_mir_data()"
+        assert self.dae_data is not None, "dae_data released, call before release_mir_data()"
+
+        if params is None:
+            params = {}
+
+        # Get OSDI param info
+        param_info = self._get_param_info()
+
+        # Get eval param names/kinds
+        eval_param_names = list(self.module.param_names)
+        eval_param_kinds = list(self.module.param_kinds)
+
+        # Compute voltage and shared indices
+        # Both 'voltage' and 'implicit_unknown' are node voltages provided at runtime
+        voltage_kinds = ('voltage', 'implicit_unknown')
+        voltage_indices = [i for i, k in enumerate(eval_param_kinds) if k in voltage_kinds]
+        shared_indices = [i for i, k in enumerate(eval_param_kinds) if k not in voltage_kinds]
+
+        # Build validated inputs for shared params only
+        # (voltage params are provided at runtime)
+        shared_param_names = [eval_param_names[i] for i in shared_indices]
+        shared_param_kinds = [eval_param_kinds[i] for i in shared_indices]
+
+        shared_inputs, warnings = self._build_param_inputs(
+            shared_param_names, shared_param_kinds,
+            params, temperature, mfactor, param_info,
+            context="eval"
+        )
+
+        # Build detailed param info list
+        detailed_param_info = []
+        for i, (name, kind) in enumerate(zip(eval_param_names, eval_param_kinds)):
+            info = param_info.get(name) or param_info.get(name.upper()) or {}
+            # Value depends on whether this is shared or voltage
+            if kind in voltage_kinds:
+                value = None  # Set at runtime from voltage array
+            else:
+                shared_idx = shared_indices.index(i)
+                value = shared_inputs[shared_idx]
+            detailed_param_info.append({
+                'name': name,
+                'kind': kind,
+                'type': info.get('type', 'real'),
+                'default': info.get('default'),
+                'value': value,
+                'units': info.get('units', ''),
+                'description': info.get('description', ''),
+            })
+
+        # Debug output
+        if debug:
+            print(f"\n=== Eval Parameters ({len(eval_param_names)}) ===")
+            print(f"  Shared: {len(shared_indices)}, Voltage: {len(voltage_indices)}")
+            print(f"\n{'Name':<25} {'Kind':<15} {'Type':<6} {'Default':<12} {'Value':<12}")
+            print("-" * 80)
+            for p in detailed_param_info:
+                default_str = f"{p['default']:.4g}" if p['default'] is not None else "None"
+                if p['value'] is None:
+                    value_str = "(runtime)"
+                elif isinstance(p['value'], float):
+                    value_str = f"{p['value']:.4g}"
+                else:
+                    value_str = str(p['value'])
+                print(f"{p['name']:<25} {p['kind']:<15} {p['type']:<6} {default_str:<12} {value_str:<12}")
+            if warnings:
+                print(f"\nWarnings: {len(warnings)}")
+                for w in warnings:
+                    print(f"  - {w}")
+
+        # Parse cache_split
+        shared_cache_indices = None
+        varying_cache_indices = None
+        if cache_split is not None:
+            shared_cache_indices, varying_cache_indices = cache_split
+
+        # Generate code
+        t0 = time.perf_counter()
+        use_cache_split = shared_cache_indices is not None
+        logger.info(f"    translate_eval: generating code (cache_split={use_cache_split})...")
+
+        builder = EvalFunctionBuilder(
+            self.eval_mir,
+            self.dae_data,
+            self.cache_mapping,
+            self.param_idx_to_val
+        )
+        fn_name, code_lines = builder.build_with_cache_split(
+            shared_indices, voltage_indices,
+            shared_cache_indices, varying_cache_indices
+        )
+
+        # Collect codegen warnings (unknown $simparam, $discontinuity, etc.)
+        warnings.extend(builder.codegen_warnings)
+
+        t1 = time.perf_counter()
+        logger.info(f"    translate_eval: code generated ({len(code_lines)} lines) in {t1-t0:.1f}s")
+
+        code = '\n'.join(code_lines)
+
+        # Compile with caching
+        logger.info("    translate_eval: exec()...")
+        eval_fn = exec_with_cache(code, fn_name)
+        t2 = time.perf_counter()
+        logger.info(f"    translate_eval: exec() done in {t2-t1:.1f}s")
+
+        # Build metadata
+        node_names = [res['node_name'] for res in self.dae_data['residuals']]
+        node_indices = [res['node_idx'] for res in self.dae_data['residuals']]
+        jacobian_keys = [
+            (entry['row_node_name'], entry['col_node_name'])
+            for entry in self.dae_data['jacobian']
+        ]
+        jacobian_indices = [
+            (entry['row_node_idx'], entry['col_node_idx'])
+            for entry in self.dae_data['jacobian']
+        ]
+
+        # simparams layout documentation
+        simparams_layout = {
+            0: {'name': 'analysis_type', 'description': '0=DC, 1=AC, 2=transient, 3=noise'},
+            1: {'name': 'gmin', 'description': 'minimum conductance for convergence'},
+        }
+
+        metadata = {
+            'param_names': eval_param_names,
+            'param_kinds': eval_param_kinds,
+            'shared_inputs': shared_inputs,
+            'shared_indices': shared_indices,
+            'voltage_indices': voltage_indices,
+            'param_info': detailed_param_info,
+            'node_names': node_names,
+            'node_indices': node_indices,
+            'jacobian_keys': jacobian_keys,
+            'jacobian_indices': jacobian_indices,
+            'terminals': self.dae_data['terminals'],
+            'internal_nodes': self.dae_data['internal_nodes'],
+            'num_terminals': self.dae_data['num_terminals'],
+            'num_internal': self.dae_data['num_internal'],
+            'temperature': temperature,
+            'mfactor': mfactor,
+            'use_cache_split': use_cache_split,
+            'simparams_layout': simparams_layout,
+            'warnings': warnings,
+        }
+
+        return eval_fn, metadata
+
     def translate(self) -> Callable:
         """Generate a JAX function from MIR (legacy interface).
 
-        This method provides backward compatibility with the old interface.
-        For new code, prefer translate_init_array_split() and
-        translate_eval_array_with_cache_split() for better GPU performance.
+        DEPRECATED: Use translate_init() and translate_eval() instead.
 
         Returns a function with signature:
             f(inputs: List[float]) -> (residuals: Dict, jacobian: Dict)
@@ -199,9 +773,7 @@ class OpenVAFToJAX:
     def translate_array(self) -> Tuple[Callable, Dict]:
         """Generate a JAX function that returns arrays (vmap-compatible).
 
-        This method provides backward compatibility with CircuitEngine.
-        For new code, prefer translate_init_array_split() and
-        translate_eval_array_with_cache_split() for better GPU performance.
+        DEPRECATED: Use translate_init() and translate_eval() instead.
 
         Returns a function with signature:
             f(inputs: Array[N]) -> (residuals: Array[num_nodes], jacobian: Array[num_jac_entries])
@@ -296,7 +868,9 @@ class OpenVAFToJAX:
         return combined_fn, metadata
 
     def translate_init_array(self) -> Tuple[Callable, Dict]:
-        """Generate a vmappable init function.
+        """Generate a vmappable init function (internal API for engine).
+
+        For user code, prefer translate_init() which handles param validation.
 
         Returns a function with signature:
             init_fn(inputs: Array[N_init]) -> (cache: Array[N_cache], collapse_decisions: Array[N_collapse])
@@ -363,11 +937,13 @@ class OpenVAFToJAX:
         varying_indices: List[int],
         init_to_eval: List[int]
     ) -> Tuple[Callable, Dict]:
-        """Generate a vmappable init function that takes split shared/device params.
+        """Generate a vmappable init function with split shared/device params (internal API).
 
-        This is an optimized version that reduces memory by separating constant
-        parameters (shared across all devices) from varying parameters (different
-        per device).
+        For user code, prefer translate_init() which handles param validation.
+
+        This is an optimized version for batched device evaluation that reduces
+        memory by separating constant parameters (shared across all devices) from
+        varying parameters (different per device).
 
         Args:
             shared_indices: Eval param indices that are constant across all devices
@@ -441,7 +1017,9 @@ class OpenVAFToJAX:
         shared_cache_indices: Optional[List[int]] = None,
         varying_cache_indices: Optional[List[int]] = None
     ) -> Tuple[Callable, Dict]:
-        """Generate a vmappable eval function that takes split shared/device params and cache.
+        """Generate a vmappable eval function with split params and cache (internal API).
+
+        For user code, prefer translate_eval() which handles param validation.
 
         Args:
             shared_indices: Original param indices that are constant across all devices
@@ -535,7 +1113,6 @@ class OpenVAFToJAX:
         }
 
         return eval_fn, metadata
-
 
 __all__ = [
     'OpenVAFToJAX',

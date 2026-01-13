@@ -358,6 +358,10 @@ def create_jax_evaluator(va_path: Path, params: dict, temperature: float = 300.0
     print(f"JAX non_voltage_indices = {non_voltage_indices}")
 
     shared_arr = jnp.array(shared_inputs)
+    # simparams: [analysis_type, gmin]
+    # analysis_type: 0=DC, 1=AC, 2=transient, 3=noise
+    # gmin: minimum conductance (0.0 for comparison with OSDI which also uses gmin=0)
+    simparams_arr = jnp.array([0.0, 0.0])  # DC analysis, gmin=0
 
     def evaluate(voltages):
         """Evaluate device at given voltages (terminals only).
@@ -412,8 +416,8 @@ def create_jax_evaluator(va_path: Path, params: dict, temperature: float = 300.0
 
         varying_arr = jnp.array(varying_inputs)
 
-        # Run eval with cache
-        result = eval_fn(shared_arr, varying_arr, cache)
+        # Run eval with cache and simparams
+        result = eval_fn(shared_arr, varying_arr, cache, simparams_arr)
         res_resist, res_react, jac_resist, jac_react = result[:4]
 
         print(f"Residuals for {n_nodes} nodes")
@@ -510,7 +514,7 @@ class TestResistorComparison:
         """Compare at a single voltage point."""
         params = {"r": 1000.0, "mfactor": 1.0}
 
-        osdi_eval, _, _, _ = create_osdi_evaluator(osdi_path, params)
+        osdi_eval, _, _, _, _, _ = create_osdi_evaluator(osdi_path, params)
         jax_eval, _, _ = create_jax_evaluator(va_path, params)
 
         # Evaluate at V(A)=1V, V(B)=0V
@@ -533,7 +537,7 @@ class TestResistorComparison:
         """Sweep voltage from -1V to +1V, compare currents."""
         params = {"r": 2000.0, "mfactor": 1.0}
 
-        osdi_eval, _, _, _ = create_osdi_evaluator(osdi_path, params)
+        osdi_eval, _, _, _, _, _ = create_osdi_evaluator(osdi_path, params)
         jax_eval, _, _ = create_jax_evaluator(va_path, params)
 
         max_resist_diff = 0.0
@@ -591,7 +595,7 @@ class TestCapacitorComparison:
         c_val = 1e-12  # 1pF
         params = {"c": c_val, "mfactor": 1.0}
 
-        osdi_eval, _, _, _ = create_osdi_evaluator(osdi_path, params)
+        osdi_eval, _, _, _, _, _ = create_osdi_evaluator(osdi_path, params)
         jax_eval, _, _ = create_jax_evaluator(va_path, params)
 
         voltages = [1.0, 0.0]  # V = 1V
@@ -657,7 +661,7 @@ class TestDiodeComparison:
             "mfactor": 1.0,
         }
 
-        osdi_eval, lib, _, _ = create_osdi_evaluator(osdi_path, params)
+        osdi_eval, lib, _, _, _, _ = create_osdi_evaluator(osdi_path, params)
         jax_eval, _, metadata = create_jax_evaluator(va_path, params)
 
         # Debug: verify single point first
@@ -699,7 +703,7 @@ class TestDiodeComparison:
             "mfactor": 1.0,
         }
 
-        osdi_eval, _, _, _ = create_osdi_evaluator(osdi_path, params)
+        osdi_eval, _, _, _, _, _ = create_osdi_evaluator(osdi_path, params)
         jax_eval, _, _ = create_jax_evaluator(va_path, params)
 
         voltages = [-1.0, 0.0]  # V(A)=-1V, V(C)=0 (reverse bias)
@@ -811,7 +815,7 @@ class TestPSP102Comparison:
 
     def test_ids_vs_vgs_sweep(self, osdi_path, va_path, nmos_params):
         """Sweep Vgs at fixed Vds, compare Ids."""
-        osdi_eval, _, _, _ = create_osdi_evaluator(osdi_path, nmos_params)
+        osdi_eval, _, _, _, _, _ = create_osdi_evaluator(osdi_path, nmos_params)
         jax_eval, _, _ = create_jax_evaluator(va_path, nmos_params)
 
         max_diff = 0.0
@@ -834,7 +838,7 @@ class TestPSP102Comparison:
 
     def test_ids_vs_vds_sweep(self, osdi_path, va_path, nmos_params):
         """Sweep Vds at fixed Vgs, compare Ids (output characteristics)."""
-        osdi_eval, _, _, _ = create_osdi_evaluator(osdi_path, nmos_params)
+        osdi_eval, _, _, _, _, _ = create_osdi_evaluator(osdi_path, nmos_params)
         jax_eval, _, _ = create_jax_evaluator(va_path, nmos_params)
 
         max_diff = 0.0
@@ -854,7 +858,7 @@ class TestPSP102Comparison:
     def test_debug_init_comparison(self, osdi_path, va_path, nmos_params):
         """Debug test: compare init/cache values between OSDI and JAX."""
         # Get OSDI setup
-        osdi_eval, osdi_lib, osdi_model, osdi_instance = create_osdi_evaluator(osdi_path, nmos_params)
+        osdi_eval, osdi_lib, osdi_model, osdi_instance, _, _ = create_osdi_evaluator(osdi_path, nmos_params)
 
         # Get JAX setup with debug info
         jax_eval, jax_module, jax_metadata, jax_debug = create_jax_evaluator(
@@ -999,7 +1003,7 @@ class TestBSIM4Comparison:
 
     def test_ids_vs_vgs_sweep(self, osdi_path, va_path, nmos_params):
         """Sweep Vgs at fixed Vds, compare Ids."""
-        osdi_eval, _, _, _ = create_osdi_evaluator(osdi_path, nmos_params)
+        osdi_eval, _, _, _, _, _ = create_osdi_evaluator(osdi_path, nmos_params)
         jax_eval, _, _ = create_jax_evaluator(va_path, nmos_params)
 
         max_diff = 0.0
@@ -1018,7 +1022,7 @@ class TestBSIM4Comparison:
 
     def test_ids_vs_vds_sweep(self, osdi_path, va_path, nmos_params):
         """Sweep Vds at fixed Vgs, compare Ids."""
-        osdi_eval, _, _, _ = create_osdi_evaluator(osdi_path, nmos_params)
+        osdi_eval, _, _, _, _, _ = create_osdi_evaluator(osdi_path, nmos_params)
         jax_eval, _, _ = create_jax_evaluator(va_path, nmos_params)
 
         max_diff = 0.0
@@ -1075,7 +1079,7 @@ class TestEKVComparison:
 
     def test_ids_vs_vgs_sweep(self, osdi_path, va_path, nmos_params):
         """Sweep Vgs at fixed Vds, compare Ids."""
-        osdi_eval, _, _, _ = create_osdi_evaluator(osdi_path, nmos_params)
+        osdi_eval, _, _, _, _, _ = create_osdi_evaluator(osdi_path, nmos_params)
         jax_eval, _, _ = create_jax_evaluator(va_path, nmos_params)
 
         max_diff = 0.0
@@ -1147,7 +1151,7 @@ class TestMVSGComparison:
 
     def test_ids_vs_vgs_sweep(self, osdi_path, va_path, default_params):
         """Sweep Vgs at fixed Vds, compare Ids."""
-        osdi_eval, _, _, _ = create_osdi_evaluator(osdi_path, default_params)
+        osdi_eval, _, _, _, _, _ = create_osdi_evaluator(osdi_path, default_params)
         jax_eval, _, _ = create_jax_evaluator(va_path, default_params)
 
         max_diff = 0.0
@@ -1165,7 +1169,7 @@ class TestMVSGComparison:
 
         assert max_diff < 1e-6, f"Max Ids diff over Vgs sweep: {max_diff}"
 
-    @pytest.mark.xfail(reason="MVSG has $display statements that cause jax.debug.print errors")
+    @pytest.mark.xfail(reason="MVSG Jacobian has value mismatches (max abs diff ~1.0) - may be PHI node issue")
     def test_jacobian_match(self, osdi_path, va_path, default_params):
         """Compare Jacobian at typical operating point."""
         osdi_eval, _, _, _, jacobian_keys, n_nodes = create_osdi_evaluator(osdi_path, default_params)

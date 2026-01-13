@@ -51,10 +51,13 @@ class FunctionBuilder:
         self.mir_func = mir_func
         self.cfg = CFGAnalyzer(mir_func)
         self.ssa = SSAAnalyzer(mir_func, self.cfg)
+        self.codegen_warnings: list[str] = []  # Warnings from code generation
 
     def _emit_preamble(self, body: List[ast.stmt], ctx: CodeGenContext):
         """Emit function preamble: imports."""
-        # JAX imports: from jax import numpy as jnp, lax
+        # JAX imports: import jax; from jax import numpy as jnp, lax
+        # The 'import jax' is needed for jax.debug.print used by $display
+        body.append(ast.Import(names=[ast.alias(name='jax', asname=None)]))
         body.append(import_from('jax', [('numpy', 'jnp'), 'lax']))
         # Note: 0.0 and 1.0 constants are now inlined via ctx.zero() and ctx.one()
 
@@ -98,6 +101,10 @@ class FunctionBuilder:
             if expr and inst.result:
                 var_name = ctx.define_var(inst.result)
                 body.append(assign(var_name, expr))
+            elif expr and not inst.result:
+                # Side-effect only instruction (e.g., $display)
+                # Emit as expression statement
+                body.append(ast.Expr(value=expr))
 
     def _emit_loop(self, body: List[ast.stmt], ctx: CodeGenContext,
                    loop: LoopInfo, translator: InstructionTranslator) -> None:
@@ -320,6 +327,10 @@ class InitFunctionBuilder(FunctionBuilder):
                 if block:
                     self._emit_block(body, ctx, block, translator)
 
+        # Collect warnings from translator
+        self.codegen_warnings.extend(translator.simparam_warnings)
+        self.codegen_warnings.extend(translator.discontinuity_warnings)
+
         # Build cache output array
         self._emit_cache_output(body, ctx)
 
@@ -409,6 +420,10 @@ class InitFunctionBuilder(FunctionBuilder):
                 block = self.mir_func.blocks.get(item)
                 if block:
                     self._emit_block(body, ctx, block, translator)
+
+        # Collect warnings from translator
+        self.codegen_warnings.extend(translator.simparam_warnings)
+        self.codegen_warnings.extend(translator.discontinuity_warnings)
 
         # Build cache output array
         self._emit_cache_output(body, ctx)
@@ -595,6 +610,10 @@ class EvalFunctionBuilder(FunctionBuilder):
                 if block:
                     self._emit_block(body, ctx, block, translator)
 
+        # Collect warnings from translator
+        self.codegen_warnings.extend(translator.simparam_warnings)
+        self.codegen_warnings.extend(translator.discontinuity_warnings)
+
         # Build output arrays
         self._emit_residual_arrays(body, ctx)
         self._emit_jacobian_arrays(body, ctx)
@@ -616,11 +635,14 @@ class EvalFunctionBuilder(FunctionBuilder):
         ])))
 
         # Build function
+        # simparams layout: [analysis_type, gmin]
+        #   simparams[0] = analysis_type (0=DC, 1=AC, 2=transient, 3=noise)
+        #   simparams[1] = gmin
         fn_name = 'eval_fn_with_cache_split_cache' if use_cache_split else 'eval_fn_with_cache_split'
         if use_cache_split:
-            args = ['shared_params', 'device_params', 'shared_cache', 'device_cache']
+            args = ['shared_params', 'device_params', 'shared_cache', 'device_cache', 'simparams']
         else:
-            args = ['shared_params', 'device_params', 'cache']
+            args = ['shared_params', 'device_params', 'cache', 'simparams']
 
         func = function_def(fn_name, args, body)
 

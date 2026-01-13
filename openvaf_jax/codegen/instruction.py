@@ -17,6 +17,7 @@ from ..openvaf_ast import (
     jnp_where,
     nested_where,
     safe_divide,
+    subscript,
     unaryop,
 )
 from ..openvaf_ast import (
@@ -116,6 +117,10 @@ class InstructionTranslator:
         # Track flags for special features
         self.uses_simparam_gmin = False
         self.uses_analysis = False
+        self.uses_display = False  # Whether $display is used
+        self.simparam_warnings: list[str] = []  # Unknown $simparam names
+        self.discontinuity_warnings: list[str] = []  # $discontinuity usage
+        self.display_calls: list[tuple[str, list[str]]] = []  # (format_str, [var_names])
 
         # Analysis type codes
         self.analysis_type_map = {
@@ -441,24 +446,90 @@ class InstructionTranslator:
         """
         func_name = inst.func_name or ''
 
-        # $simparam
+        # $simparam - access via simparams array
+        # simparams layout: [analysis_type, gmin]
         if 'simparam' in func_name.lower():
-            # Check if it's gmin
+            # Check if it's gmin (only supported simparam)
             if inst.operands and inst.operands[0] in self.ctx.str_constants:
                 param_name = self.ctx.str_constants[inst.operands[0]]
                 if param_name == 'gmin':
                     self.uses_simparam_gmin = True
-                    return self.ctx.get_input_negative(1)
+                    # simparams[1] = gmin
+                    return subscript(ast_name('simparams'), ast_const(1))
+                else:
+                    # Warn about unsupported simparam (LRM Table 9-27)
+                    if param_name not in [w.split("'")[1] for w in self.simparam_warnings if "'" in w]:
+                        self.simparam_warnings.append(f"$simparam('{param_name}') not supported - using default or 0.0")
             return self.ctx.zero()
 
-        # analysis()
+        # $discontinuity (LRM 9.17.1) - hint for timestep control
+        if 'discontinuity' in func_name.lower():
+            # Get the discontinuity order if provided
+            order = -1
+            if inst.operands:
+                op = inst.operands[0]
+                if isinstance(op, (int, float)):
+                    order = int(op)
+            if not self.discontinuity_warnings:
+                self.discontinuity_warnings.append(f"$discontinuity({order}) used - ignored for DC analysis")
+            return self.ctx.zero()  # No-op, but return something
+
+        # $display / $strobe / $write - check if first operand is a format string
+        if inst.operands and inst.operands[0] in self.ctx.str_constants:
+            fmt_str = self.ctx.str_constants[inst.operands[0]]
+            # This looks like a $display call - format string followed by values
+            self.uses_display = True
+
+            # Get the value operands (skip the format string)
+            value_operands = inst.operands[1:]
+            value_exprs = [self.ctx.get_operand(op) for op in value_operands]
+
+            # Track for metadata
+            var_names = [str(op) for op in value_operands]
+            self.display_calls.append((fmt_str, var_names))
+
+            # Convert Verilog-A format string to Python format
+            # %g, %e, %f -> {} for jax.debug.print
+            # %d, %i -> {} (jax handles int conversion)
+            py_fmt = fmt_str.replace('%g', '{}').replace('%e', '{}').replace('%f', '{}')
+            py_fmt = py_fmt.replace('%d', '{}').replace('%i', '{}')
+            py_fmt = py_fmt.rstrip('\n')  # jax.debug.print adds newline
+
+            # Build jax.debug.print(fmt, val1, val2, ...)
+            fmt_const = ast.Constant(value=py_fmt)
+            args = [fmt_const] + value_exprs
+
+            debug_print = ast.Call(
+                func=ast.Attribute(
+                    value=ast.Attribute(
+                        value=ast_name('jax'),
+                        attr='debug',
+                        ctx=ast.Load()
+                    ),
+                    attr='print',
+                    ctx=ast.Load()
+                ),
+                args=args,
+                keywords=[ast.keyword(arg='ordered', value=ast.Constant(value=True))]
+            )
+
+            # jax.debug.print returns None, so we use 'or' to execute it
+            # and return 0.0: (jax.debug.print(...) or 0.0)
+            # None is falsy, so this evaluates print, gets None, then returns 0.0
+            return ast.BoolOp(
+                op=ast.Or(),
+                values=[debug_print, self.ctx.zero()]
+            )
+
+        # analysis() - access via simparams array
+        # simparams[0] = analysis_type (0=DC, 1=AC, 2=transient, 3=noise)
         if 'analysis' in func_name.lower():
             self.uses_analysis = True
             if inst.operands and inst.operands[0] in self.ctx.str_constants:
                 analysis_name = self.ctx.str_constants[inst.operands[0]]
                 type_code = self.analysis_type_map.get(analysis_name.lower(), 0)
-                # Return (inputs[-2] == type_code)
-                analysis_input = self.ctx.get_input_negative(2)
+                # Return (simparams[0] == type_code)
+                analysis_input = subscript(ast_name('simparams'), ast_const(0))
                 return compare(analysis_input, ast.Eq(), ast_const(type_code))
             return jnp_bool(ast_const(False))
 

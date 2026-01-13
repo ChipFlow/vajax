@@ -143,6 +143,7 @@ class MIRFunction:
     constants: Dict[str, float] = field(default_factory=dict)
     bool_constants: Dict[str, bool] = field(default_factory=dict)
     int_constants: Dict[str, int] = field(default_factory=dict)
+    str_constants: Dict[str, str] = field(default_factory=dict)
 
     # Parameters (value IDs in order)
     params: List[str] = field(default_factory=list)
@@ -167,21 +168,30 @@ class MIRFunction:
         return None
 
 
-def parse_mir_function(name: str, mir_data: Dict[str, Any]) -> MIRFunction:
+def parse_mir_function(
+    name: str,
+    mir_data: Dict[str, Any],
+    str_constants: Optional[Dict[str, str]] = None
+) -> MIRFunction:
     """Parse MIR data from openvaf_py into MIRFunction.
 
     Args:
         name: Function name ('init' or 'eval')
         mir_data: Dict from get_mir_instructions() or get_init_mir_instructions()
+        str_constants: Optional dict of string constants from module.get_str_constants()
 
     Returns:
         Parsed MIRFunction
     """
+    # Extract function declarations for resolving func_ref in call instructions
+    function_decls = dict(mir_data.get('function_decls', {}))
+
     func = MIRFunction(
         name=name,
         constants=dict(mir_data.get('constants', {})),
         bool_constants=dict(mir_data.get('bool_constants', {})),
         int_constants=dict(mir_data.get('int_constants', {})),
+        str_constants=dict(str_constants) if str_constants else {},
         params=list(mir_data.get('params', [])),
     )
 
@@ -198,7 +208,7 @@ def parse_mir_function(name: str, mir_data: Dict[str, Any]) -> MIRFunction:
     # Parse instructions and add to blocks
     instructions = mir_data.get('instructions', [])
     for inst_data in instructions:
-        inst = _parse_instruction(inst_data)
+        inst = _parse_instruction(inst_data, function_decls)
         block_name = inst.block
         if block_name in func.blocks:
             func.blocks[block_name].instructions.append(inst)
@@ -227,8 +237,16 @@ def parse_mir_function(name: str, mir_data: Dict[str, Any]) -> MIRFunction:
     return func
 
 
-def _parse_instruction(inst_data: Dict[str, Any]) -> MIRInstruction:
-    """Parse a single instruction from MIR data."""
+def _parse_instruction(
+    inst_data: Dict[str, Any],
+    function_decls: Optional[Dict[str, Dict[str, Any]]] = None
+) -> MIRInstruction:
+    """Parse a single instruction from MIR data.
+
+    Args:
+        inst_data: Raw instruction dict from MIR
+        function_decls: Function declarations dict for resolving func_ref
+    """
     opcode = inst_data.get('opcode', '').lower()
 
     # Wrap result with ValueId if present
@@ -264,6 +282,13 @@ def _parse_instruction(inst_data: Dict[str, Any]) -> MIRInstruction:
 
     # Parse call-specific fields
     if opcode == 'call':
-        inst.func_name = inst_data.get('func_name')
+        # Try direct func_name first
+        func_name = inst_data.get('func_name')
+        if not func_name:
+            # Look up via func_ref in function_decls
+            func_ref = inst_data.get('func_ref')
+            if func_ref and function_decls and func_ref in function_decls:
+                func_name = function_decls[func_ref].get('name')
+        inst.func_name = func_name
 
     return inst
