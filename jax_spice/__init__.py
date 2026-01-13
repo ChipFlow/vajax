@@ -82,6 +82,70 @@ def get_precision_info() -> dict:
 # Auto-configure precision on import
 _x64_enabled = configure_precision()
 
+
+# =============================================================================
+# Simparam helpers (VAMS-LRM Table 9-27)
+# =============================================================================
+
+# Default simparam values per VAMS-LRM
+SIMPARAM_DEFAULTS = {
+    '$analysis_type': 0.0,    # 0=DC, 1=AC, 2=transient, 3=noise
+    'gmin': 1e-12,            # Minimum conductance (S)
+    'abstol': 1e-12,          # Absolute current tolerance (A)
+    'vntol': 1e-6,            # Absolute voltage tolerance (V)
+    'reltol': 1e-3,           # Relative tolerance
+    'tnom': 300.15,           # Nominal temperature (K)
+    'scale': 1.0,             # Scale factor
+    'shrink': 0.0,            # Shrink factor
+    'imax': 1.0,              # Branch current limit (A)
+    '$abstime': 0.0,          # Absolute simulation time (s)
+    '$mfactor': 1.0,          # Device multiplicity factor
+}
+
+
+def build_simparams(metadata: dict, values: dict | None = None) -> list:
+    """Build simparams array from eval metadata and user values.
+
+    This helper creates the simparams array that eval functions expect,
+    based on the simparam_indices from translate_eval() metadata.
+
+    Args:
+        metadata: The metadata dict from translate_eval(), containing:
+            - simparams_used: List of simparam names in index order
+            - simparam_indices: Dict mapping name -> index
+            - simparam_count: Total number of simparams
+        values: Optional dict of simparam values to override defaults.
+            Keys should match simparam names (e.g., 'gmin', '$abstime').
+
+    Returns:
+        List of simparam values in the correct order for the eval function.
+
+    Example:
+        >>> eval_fn, meta = translator.translate_eval(params=..., temperature=300.0)
+        >>> simparams = build_simparams(meta, {'gmin': 1e-12, '$analysis_type': 0})
+        >>> result = eval_fn(shared, varying, cache, jnp.array(simparams))
+    """
+    simparams_used = metadata.get('simparams_used', ['$analysis_type'])
+    simparam_count = metadata.get('simparam_count', 1)
+
+    # Merge user values with defaults
+    effective_values = dict(SIMPARAM_DEFAULTS)
+    if values:
+        effective_values.update(values)
+
+    # Build array in index order
+    simparams = []
+    for name in simparams_used:
+        if name in effective_values:
+            simparams.append(float(effective_values[name]))
+        else:
+            # Unknown simparam - use 0.0 (shouldn't happen if metadata is correct)
+            logger.warning(f"Unknown simparam '{name}' - using 0.0")
+            simparams.append(0.0)
+
+    return simparams
+
+
 # Core simulation API
 from jax_spice.analysis import CircuitEngine, TransientResult
 
@@ -102,6 +166,9 @@ __all__ = [
     # Precision configuration
     "configure_precision",
     "get_precision_info",
+    # Simparam helpers
+    "build_simparams",
+    "SIMPARAM_DEFAULTS",
     # Profiling
     "profile",
     "profile_section",

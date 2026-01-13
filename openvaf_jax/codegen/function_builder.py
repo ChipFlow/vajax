@@ -52,6 +52,7 @@ class FunctionBuilder:
         self.cfg = CFGAnalyzer(mir_func)
         self.ssa = SSAAnalyzer(mir_func, self.cfg)
         self.codegen_warnings: list[str] = []  # Warnings from code generation
+        self.simparam_metadata: dict = {}  # Simparam registry metadata after build
 
     def _emit_preamble(self, body: List[ast.stmt], ctx: CodeGenContext):
         """Emit function preamble: imports."""
@@ -545,7 +546,8 @@ class EvalFunctionBuilder(FunctionBuilder):
     def build_with_cache_split(self, shared_indices: List[int],
                                 varying_indices: List[int],
                                 shared_cache_indices: Optional[List[int]] = None,
-                                varying_cache_indices: Optional[List[int]] = None
+                                varying_cache_indices: Optional[List[int]] = None,
+                                simparam_params: Optional[Dict[int, str]] = None,
                                 ) -> Tuple[str, List[str]]:
         """Build eval function with split params and optional split cache.
 
@@ -554,12 +556,16 @@ class EvalFunctionBuilder(FunctionBuilder):
             varying_indices: Param indices that vary per device
             shared_cache_indices: Cache indices constant across devices
             varying_cache_indices: Cache indices that vary per device
+            simparam_params: Dict mapping original param indices to simparam names.
+                             These params will be read from simparams array instead
+                             of shared/device params. Used for $abstime, $mfactor.
 
         Returns:
             Tuple of (function_name, code_lines)
         """
         use_cache_split = (shared_cache_indices is not None and
                            varying_cache_indices is not None)
+        simparam_params = simparam_params or {}
 
         # Build index mappings
         idx_mapping: Dict[int, Tuple[str, int]] = {}
@@ -567,6 +573,9 @@ class EvalFunctionBuilder(FunctionBuilder):
             idx_mapping[orig_idx] = ('shared', new_idx)
         for new_idx, orig_idx in enumerate(varying_indices):
             idx_mapping[orig_idx] = ('device', new_idx)
+        # Add simparam mappings - these will be handled specially in _emit_param_mapping
+        for orig_idx, simparam_name in simparam_params.items():
+            idx_mapping[orig_idx] = ('simparam', simparam_name)
 
         cache_idx_mapping: Dict[int, Tuple[str, int]] = {}
         if use_cache_split:
@@ -614,6 +623,9 @@ class EvalFunctionBuilder(FunctionBuilder):
         self.codegen_warnings.extend(translator.simparam_warnings)
         self.codegen_warnings.extend(translator.discontinuity_warnings)
 
+        # Collect simparam metadata from context
+        self.simparam_metadata = ctx.get_simparam_metadata()
+
         # Build output arrays
         self._emit_residual_arrays(body, ctx)
         self._emit_jacobian_arrays(body, ctx)
@@ -655,19 +667,34 @@ class EvalFunctionBuilder(FunctionBuilder):
 
     def _emit_param_mapping(self, body: List[ast.stmt],
                              ctx: CodeGenContext,
-                             idx_mapping: Dict[int, Tuple[str, int]]):
-        """Emit parameter mapping from split arrays."""
+                             idx_mapping: Dict[int, Tuple[str, any]]):
+        """Emit parameter mapping from split arrays.
+
+        Args:
+            body: List to append statements to
+            ctx: Code generation context
+            idx_mapping: Maps original param index to (source, value) where:
+                - source='shared': value is new index in shared_params
+                - source='device': value is new index in device_params
+                - source='simparam': value is simparam name (e.g., '$abstime')
+        """
         for i, param in enumerate(self.mir_func.params):
             var_name = f"{ctx.var_prefix}{param}"
 
             if i in idx_mapping:
-                source, new_idx = idx_mapping[i]
+                source, value = idx_mapping[i]
                 if source == 'shared':
                     body.append(assign(var_name,
-                        subscript(ast_name('shared_params'), ast_const(new_idx))))
-                else:
+                        subscript(ast_name('shared_params'), ast_const(value))))
+                elif source == 'device':
                     body.append(assign(var_name,
-                        subscript(ast_name('device_params'), ast_const(new_idx))))
+                        subscript(ast_name('device_params'), ast_const(value))))
+                elif source == 'simparam':
+                    # Register simparam and emit simparams[idx]
+                    simparam_name = value
+                    simparam_idx = ctx.register_simparam(simparam_name)
+                    body.append(assign(var_name,
+                        subscript(ast_name('simparams'), ast_const(simparam_idx))))
             else:
                 # Fallback: derivative selector params default to 0
                 body.append(assign(var_name, ast_const(0)))

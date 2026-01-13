@@ -60,6 +60,13 @@ class CodeGenContext:
     # String constants (for $simparam, etc.)
     str_constants: Dict[str, str] = field(default_factory=dict)
 
+    # Simparam registry - maps simparam names to indices
+    # Standard simparams (VAMS-LRM Table 9-27): gmin, abstol, vntol, reltol, tnom, scale, shrink, imax
+    # System functions as simparams: $abstime, $mfactor
+    # Layout: [analysis_type, $abstime, $mfactor, gmin, abstol, vntol, reltol, tnom, ...]
+    simparam_registry: Dict[str, int] = field(default_factory=dict)
+    simparam_next_index: int = 0
+
     def __post_init__(self) -> None:
         """Initialize pre-allocated OpenVAF constants."""
         # Pre-allocated MIR constants (from OpenVAF mir/src/dfg/values.rs:57-76)
@@ -71,6 +78,61 @@ class CodeGenContext:
         self.int_constants.setdefault(V_ONE, 1)
         self.constants.setdefault(V_F_ONE, 1.0)
         self.constants.setdefault(V_F_N_ONE, -1.0)
+
+        # Pre-allocate analysis_type at index 0 (always needed for analysis() function)
+        self.simparam_registry['$analysis_type'] = 0
+        self.simparam_next_index = 1
+
+    def register_simparam(self, name: str) -> int:
+        """Register a simparam and return its index.
+
+        If the simparam is already registered, returns the existing index.
+        Otherwise, assigns the next available index.
+
+        Args:
+            name: Simparam name (e.g., 'gmin', '$abstime', '$mfactor')
+
+        Returns:
+            Index into the simparams array
+        """
+        if name in self.simparam_registry:
+            return self.simparam_registry[name]
+
+        idx = self.simparam_next_index
+        self.simparam_registry[name] = idx
+        self.simparam_next_index += 1
+        return idx
+
+    def get_simparam_index(self, name: str) -> int:
+        """Get the index of a registered simparam.
+
+        Args:
+            name: Simparam name
+
+        Returns:
+            Index into the simparams array, or -1 if not registered
+        """
+        return self.simparam_registry.get(name, -1)
+
+    def get_simparam_metadata(self) -> dict:
+        """Get metadata about used simparams.
+
+        Returns:
+            Dict with:
+                - simparams_used: List of simparam names in index order
+                - simparam_indices: Dict mapping name -> index
+                - simparam_count: Total number of simparams
+        """
+        # Build list in index order
+        simparams_used = [''] * self.simparam_next_index
+        for name, idx in self.simparam_registry.items():
+            simparams_used[idx] = name
+
+        return {
+            'simparams_used': simparams_used,
+            'simparam_indices': dict(self.simparam_registry),
+            'simparam_count': self.simparam_next_index,
+        }
 
     def define_var(self, var: str) -> str:
         """Mark a variable as defined and return its prefixed name."""

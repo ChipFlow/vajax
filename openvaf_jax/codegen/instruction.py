@@ -115,7 +115,7 @@ class InstructionTranslator:
         self.ssa = ssa
 
         # Track flags for special features
-        self.uses_simparam_gmin = False
+        self.uses_simparam_gmin = False  # Deprecated - use ctx.simparam_registry
         self.uses_analysis = False
         self.uses_display = False  # Whether $display is used
         self.simparam_warnings: list[str] = []  # Unknown $simparam names
@@ -446,20 +446,21 @@ class InstructionTranslator:
         """
         func_name = inst.func_name or ''
 
-        # $simparam - access via simparams array
-        # simparams layout: [analysis_type, gmin]
+        # $simparam - access via simparams array using dynamic registry
+        # Supported simparams (VAMS-LRM Table 9-27): gmin, abstol, vntol, reltol, tnom, scale, shrink, imax
         if 'simparam' in func_name.lower():
-            # Check if it's gmin (only supported simparam)
             if inst.operands and inst.operands[0] in self.ctx.str_constants:
                 param_name = self.ctx.str_constants[inst.operands[0]]
+
+                # Register the simparam and get its index
+                simparam_idx = self.ctx.register_simparam(param_name)
+
+                # Backward compatibility flag
                 if param_name == 'gmin':
                     self.uses_simparam_gmin = True
-                    # simparams[1] = gmin
-                    return subscript(ast_name('simparams'), ast_const(1))
-                else:
-                    # Warn about unsupported simparam (LRM Table 9-27)
-                    if param_name not in [w.split("'")[1] for w in self.simparam_warnings if "'" in w]:
-                        self.simparam_warnings.append(f"$simparam('{param_name}') not supported - using default or 0.0")
+
+                # Return simparams[idx]
+                return subscript(ast_name('simparams'), ast_const(simparam_idx))
             return self.ctx.zero()
 
         # $discontinuity (LRM 9.17.1) - hint for timestep control
@@ -521,15 +522,17 @@ class InstructionTranslator:
                 values=[debug_print, self.ctx.zero()]
             )
 
-        # analysis() - access via simparams array
-        # simparams[0] = analysis_type (0=DC, 1=AC, 2=transient, 3=noise)
+        # analysis() - access via simparams array using registered $analysis_type
+        # $analysis_type: 0=DC, 1=AC, 2=transient, 3=noise
         if 'analysis' in func_name.lower():
             self.uses_analysis = True
             if inst.operands and inst.operands[0] in self.ctx.str_constants:
                 analysis_name = self.ctx.str_constants[inst.operands[0]]
                 type_code = self.analysis_type_map.get(analysis_name.lower(), 0)
-                # Return (simparams[0] == type_code)
-                analysis_input = subscript(ast_name('simparams'), ast_const(0))
+                # $analysis_type is pre-registered at index 0
+                analysis_idx = self.ctx.get_simparam_index('$analysis_type')
+                # Return (simparams[analysis_idx] == type_code)
+                analysis_input = subscript(ast_name('simparams'), ast_const(analysis_idx))
                 return compare(analysis_input, ast.Eq(), ast_const(type_code))
             return jnp_bool(ast_const(False))
 

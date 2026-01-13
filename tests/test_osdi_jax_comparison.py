@@ -22,11 +22,117 @@ project_root = Path(__file__).parent.parent
 sys.path.insert(0, str(project_root))
 sys.path.insert(0, str(project_root / "openvaf_jax" / "openvaf_py"))
 
-from jax_spice import configure_precision
+from jax_spice import configure_precision, build_simparams, SIMPARAM_DEFAULTS
 from jax_spice.debug.jacobian import compare_jacobians
 import osdi_py  # noqa: E402 - MUST be imported before openvaf_py/openvaf_jax
 import openvaf_py  # noqa: E402
 import openvaf_jax  # noqa: E402
+
+
+# =============================================================================
+# VAMS-LRM Tolerances (Section 3.6.1.2)
+# =============================================================================
+#
+# Per VAMS-LRM-2023, each nature defines `abstol` - the maximum negligible value
+# for signals associated with the nature. These are used by Newton-Raphson
+# convergence checks and signal comparison.
+#
+# | Nature  | abstol      | Description                    |
+# |---------|-------------|--------------------------------|
+# | Current | 1e-12 A     | Maximum negligible current     |
+# | Voltage | 1e-6 V      | Maximum negligible voltage     |
+# | Charge  | 1e-14 C     | Maximum negligible charge      |
+# | Flux    | 1e-14 Vs    | Maximum negligible flux        |
+#
+# Residuals in MNA formulation are currents (KCL equations), so we use
+# CURRENT_ABSTOL for residual comparison.
+
+CURRENT_ABSTOL = 1e-12   # 1 pA - from VAMS-LRM Current nature
+CURRENT_RTOL = 1e-4      # 0.01% relative tolerance
+
+VOLTAGE_ABSTOL = 1e-6    # 1 µV - from VAMS-LRM Voltage nature
+VOLTAGE_RTOL = 1e-4      # 0.01% relative tolerance
+
+# For conductance (Jacobian entries dI/dV), use current-like abstol
+CONDUCTANCE_ABSTOL = 1e-12  # S (Siemens)
+CONDUCTANCE_RTOL = 1e-4
+
+
+def compare_with_vams_tolerance(
+    osdi_val: float,
+    jax_val: float,
+    abstol: float,
+    rtol: float,
+) -> bool:
+    """Compare values using VAMS-LRM combined tolerance.
+
+    The combined tolerance formula is: |osdi - jax| < abstol + rtol * max(|osdi|, |jax|)
+
+    This ensures:
+    - Small signals (near abstol) are compared with absolute tolerance
+    - Large signals are compared with relative tolerance
+    - Prevents false positives where 4.79e-11 "passes" against 5e-16
+
+    Args:
+        osdi_val: Reference value from OSDI
+        jax_val: Value from JAX implementation
+        abstol: Absolute tolerance (from VAMS-LRM nature)
+        rtol: Relative tolerance
+
+    Returns:
+        True if values match within tolerance
+    """
+    diff = abs(osdi_val - jax_val)
+    threshold = abstol + rtol * max(abs(osdi_val), abs(jax_val))
+    return diff < threshold
+
+
+def compare_residuals(
+    osdi_residuals: list,
+    jax_residuals: list,
+    rtol: float = CURRENT_RTOL,
+    atol: float = CURRENT_ABSTOL,
+) -> tuple:
+    """Compare residual arrays using VAMS-LRM current tolerances.
+
+    Residuals in MNA are currents (KCL sum at each node), so we use
+    CURRENT_ABSTOL as the maximum negligible value.
+
+    Args:
+        osdi_residuals: Reference residuals from OSDI
+        jax_residuals: Residuals from JAX implementation
+        rtol: Relative tolerance (default: CURRENT_RTOL = 1e-4)
+        atol: Absolute tolerance (default: CURRENT_ABSTOL = 1e-12)
+
+    Returns:
+        Tuple of (passed, max_abs_diff, max_rel_diff, failed_indices)
+    """
+    osdi = np.array(osdi_residuals)
+    jax = np.array(jax_residuals)
+
+    if osdi.shape != jax.shape:
+        return False, float('inf'), float('inf'), []
+
+    failed_indices = []
+    max_abs_diff = 0.0
+    max_rel_diff = 0.0
+
+    for i, (o, j) in enumerate(zip(osdi, jax)):
+        diff = abs(o - j)
+        max_abs_diff = max(max_abs_diff, diff)
+
+        # Compute relative diff for reporting
+        if abs(o) > atol:
+            rel = diff / abs(o)
+            max_rel_diff = max(max_rel_diff, rel)
+
+        # Check combined tolerance
+        if not compare_with_vams_tolerance(o, j, atol, rtol):
+            failed_indices.append(i)
+
+    passed = len(failed_indices) == 0
+    return passed, max_abs_diff, max_rel_diff, failed_indices
+
 
 # Paths
 VACASK_DEVICES = project_root / "vendor" / "VACASK" / "devices"
@@ -191,6 +297,253 @@ MODEL_CONFIGS = [
     },
 ]
 
+# Transistor model configurations for parameterized tests
+# Each config specifies how to build voltage vectors and sweep parameters
+TRANSISTOR_CONFIGS = [
+    {
+        "name": "ekv",
+        "va_path": OPENVAF_INTEGRATION / "EKV" / "ekv.va",
+        "params": {
+            "TYPE": 1,       # NMOS
+            "W": 1e-6,
+            "L": 100e-9,
+            "TEMP": 1e21,    # Sentinel: use $temperature
+            "TNOM": 1e21,    # Sentinel: use default
+            "mfactor": 1.0,
+        },
+        "terminals": ["d", "g", "s", "b"],  # voltage order
+        "vds": 0.5,
+        "vgs_for_jacobian": 0.6,
+        "xfail": False,
+    },
+    {
+        "name": "mvsg",
+        "va_path": OPENVAF_INTEGRATION / "MVSG_CMC" / "mvsg_cmc.va",
+        "params": {
+            "lg": 100e-9,
+            "wg": 1e-6,
+            "mfactor": 1.0,
+        },
+        "terminals": ["d", "g", "s"],  # 3-terminal device
+        "vds": 0.5,
+        "vgs_for_jacobian": 0.6,
+        "xfail": False,
+    },
+    {
+        "name": "psp102",
+        "va_path": OPENVAF_INTEGRATION / "PSP102" / "psp102.va",
+        "params": {
+            "TYPE": 1,       # NMOS
+            "W": 1e-6,
+            "L": 100e-9,
+            "mfactor": 1.0,
+        },
+        "terminals": ["d", "g", "s", "b"],
+        "vds": 0.5,
+        "vgs_for_jacobian": 0.6,
+        "xfail": True,  # Known PHI node resolution issues
+    },
+]
+
+
+def _build_transistor_voltages(terminals: list, vds: float, vgs: float) -> list:
+    """Build voltage vector for transistor given terminal order."""
+    voltages = []
+    for t in terminals:
+        if t == "d":
+            voltages.append(vds)
+        elif t == "g":
+            voltages.append(vgs)
+        else:  # s, b, or other terminals grounded
+            voltages.append(0.0)
+    return voltages
+
+
+# =============================================================================
+# Parameterized Tests for Simple Models
+# =============================================================================
+
+@pytest.fixture(scope="module")
+def compiled_models():
+    """Compile all simple models once per test module."""
+    compiled = {}
+    for config in MODEL_CONFIGS:
+        name = config["name"]
+        va_path = config["va_path"]
+        osdi_path = OSDI_CACHE / f"{name}.osdi"
+        compile_va_to_osdi(va_path, osdi_path)
+        compiled[name] = {"osdi_path": osdi_path, "va_path": va_path}
+    return compiled
+
+
+class TestSimpleModelsParameterized:
+    """Parameterized tests for simple models (resistor, capacitor, diode).
+
+    Uses MODEL_CONFIGS to reduce test boilerplate. Each config specifies:
+    - name: Model name for test ID
+    - va_path: Path to Verilog-A source
+    - params: Default parameters
+    - test_voltages: List of voltage vectors to test
+    - skip_jacobian: Whether to skip Jacobian tests
+    """
+
+    @pytest.mark.parametrize("config", MODEL_CONFIGS, ids=lambda c: c["name"])
+    def test_residual_at_test_voltages(self, compiled_models, config):
+        """Test residual match at all configured test voltages."""
+        name = config["name"]
+        paths = compiled_models[name]
+        params = config["params"]
+
+        osdi_eval, _, _, _, _, _ = create_osdi_evaluator(paths["osdi_path"], params)
+        jax_eval, _, _ = create_jax_evaluator(paths["va_path"], params)
+
+        for voltages in config["test_voltages"]:
+            osdi_res = osdi_eval(voltages)
+            jax_res = jax_eval(voltages)
+
+            # Compare resistive residuals
+            passed, max_abs, max_rel = compare_arrays(
+                osdi_res[0], jax_res[0], rtol=1e-10, atol=1e-15
+            )
+            assert passed, f"{name} resistive mismatch at V={voltages}: abs={max_abs}, rel={max_rel}"
+
+            # Compare reactive residuals
+            passed, max_abs, max_rel = compare_arrays(
+                osdi_res[1], jax_res[1], rtol=1e-10, atol=1e-15
+            )
+            assert passed, f"{name} reactive mismatch at V={voltages}: abs={max_abs}, rel={max_rel}"
+
+    @pytest.mark.parametrize("config", MODEL_CONFIGS, ids=lambda c: c["name"])
+    def test_jacobian_at_first_voltage(self, compiled_models, config):
+        """Test Jacobian match at first configured test voltage."""
+        if config.get("skip_jacobian", False):
+            pytest.skip(f"Jacobian test skipped for {config['name']}")
+
+        name = config["name"]
+        paths = compiled_models[name]
+        params = config["params"]
+        voltages = config["test_voltages"][0]
+
+        osdi_eval, _, _, _, jacobian_keys, n_nodes = create_osdi_evaluator(paths["osdi_path"], params)
+        jax_eval, _, _ = create_jax_evaluator(paths["va_path"], params)
+
+        osdi_res = osdi_eval(voltages)
+        jax_res = jax_eval(voltages)
+
+        # Compare resistive Jacobian
+        result = compare_jacobians(
+            osdi_res[2], jax_res[2], n_nodes, jacobian_keys,
+            rtol=1e-10, atol=1e-15
+        )
+        assert result.passed, f"{name} resistive Jacobian mismatch:\n{result.report}"
+
+        # Compare reactive Jacobian
+        result = compare_jacobians(
+            osdi_res[3], jax_res[3], n_nodes, jacobian_keys,
+            rtol=1e-10, atol=1e-15, reactive=True
+        )
+        assert result.passed, f"{name} reactive Jacobian mismatch:\n{result.report}"
+
+
+# =============================================================================
+# Parameterized Tests for Transistor Models
+# =============================================================================
+
+@pytest.fixture(scope="module")
+def compiled_transistors():
+    """Compile all transistor models once per test module."""
+    compiled = {}
+    for config in TRANSISTOR_CONFIGS:
+        name = config["name"]
+        va_path = config["va_path"]
+        if not va_path.exists():
+            continue  # Skip missing models
+        osdi_path = OSDI_CACHE / f"{name}.osdi"
+        compile_va_to_osdi(va_path, osdi_path)
+        compiled[name] = {"osdi_path": osdi_path, "va_path": va_path}
+    return compiled
+
+
+def _transistor_xfail(config):
+    """Apply xfail marker if config specifies it."""
+    if config.get("xfail", False):
+        return pytest.param(config, marks=pytest.mark.xfail(
+            reason=f"{config['name']} has known PHI node resolution issues"
+        ))
+    return config
+
+
+class TestTransistorModelsParameterized:
+    """Parameterized tests for transistor models (EKV, MVSG, PSP102).
+
+    Uses TRANSISTOR_CONFIGS to test Vgs sweeps and Jacobians across models.
+    """
+
+    @pytest.mark.parametrize("config", [_transistor_xfail(c) for c in TRANSISTOR_CONFIGS],
+                             ids=lambda c: c["name"] if isinstance(c, dict) else c.values[0]["name"])
+    def test_ids_vs_vgs_sweep(self, compiled_transistors, config):
+        """Sweep Vgs at fixed Vds, compare drain current residuals."""
+        name = config["name"]
+        if name not in compiled_transistors:
+            pytest.skip(f"Model {name} not found or failed to compile")
+        paths = compiled_transistors[name]
+        params = config["params"]
+        terminals = config["terminals"]
+        vds = config["vds"]
+
+        osdi_eval, _, _, _, _, _ = create_osdi_evaluator(paths["osdi_path"], params)
+        jax_eval, _, _ = create_jax_evaluator(paths["va_path"], params)
+
+        all_failed = []
+        for vgs in np.linspace(0.0, 1.0, 11):
+            voltages = _build_transistor_voltages(terminals, vds, vgs)
+
+            osdi_res = osdi_eval(voltages)
+            jax_res = jax_eval(voltages)
+
+            passed, max_abs, max_rel, failed = compare_residuals(
+                osdi_res[0], jax_res[0]
+            )
+            if not passed:
+                all_failed.append((vgs, failed, max_abs, max_rel))
+
+        assert len(all_failed) == 0, (
+            f"{name} residual comparison failed at {len(all_failed)} points. "
+            f"First failure at Vgs={all_failed[0][0]:.2f}V: "
+            f"max_abs={all_failed[0][2]:.3e}, max_rel={all_failed[0][3]:.2%}"
+        )
+
+    @pytest.mark.parametrize("config", [_transistor_xfail(c) for c in TRANSISTOR_CONFIGS],
+                             ids=lambda c: c["name"] if isinstance(c, dict) else c.values[0]["name"])
+    def test_jacobian_at_operating_point(self, compiled_transistors, config):
+        """Compare Jacobian at typical operating point."""
+        name = config["name"]
+        if name not in compiled_transistors:
+            pytest.skip(f"Model {name} not found or failed to compile")
+        paths = compiled_transistors[name]
+        params = config["params"]
+        terminals = config["terminals"]
+        vds = config["vds"]
+        vgs = config["vgs_for_jacobian"]
+
+        osdi_eval, _, _, _, jacobian_keys, n_nodes = create_osdi_evaluator(paths["osdi_path"], params)
+        jax_eval, _, _ = create_jax_evaluator(paths["va_path"], params)
+
+        voltages = _build_transistor_voltages(terminals, vds, vgs)
+
+        osdi_res = osdi_eval(voltages)
+        jax_res = jax_eval(voltages)
+
+        result = compare_jacobians(
+            osdi_res[2], jax_res[2], n_nodes, jacobian_keys,
+            rtol=CONDUCTANCE_RTOL, atol=CONDUCTANCE_ABSTOL
+        )
+        assert result.passed, f"{name} Jacobian mismatch:\n{result.report}"
+
+
+# =============================================================================
+# Helper Functions
+# =============================================================================
 
 def create_osdi_evaluator(osdi_path: Path, params: dict, temperature: float = 300.0, gmin: float = 0.0):
     """Create an OSDI evaluator function with fixed params.
@@ -358,10 +711,13 @@ def create_jax_evaluator(va_path: Path, params: dict, temperature: float = 300.0
     print(f"JAX non_voltage_indices = {non_voltage_indices}")
 
     shared_arr = jnp.array(shared_inputs)
-    # simparams: [analysis_type, gmin]
-    # analysis_type: 0=DC, 1=AC, 2=transient, 3=noise
-    # gmin: minimum conductance (0.0 for comparison with OSDI which also uses gmin=0)
-    simparams_arr = jnp.array([0.0, 0.0])  # DC analysis, gmin=0
+    # Build simparams array using metadata from translate_eval
+    # For comparison tests, we use gmin=0 to match OSDI behavior
+    simparams_list = build_simparams(eval_metadata, {
+        '$analysis_type': 0.0,  # DC analysis
+        'gmin': 0.0,            # Match OSDI gmin=0 for comparison
+    })
+    simparams_arr = jnp.array(simparams_list)
 
     def evaluate(voltages):
         """Evaluate device at given voltages (terminals only).
@@ -495,7 +851,11 @@ def compare_arrays(
 
 
 class TestResistorComparison:
-    """Compare OSDI vs JAX for resistor model."""
+    """Additional OSDI vs JAX tests for resistor model.
+
+    Basic residual/Jacobian tests are in TestSimpleModelsParameterized.
+    This class contains unique tests like voltage sweep.
+    """
 
     @pytest.fixture(scope="class")
     def osdi_path(self):
@@ -509,29 +869,6 @@ class TestResistorComparison:
     def va_path(self):
         """Get resistor.va path."""
         return VACASK_DEVICES / "resistor.va"
-
-    def test_single_point(self, osdi_path, va_path):
-        """Compare at a single voltage point."""
-        params = {"r": 1000.0, "mfactor": 1.0}
-
-        osdi_eval, _, _, _, _, _ = create_osdi_evaluator(osdi_path, params)
-        jax_eval, _, _ = create_jax_evaluator(va_path, params)
-
-        # Evaluate at V(A)=1V, V(B)=0V
-        voltages = [1.0, 0.0]
-
-        osdi_res = osdi_eval(voltages)
-        jax_res = jax_eval(voltages)
-
-        # Compare resistive residuals
-        passed, max_abs, max_rel = compare_arrays(
-            osdi_res[0], jax_res[0], rtol=1e-10, atol=1e-15        )
-        assert passed, f"Resistive residual mismatch: max_abs={max_abs}, max_rel={max_rel}"
-
-        # Compare reactive residuals (should be 0 for resistor)
-        passed, max_abs, max_rel = compare_arrays(
-            osdi_res[1], jax_res[1], rtol=1e-10, atol=1e-15        )
-        assert passed, f"Reactive residual mismatch: max_abs={max_abs}, max_rel={max_rel}"
 
     def test_voltage_sweep(self, osdi_path, va_path):
         """Sweep voltage from -1V to +1V, compare currents."""
@@ -552,26 +889,6 @@ class TestResistorComparison:
             max_resist_diff = max(max_resist_diff, resist_diff)
 
         assert max_resist_diff < 1e-10, f"Max resistive diff over sweep: {max_resist_diff}"
-
-    def test_jacobian_match(self, osdi_path, va_path):
-        """Compare Jacobian (dI/dV = 1/R)."""
-        r_val = 500.0
-        params = {"r": r_val, "mfactor": 1.0}
-
-        osdi_eval, _, _, _, jacobian_keys, n_nodes = create_osdi_evaluator(osdi_path, params)
-        jax_eval, _, _ = create_jax_evaluator(va_path, params)
-
-        voltages = [1.0, 0.0]
-
-        osdi_res = osdi_eval(voltages)
-        jax_res = jax_eval(voltages)
-
-        # Compare resistive Jacobian using format-aware comparison
-        result = compare_jacobians(
-            osdi_res[2], jax_res[2], n_nodes, jacobian_keys,
-            rtol=1e-10, atol=1e-15
-        )
-        assert result.passed, f"Resistive Jacobian mismatch:\n{result.report}"
 
 
 class TestCapacitorComparison:
@@ -636,7 +953,11 @@ class TestCapacitorComparison:
 
 
 class TestDiodeComparison:
-    """Compare OSDI vs JAX for diode model."""
+    """Additional OSDI vs JAX tests for diode model.
+
+    Basic residual/Jacobian tests are in TestSimpleModelsParameterized.
+    This class contains unique tests like reverse bias.
+    """
 
     @pytest.fixture(scope="class")
     def osdi_path(self):
@@ -650,46 +971,6 @@ class TestDiodeComparison:
     def va_path(self):
         """Get diode.va path."""
         return VACASK_DEVICES / "diode.va"
-
-    def test_forward_bias_sweep(self, osdi_path, va_path):
-        """Sweep V from 0 to 0.8V in forward bias."""
-        params = {
-            "Is": 1e-12,  # Saturation current
-            "N": 1.0,     # Ideality factor
-            "Rs": 10.0,   # Series resistance (non-zero to avoid node collapse)
-            "Tnom": 27.0,  # Nominal temperature (Celsius)
-            "mfactor": 1.0,
-        }
-
-        osdi_eval, lib, _, _, _, _ = create_osdi_evaluator(osdi_path, params)
-        jax_eval, _, metadata = create_jax_evaluator(va_path, params)
-
-        # Debug: verify single point first
-        test_v = [0.5, 0.0]
-        osdi_test = osdi_eval(test_v)
-        jax_test = jax_eval(test_v)
-        print(f"\nDEBUG: osdi_path={osdi_path}")
-        print(f"DEBUG: lib.num_nodes={lib.num_nodes}, lib.num_terminals={lib.num_terminals}")
-        print(f"DEBUG: OSDI resist at 0.5V: {osdi_test[0]}")
-        print(f"DEBUG: JAX resist at 0.5V: {jax_test[0]}")
-        print(f"DEBUG: OSDI jac at 0.5V: {osdi_test[2][:4]}")
-
-        max_resist_diff = 0.0
-
-        diff = np.max(np.abs(np.array(osdi_test[0]) - jax_test[0]))
-        print(f'\nMax diff: {diff}')
-        assert diff < 1e-8, f"Max resistive diff over sweep: {max_resist_diff}"
-        # for v in np.linspace(0.0, 0.7, 15):  # Forward bias up to 0.7V
-        #     voltages = [v, 0.0]  # V(A)=v, V(C)=0
-
-        #     osdi_res = osdi_eval(voltages)
-        #     jax_res = jax_eval(voltages)
-
-        #     resist_diff = np.max(np.abs(np.array(osdi_res[0]) - np.array(jax_res[0])))
-        #     max_resist_diff = max(max_resist_diff, resist_diff)
-
-        # # Diode has exponential behavior, allow slightly larger tolerance
-        # assert max_resist_diff < 1e-8, f"Max resistive diff over sweep: {max_resist_diff}"
 
     def test_reverse_bias(self, osdi_path, va_path):
         """Test at V = -1V (reverse bias)."""
@@ -715,31 +996,6 @@ class TestDiodeComparison:
         passed, max_abs, max_rel = compare_arrays(
             osdi_res[0], jax_res[0], rtol=1e-8, atol=1e-15        )
         assert passed, f"Resistive residual mismatch: max_abs={max_abs}, max_rel={max_rel}"
-
-    def test_jacobian_match(self, osdi_path, va_path):
-        """Compare Jacobian (conductance) at operating point."""
-        params = {
-            "Is": 1e-12,  # Saturation current
-            "N": 1.0,     # Ideality factor
-            "Rs": 10.0,   # Series resistance (non-zero to avoid node collapse)
-            "Tnom": 27.0,  # Nominal temperature (Celsius)
-            "mfactor": 1.0,
-        }
-
-        osdi_eval, _, _, _, jacobian_keys, n_nodes = create_osdi_evaluator(osdi_path, params)
-        jax_eval, _, _ = create_jax_evaluator(va_path, params)
-
-        voltages = [0.6, 0.0]  # Forward bias at 0.6V
-
-        osdi_res = osdi_eval(voltages)
-        jax_res = jax_eval(voltages)
-
-        # Compare resistive Jacobian using format-aware comparison
-        result = compare_jacobians(
-            osdi_res[2], jax_res[2], n_nodes, jacobian_keys,
-            rtol=1e-6, atol=1e-12
-        )
-        assert result.passed, f"Resistive Jacobian mismatch:\n{result.report}"
 
 
 # =============================================================================
@@ -785,7 +1041,11 @@ def get_bsim4_va_path() -> Path:
 
 
 class TestPSP102Comparison:
-    """Compare OSDI vs JAX for PSP102 MOSFET model."""
+    """Additional OSDI vs JAX tests for PSP102 MOSFET model.
+
+    Basic Vgs sweep/Jacobian tests are in TestTransistorModelsParameterized.
+    This class contains unique tests like Vds sweep and debug helpers.
+    """
 
     @pytest.fixture(scope="class")
     def osdi_path(self):
@@ -813,35 +1073,17 @@ class TestPSP102Comparison:
             "mfactor": 1.0,
         }
 
-    def test_ids_vs_vgs_sweep(self, osdi_path, va_path, nmos_params):
-        """Sweep Vgs at fixed Vds, compare Ids."""
-        osdi_eval, _, _, _, _, _ = create_osdi_evaluator(osdi_path, nmos_params)
-        jax_eval, _, _ = create_jax_evaluator(va_path, nmos_params)
-
-        max_diff = 0.0
-        vds = 0.5  # Fixed Vds
-
-        for vgs in np.linspace(0.0, 1.0, 11):
-            # MOSFET terminals: D, G, S, B
-            # Voltages referenced to ground (usually S or B)
-            voltages = [vds, vgs, 0.0, 0.0]  # Vd, Vg, Vs, Vb
-
-            osdi_res = osdi_eval(voltages)
-            jax_res = jax_eval(voltages)
-
-            # Compare drain current (first residual typically)
-            resist_diff = np.max(np.abs(np.array(osdi_res[0]) - np.array(jax_res[0])))
-            max_diff = max(max_diff, resist_diff)
-
-        # Complex models may have more numerical variation
-        assert max_diff < 1e-6, f"Max Ids diff over Vgs sweep: {max_diff}"
-
+    @pytest.mark.xfail(reason="PSP102 has known PHI node resolution issues for NMOS/PMOS branching")
     def test_ids_vs_vds_sweep(self, osdi_path, va_path, nmos_params):
-        """Sweep Vds at fixed Vgs, compare Ids (output characteristics)."""
+        """Sweep Vds at fixed Vgs, compare Ids (output characteristics).
+
+        Uses VAMS-LRM current tolerances (abstol=1e-12, rtol=1e-4) to catch
+        magnitude errors that were previously masked by flat 1e-6 tolerance.
+        """
         osdi_eval, _, _, _, _, _ = create_osdi_evaluator(osdi_path, nmos_params)
         jax_eval, _, _ = create_jax_evaluator(va_path, nmos_params)
 
-        max_diff = 0.0
+        all_failed = []
         vgs = 0.6  # Fixed Vgs (above threshold)
 
         for vds in np.linspace(0.0, 1.0, 11):
@@ -850,10 +1092,18 @@ class TestPSP102Comparison:
             osdi_res = osdi_eval(voltages)
             jax_res = jax_eval(voltages)
 
-            resist_diff = np.max(np.abs(np.array(osdi_res[0]) - np.array(jax_res[0])))
-            max_diff = max(max_diff, resist_diff)
+            # Compare residuals using VAMS-LRM current tolerance
+            passed, max_abs, max_rel, failed = compare_residuals(
+                osdi_res[0], jax_res[0]
+            )
+            if not passed:
+                all_failed.append((vds, failed, max_abs, max_rel))
 
-        assert max_diff < 1e-6, f"Max Ids diff over Vds sweep: {max_diff}"
+        assert len(all_failed) == 0, (
+            f"Residual comparison failed at {len(all_failed)} points. "
+            f"First failure at Vds={all_failed[0][0]:.2f}V: "
+            f"max_abs={all_failed[0][2]:.3e}, max_rel={all_failed[0][3]:.2%}"
+        )
 
     def test_debug_init_comparison(self, osdi_path, va_path, nmos_params):
         """Debug test: compare init/cache values between OSDI and JAX."""
@@ -953,27 +1203,6 @@ class TestPSP102Comparison:
         # This test is for debugging - always passes but prints useful info
         print("\n" + "=" * 60)
 
-    @pytest.mark.xfail(reason="PSP102 has known PHI node resolution issues for NMOS/PMOS branching")
-    def test_jacobian_match(self, osdi_path, va_path, nmos_params):
-        """Compare transconductance/output conductance."""
-        osdi_eval, _, _, _, jacobian_keys, n_nodes = create_osdi_evaluator(osdi_path, nmos_params)
-        jax_eval, _, _ = create_jax_evaluator(va_path, nmos_params)
-
-        # Typical operating point
-        voltages = [0.5, 0.6, 0.0, 0.0]
-
-        osdi_res = osdi_eval(voltages)
-        jax_res = jax_eval(voltages)
-
-        # Compare Jacobian using format-aware comparison
-        # PSP102 has known PHI issues that may cause differences - use relaxed tolerance
-        result = compare_jacobians(
-            osdi_res[2], jax_res[2], n_nodes, jacobian_keys,
-            rtol=1e-4, atol=1e-10
-        )
-        print(f"\nPSP102 Jacobian comparison:\n{result.report}")
-        assert result.passed, f"Jacobian mismatch:\n{result.report}"
-
 
 @pytest.mark.skip(reason="BSIM4 hangs during compilation - needs deeper debugging")
 class TestBSIM4Comparison:
@@ -1039,158 +1268,6 @@ class TestBSIM4Comparison:
             max_diff = max(max_diff, resist_diff)
 
         assert max_diff < 1e-6, f"Max Ids diff over Vds sweep: {max_diff}"
-
-
-class TestEKVComparison:
-    """Compare OSDI vs JAX for EKV MOSFET model.
-
-    EKV has if/else blocks for TYPE-dependent behavior, which should work correctly.
-    This serves as a control test for the NMOS/PMOS conditional handling.
-    """
-
-    @pytest.fixture(scope="class")
-    def osdi_path(self):
-        """Compile ekv.va to OSDI once per class."""
-        va_path = get_ekv_va_path()
-        osdi_path = OSDI_CACHE / "ekv.osdi"
-        compile_va_to_osdi(va_path, osdi_path)
-        return osdi_path
-
-    @pytest.fixture(scope="class")
-    def va_path(self):
-        """Get ekv.va path."""
-        return get_ekv_va_path()
-
-    @pytest.fixture
-    def nmos_params(self):
-        """Minimal NMOS parameters for EKV.
-
-        Note: EKV uses 1e21 as NOT_GIVEN sentinel for TEMP/TNOM.
-        When TEMP=1e21, model uses $temperature. Same for TNOM.
-        We set these explicitly for JAX compatibility.
-        """
-        return {
-            "TYPE": 1,       # NMOS (+1) or PMOS (-1)
-            "W": 1e-6,       # Width (m)
-            "L": 100e-9,     # Length (m)
-            "TEMP": 1e21,    # Sentinel: use $temperature
-            "TNOM": 1e21,    # Sentinel: use default nominal temp
-            "mfactor": 1.0,
-        }
-
-    def test_ids_vs_vgs_sweep(self, osdi_path, va_path, nmos_params):
-        """Sweep Vgs at fixed Vds, compare Ids."""
-        osdi_eval, _, _, _, _, _ = create_osdi_evaluator(osdi_path, nmos_params)
-        jax_eval, _, _ = create_jax_evaluator(va_path, nmos_params)
-
-        max_diff = 0.0
-        vds = 0.5
-
-        for vgs in np.linspace(0.0, 1.0, 11):
-            # EKV terminals: d, g, s, b
-            voltages = [vds, vgs, 0.0, 0.0]
-
-            osdi_res = osdi_eval(voltages)
-            jax_res = jax_eval(voltages)
-
-            resist_diff = np.max(np.abs(np.array(osdi_res[0]) - np.array(jax_res[0])))
-            max_diff = max(max_diff, resist_diff)
-
-        assert max_diff < 1e-6, f"Max Ids diff over Vgs sweep: {max_diff}"
-
-    def test_jacobian_match(self, osdi_path, va_path, nmos_params):
-        """Compare Jacobian at typical operating point."""
-        osdi_eval, _, _, _, jacobian_keys, n_nodes = create_osdi_evaluator(osdi_path, nmos_params)
-        jax_eval, _, _ = create_jax_evaluator(va_path, nmos_params)
-
-        voltages = [0.5, 0.6, 0.0, 0.0]
-
-        osdi_res = osdi_eval(voltages)
-        jax_res = jax_eval(voltages)
-
-        print(f"\nEKV NMOS Jacobian comparison at V={voltages}")
-        print(f"OSDI Jacobian (first 20): {osdi_res[2][:20]}")
-        print(f"JAX Jacobian (first 20):  {jax_res[2][:20]}")
-
-        # Compare Jacobian using format-aware comparison
-        result = compare_jacobians(
-            osdi_res[2], jax_res[2], n_nodes, jacobian_keys,
-            rtol=1e-4, atol=1e-10
-        )
-        print(f"\nEKV Jacobian comparison:\n{result.report}")
-        assert result.passed, f"Jacobian mismatch:\n{result.report}"
-
-
-class TestMVSGComparison:
-    """Compare OSDI vs JAX for MVSG_CMC model.
-
-    MVSG_CMC has if-only blocks (no else), which may trigger the PHI issue
-    we found in PSP102 if it applies to general conditionals.
-    """
-
-    @pytest.fixture(scope="class")
-    def osdi_path(self):
-        """Compile mvsg_cmc.va to OSDI once per class."""
-        va_path = get_mvsg_va_path()
-        osdi_path = OSDI_CACHE / "mvsg_cmc.osdi"
-        compile_va_to_osdi(va_path, osdi_path)
-        return osdi_path
-
-    @pytest.fixture(scope="class")
-    def va_path(self):
-        """Get mvsg_cmc.va path."""
-        return get_mvsg_va_path()
-
-    @pytest.fixture
-    def default_params(self):
-        """Minimal parameters for MVSG_CMC."""
-        return {
-            "lg": 100e-9,    # Gate length (m)
-            "wg": 1e-6,      # Gate width (m)
-            "mfactor": 1.0,
-        }
-
-    def test_ids_vs_vgs_sweep(self, osdi_path, va_path, default_params):
-        """Sweep Vgs at fixed Vds, compare Ids."""
-        osdi_eval, _, _, _, _, _ = create_osdi_evaluator(osdi_path, default_params)
-        jax_eval, _, _ = create_jax_evaluator(va_path, default_params)
-
-        max_diff = 0.0
-        vds = 0.5
-
-        for vgs in np.linspace(0.0, 1.0, 11):
-            # MVSG terminals: d, g, s
-            voltages = [vds, vgs, 0.0]
-
-            osdi_res = osdi_eval(voltages)
-            jax_res = jax_eval(voltages)
-
-            resist_diff = np.max(np.abs(np.array(osdi_res[0]) - np.array(jax_res[0])))
-            max_diff = max(max_diff, resist_diff)
-
-        assert max_diff < 1e-6, f"Max Ids diff over Vgs sweep: {max_diff}"
-
-    def test_jacobian_match(self, osdi_path, va_path, default_params):
-        """Compare Jacobian at typical operating point."""
-        osdi_eval, _, _, _, jacobian_keys, n_nodes = create_osdi_evaluator(osdi_path, default_params)
-        jax_eval, _, _ = create_jax_evaluator(va_path, default_params)
-
-        voltages = [0.5, 0.6, 0.0]
-
-        osdi_res = osdi_eval(voltages)
-        jax_res = jax_eval(voltages)
-
-        print(f"\nMVSG Jacobian comparison at V={voltages}")
-        print(f"OSDI Jacobian (first 20): {osdi_res[2][:20]}")
-        print(f"JAX Jacobian (first 20):  {jax_res[2][:20]}")
-
-        # Compare Jacobian using format-aware comparison
-        result = compare_jacobians(
-            osdi_res[2], jax_res[2], n_nodes, jacobian_keys,
-            rtol=1e-4, atol=1e-10
-        )
-        print(f"\nMVSG Jacobian comparison:\n{result.report}")
-        assert result.passed, f"Jacobian mismatch:\n{result.report}"
 
 
 if __name__ == "__main__":

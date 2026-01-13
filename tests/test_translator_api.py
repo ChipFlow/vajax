@@ -12,6 +12,7 @@ import jax.numpy as jnp
 
 import openvaf_py
 import openvaf_jax
+from jax_spice import build_simparams
 
 # Test model paths
 PROJECT_ROOT = Path(__file__).parent.parent
@@ -180,10 +181,12 @@ class TestTranslateEval:
 
         eval_fn, metadata = translator.translate_eval()
 
-        # Check that voltage indices point to voltage params
+        # Check that voltage indices point to voltage or implicit_unknown params
+        # Both are runtime voltage values that come from the varying_params array
+        voltage_kinds = ('voltage', 'implicit_unknown')
         for idx in metadata['voltage_indices']:
             kind = metadata['param_kinds'][idx]
-            assert kind == 'voltage', f"Index {idx} should be voltage, got {kind}"
+            assert kind in voltage_kinds, f"Index {idx} should be voltage/implicit_unknown, got {kind}"
 
     def test_translate_eval_full_flow(self):
         """Test full init+eval flow with new API."""
@@ -206,7 +209,10 @@ class TestTranslateEval:
         # Build voltage inputs (1V across resistor)
         voltage_inputs = jnp.array([1.0])  # V(p,n) = 1V
 
-        result = eval_fn(shared_inputs, voltage_inputs, cache)
+        # Build simparams array
+        simparams = jnp.array(build_simparams(eval_meta))
+
+        result = eval_fn(shared_inputs, voltage_inputs, cache, simparams)
         res_resist = result[0]
 
         # Current should be V/R = 1/1000 = 1mA
@@ -243,24 +249,36 @@ class TestTranslateEvalEKV:
 
         # Build voltage inputs
         node_names = eval_meta['node_names']
-        V = [0.5, 0.6, 0.0, 0.0]  # Vds=0.5, Vgs=0.6
+        V = [0.5, 0.6, 0.0, 0.0, 0.0, 0.0]  # Vds=0.5, Vgs=0.6, + internal nodes at 0
 
         voltage_inputs = []
         for i in eval_meta['voltage_indices']:
             name = eval_meta['param_names'][i]
-            inner = name[2:-1]  # Remove V( and )
-            if ',' in inner:
-                node_pos, node_neg = inner.split(',')
-                idx_pos = node_names.index(node_pos.strip())
-                idx_neg = node_names.index(node_neg.strip())
-                voltage_inputs.append(V[idx_pos] - V[idx_neg])
+            kind = eval_meta['param_kinds'][i]
+
+            if kind == 'implicit_unknown':
+                # Internal node voltage - set to 0.0 (solver would compute this)
+                voltage_inputs.append(0.0)
+            elif name.startswith('V('):
+                inner = name[2:-1]  # Remove V( and )
+                if ',' in inner:
+                    node_pos, node_neg = inner.split(',')
+                    idx_pos = node_names.index(node_pos.strip())
+                    idx_neg = node_names.index(node_neg.strip())
+                    voltage_inputs.append(V[idx_pos] - V[idx_neg])
+                else:
+                    idx = node_names.index(inner.strip())
+                    voltage_inputs.append(V[idx])
             else:
-                idx = node_names.index(inner.strip())
-                voltage_inputs.append(V[idx])
+                # Unknown voltage param format - default to 0.0
+                voltage_inputs.append(0.0)
 
         voltage_arr = jnp.array(voltage_inputs)
 
-        result = eval_fn(shared_inputs, voltage_arr, cache)
+        # Build simparams array
+        simparams = jnp.array(build_simparams(eval_meta))
+
+        result = eval_fn(shared_inputs, voltage_arr, cache, simparams)
         res_resist = result[0]
 
         # Should produce non-zero drain current

@@ -1187,8 +1187,8 @@ class CircuitEngine:
                     shared_indices, varying_indices_list,
                     shared_cache_indices, varying_cache_indices
                 )
-                # vmap with in_axes=(None, 0, None, 0) - shared arrays broadcast
-                vmapped_split_fn = jax.jit(jax.vmap(split_fn, in_axes=(None, 0, None, 0)))
+                # vmap with in_axes=(None, 0, None, 0, None) - shared arrays and simparams broadcast
+                vmapped_split_fn = jax.jit(jax.vmap(split_fn, in_axes=(None, 0, None, 0, None)))
 
                 # Split cache arrays
                 shared_cache = cache[0, shared_cache_indices]  # (n_shared_cache,)
@@ -1197,10 +1197,16 @@ class CircuitEngine:
                 split_fn, split_meta = translator.translate_eval_array_with_cache_split(
                     shared_indices, varying_indices_list
                 )
-                # vmap with in_axes=(None, 0, 0)
-                vmapped_split_fn = jax.jit(jax.vmap(split_fn, in_axes=(None, 0, 0)))
+                # vmap with in_axes=(None, 0, 0, None) - simparams broadcast across devices
+                vmapped_split_fn = jax.jit(jax.vmap(split_fn, in_axes=(None, 0, 0, None)))
                 shared_cache = None
                 device_cache = cache
+
+            # Build default simparams array
+            # simparams[0] = analysis_type (0=DC, 1=AC, 2=transient, 3=noise)
+            # simparams[1+] = other simparams as registered by the model (gmin, etc.)
+            # For now, use defaults - DC analysis with gmin=1e-12, mfactor=1.0
+            default_simparams = jnp.array([0.0, 1.0, 1e-12], dtype=jnp.float64)  # [analysis_type, mfactor, gmin]
 
             # Compute voltage positions within device_params (varying indices)
             varying_idx_to_pos = {orig_idx: pos for pos, orig_idx in enumerate(varying_indices_list)}
@@ -1222,6 +1228,7 @@ class CircuitEngine:
             compiled['device_cache'] = device_cache
             compiled['shared_cache_indices'] = shared_cache_indices
             compiled['varying_cache_indices'] = varying_cache_indices
+            compiled['default_simparams'] = default_simparams
 
             split_mem_mb = shared_params.nbytes / 1024 / 1024 + device_params.nbytes / 1024 / 1024
             if shared_cache is not None:
@@ -3446,6 +3453,7 @@ class CircuitEngine:
                     'voltage_positions': compiled['voltage_positions_in_varying'],
                     'use_cache_split': use_cache_split,
                     'shared_cache': compiled.get('shared_cache'),
+                    'default_simparams': compiled.get('default_simparams', jnp.array([0.0, 1.0, 1e-12])),
                 }
             # Store device_cache (or full cache if not split) - this is passed to build_system
             device_arrays[model_type] = compiled.get('device_cache', cache)
@@ -3560,6 +3568,15 @@ class CircuitEngine:
                     device_params_updated = device_params_updated.at[:, -1].set(gmin)
 
                 vmapped_split_eval = split_info['vmapped_split_eval']
+                default_simparams = split_info['default_simparams']
+
+                # Build simparams array with runtime values
+                # simparams[0] = analysis_type (0=DC, 2=transient)
+                # simparams[1] = mfactor (default 1.0)
+                # simparams[2] = gmin
+                analysis_type_val = jnp.where(inv_dt > 0, 2.0, 0.0)  # tran=2, dc=0
+                simparams = default_simparams.at[0].set(analysis_type_val).at[2].set(gmin)
+
                 # cache here is device_cache (or full cache if not split)
                 # Returns: (res_resist, res_react, jac_resist, jac_react,
                 #           lim_rhs_resist, lim_rhs_react,
@@ -3568,12 +3585,12 @@ class CircuitEngine:
                     batch_res_resist, batch_res_react, batch_jac_resist, batch_jac_react, \
                         batch_lim_rhs_resist, batch_lim_rhs_react, \
                         _batch_ss_resist, _batch_ss_react = \
-                        vmapped_split_eval(shared_params, device_params_updated, shared_cache, cache)
+                        vmapped_split_eval(shared_params, device_params_updated, shared_cache, cache, simparams)
                 else:
                     batch_res_resist, batch_res_react, batch_jac_resist, batch_jac_react, \
                         batch_lim_rhs_resist, batch_lim_rhs_react, \
                         _batch_ss_resist, _batch_ss_react = \
-                        vmapped_split_eval(shared_params, device_params_updated, cache)
+                        vmapped_split_eval(shared_params, device_params_updated, cache, simparams)
 
                 # NOTE: Huge value masking removed - NOI constraint enforcement in NR solver
                 # (lines 5601-5606) now handles 1e40 conductance by zeroing NOI rows/cols in J and f.
@@ -4083,6 +4100,7 @@ class CircuitEngine:
             voltage_positions = compiled['voltage_positions_in_varying']
             vmapped_split_eval = compiled['vmapped_split_eval']
             shared_cache = compiled.get('shared_cache')
+            default_simparams = compiled.get('default_simparams', jnp.array([0.0, 1.0, 1e-12]))
 
             # Update voltage columns in device_params
             device_params_updated = device_params.at[:, voltage_positions].set(voltage_updates)
@@ -4094,17 +4112,20 @@ class CircuitEngine:
             elif uses_simparam_gmin:
                 device_params_updated = device_params_updated.at[:, -1].set(1e-12)
 
+            # Build simparams array with AC analysis values
+            simparams = default_simparams.at[0].set(1.0).at[2].set(1e-12)  # AC=1, gmin=1e-12
+
             # cache here is device_cache (or full cache if not split)
             # Returns: (res_resist, res_react, jac_resist, jac_react,
             #           lim_rhs_resist, lim_rhs_react,
             #           small_signal_resist, small_signal_react)
             if use_cache_split:
                 _, _, batch_jac_resist, batch_jac_react, _, _, _, _ = vmapped_split_eval(
-                    shared_params, device_params_updated, shared_cache, cache
+                    shared_params, device_params_updated, shared_cache, cache, simparams
                 )
             else:
                 _, _, batch_jac_resist, batch_jac_react, _, _, _, _ = vmapped_split_eval(
-                    shared_params, device_params_updated, cache
+                    shared_params, device_params_updated, cache, simparams
                 )
 
             # Extract Jacobian entries

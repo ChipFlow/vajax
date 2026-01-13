@@ -606,10 +606,24 @@ class OpenVAFToJAX:
         # Both 'voltage' and 'implicit_unknown' are node voltages provided at runtime
         voltage_kinds = ('voltage', 'implicit_unknown')
         voltage_indices = [i for i, k in enumerate(eval_param_kinds) if k in voltage_kinds]
-        shared_indices = [i for i, k in enumerate(eval_param_kinds) if k not in voltage_kinds]
+
+        # Identify params that should come from simparams array instead of shared_params
+        # These are runtime environment values: $abstime, mfactor
+        simparam_params: Dict[int, str] = {}
+        for i, (name, kind) in enumerate(zip(eval_param_names, eval_param_kinds)):
+            if kind == 'abstime':
+                simparam_params[i] = '$abstime'
+            elif kind == 'sysfun' and name == 'mfactor':
+                simparam_params[i] = '$mfactor'
+
+        # shared_indices excludes voltage params AND simparam params
+        shared_indices = [
+            i for i, k in enumerate(eval_param_kinds)
+            if k not in voltage_kinds and i not in simparam_params
+        ]
 
         # Build validated inputs for shared params only
-        # (voltage params are provided at runtime)
+        # (voltage params are provided at runtime, simparam params come from simparams array)
         shared_param_names = [eval_param_names[i] for i in shared_indices]
         shared_param_kinds = [eval_param_kinds[i] for i in shared_indices]
 
@@ -623,9 +637,11 @@ class OpenVAFToJAX:
         detailed_param_info = []
         for i, (name, kind) in enumerate(zip(eval_param_names, eval_param_kinds)):
             info = param_info.get(name) or param_info.get(name.upper()) or {}
-            # Value depends on whether this is shared or voltage
+            # Value depends on whether this is shared, voltage, or simparam
             if kind in voltage_kinds:
                 value = None  # Set at runtime from voltage array
+            elif i in simparam_params:
+                value = "(simparam)"  # Comes from simparams array at runtime
             else:
                 shared_idx = shared_indices.index(i)
                 value = shared_inputs[shared_idx]
@@ -678,7 +694,8 @@ class OpenVAFToJAX:
         )
         fn_name, code_lines = builder.build_with_cache_split(
             shared_indices, voltage_indices,
-            shared_cache_indices, varying_cache_indices
+            shared_cache_indices, varying_cache_indices,
+            simparam_params=simparam_params
         )
 
         # Collect codegen warnings (unknown $simparam, $discontinuity, etc.)
@@ -707,11 +724,30 @@ class OpenVAFToJAX:
             for entry in self.dae_data['jacobian']
         ]
 
-        # simparams layout documentation
-        simparams_layout = {
-            0: {'name': 'analysis_type', 'description': '0=DC, 1=AC, 2=transient, 3=noise'},
-            1: {'name': 'gmin', 'description': 'minimum conductance for convergence'},
-        }
+        # Get simparam metadata from builder (dynamically tracked during codegen)
+        simparam_meta = builder.simparam_metadata
+
+        # Build simparams_layout from tracked simparams for documentation
+        simparams_layout = {}
+        for name, idx in simparam_meta.get('simparam_indices', {}).items():
+            # Add description for known simparams
+            descriptions = {
+                '$analysis_type': '0=DC, 1=AC, 2=transient, 3=noise',
+                'gmin': 'minimum conductance for convergence (S)',
+                'abstol': 'absolute current tolerance (A)',
+                'vntol': 'absolute voltage tolerance (V)',
+                'reltol': 'relative tolerance',
+                'tnom': 'nominal temperature (K)',
+                'scale': 'scale factor',
+                'shrink': 'shrink factor',
+                'imax': 'branch current limit (A)',
+                '$abstime': 'absolute simulation time (s)',
+                '$mfactor': 'device multiplicity factor',
+            }
+            simparams_layout[idx] = {
+                'name': name,
+                'description': descriptions.get(name, f'$simparam("{name}")'),
+            }
 
         metadata = {
             'param_names': eval_param_names,
@@ -732,6 +768,10 @@ class OpenVAFToJAX:
             'mfactor': mfactor,
             'use_cache_split': use_cache_split,
             'simparams_layout': simparams_layout,
+            # Simparam metadata for building simparams array
+            'simparams_used': simparam_meta.get('simparams_used', ['$analysis_type']),
+            'simparam_indices': simparam_meta.get('simparam_indices', {'$analysis_type': 0}),
+            'simparam_count': simparam_meta.get('simparam_count', 1),
             'warnings': warnings,
         }
 
@@ -831,6 +871,10 @@ class OpenVAFToJAX:
         n_init_params = len(init_param_names)
         n_user_params = len(user_param_names)
 
+        # Build default simparams array for legacy interface
+        # Default to DC analysis with standard gmin
+        default_simparams = jnp.array([0.0, 1.0, 1e-12])  # [analysis_type, mfactor, gmin]
+
         # Create combined function with proper mapping
         def combined_fn(inputs):
             inputs_arr = jnp.asarray(inputs)
@@ -848,10 +892,10 @@ class OpenVAFToJAX:
             for user_idx, mir_idx in user_to_eval_mapping:
                 device_params = device_params.at[mir_idx].set(inputs_arr[user_idx])
 
-            # Run eval with empty shared params, device_params, and cache
+            # Run eval with empty shared params, device_params, cache, and simparams
             # Returns: (res_resist, res_react, jac_resist, jac_react,
             #           lim_rhs_resist, lim_rhs_react, small_signal_resist, small_signal_react)
-            result = eval_fn([], device_params, cache)
+            result = eval_fn([], device_params, cache, default_simparams)
             res_resist, res_react, jac_resist, jac_react = result[:4]
 
             # Return separate resist and react arrays
