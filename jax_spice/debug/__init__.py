@@ -31,6 +31,20 @@ from jax_spice.debug.param_analyzer import (
     analyze_model,
 )
 
+from jax_spice.debug.model_comparison import (
+    ModelComparator,
+    ComparisonResult,
+    CacheAnalysis,
+    quick_compare,
+)
+
+from jax_spice.debug.mir_inspector import (
+    MIRInspector,
+    ParamSummary,
+    PHIInfo,
+    inspect_model,
+)
+
 # MIR analysis imports are optional (require networkx/pydot)
 try:
     from jax_spice.debug.mir_analysis import (
@@ -71,6 +85,16 @@ __all__ = [
     "ParamInfo",
     "KindSummary",
     "analyze_model",
+    # Model comparison
+    "ModelComparator",
+    "ComparisonResult",
+    "CacheAnalysis",
+    "quick_compare",
+    # MIR inspection
+    "MIRInspector",
+    "ParamSummary",
+    "PHIInfo",
+    "inspect_model",
     # MIR analysis (optional)
     "generate_mir_dot",
     "load_mir_cfg",
