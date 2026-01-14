@@ -2,13 +2,13 @@
 
 This module provides SSA-specific analysis including:
 - Branch condition mapping
-- PHI node resolution using successor-pair lookup (no dominator computation needed)
+- PHI node resolution using dominator-based lookup
 - Multi-way PHI handling for complex control flow
 """
 
 from dataclasses import dataclass
 from enum import Enum
-from typing import Dict, FrozenSet, List, Optional, Tuple
+from typing import Dict, FrozenSet, List, Optional, Set, Tuple
 
 from .cfg import CFGAnalyzer, LoopInfo
 from .types import V_F_ZERO, BlockId, MIRFunction, MIRInstruction, ValueId
@@ -64,8 +64,10 @@ class PHIResolution:
 class SSAAnalyzer:
     """SSA-specific analysis for PHI resolution.
 
-    Uses a simple successor-pair lookup approach (like the OSDI pipeline)
-    instead of expensive dominator computation.
+    Uses dominator-based PHI resolution:
+    1. Find the immediate dominator of the PHI block
+    2. Walk up dominator tree to find the controlling branch
+    3. Map predecessors to branch targets to determine condition
     """
 
     def __init__(self, mir_func: MIRFunction, cfg: CFGAnalyzer):
@@ -81,6 +83,7 @@ class SSAAnalyzer:
         # Cached analysis - built lazily
         self._branch_conditions: Optional[Dict[str, Dict[str, Tuple[ValueId, bool]]]] = None
         self._succ_pair_map: Optional[Dict[FrozenSet[str], List[str]]] = None
+        self._pred_to_branch_target: Optional[Dict[str, Dict[str, str]]] = None
 
     @property
     def branch_conditions(self) -> Dict[str, Dict[str, Tuple[ValueId, bool]]]:
@@ -211,11 +214,12 @@ class SSAAnalyzer:
         )
 
     def _resolve_two_way_phi(self, phi: MIRInstruction) -> PHIResolution:
-        """Resolve a two-way PHI node using successor-pair lookup.
+        """Resolve a two-way PHI node using dominator-based lookup.
 
-        Uses the same approach as OpenVAF's OSDI pipeline:
-        1. Check if either predecessor is a branching block that targets phi's block
-        2. Look up in succ_pair_map to find a block whose successors match the predecessors
+        Strategy:
+        1. Check if either predecessor is the branching block (direct branch)
+        2. Look up in succ_pair_map for blocks that branch to both predecessors
+        3. Use dominator-based resolution to find the controlling branch
         """
         assert phi.phi_operands and len(phi.phi_operands) == 2
 
@@ -290,9 +294,15 @@ class SSAAnalyzer:
                         )
 
         # Strategy 3: Trace back through unconditional jumps to find branching ancestor
-        # This handles diamond-with-intermediate-blocks patterns where predecessors
-        # aren't direct branch targets but reach the PHI block via JMP chains.
+        # This handles diamond-with-intermediate-blocks patterns
         resolution = self._resolve_via_ancestor_trace(pred0, pred1, val0, val1)
+        if resolution:
+            return resolution
+
+        # Strategy 4: Dominator-based resolution
+        # Walk up the dominator tree to find a branching dominator
+        resolution = self._resolve_via_dominator(phi.block, [pred0, pred1],
+                                                  {pred0: val0, pred1: val1})
         if resolution:
             return resolution
 
@@ -301,6 +311,108 @@ class SSAAnalyzer:
             type=PHIResolutionType.FALLBACK,
             single_value=val0
         )
+
+    def _resolve_via_dominator(
+        self,
+        phi_block: str,
+        pred_blocks: List[str],
+        val_by_pred: Dict[str, ValueId]
+    ) -> Optional[PHIResolution]:
+        """Resolve PHI using dominator tree.
+
+        Walk up the dominator tree from phi_block to find a branching block
+        that controls which predecessor is taken.
+        """
+        idom = self.cfg.immediate_dominators
+        branch_conds = self.branch_conditions
+
+        # Walk up dominator tree
+        current = phi_block
+        visited = set()
+        max_depth = 100  # Safety limit
+
+        while current and current not in visited and len(visited) < max_depth:
+            visited.add(current)
+            dom = idom.get(current)
+            if dom is None:
+                break
+
+            # Check if this dominator is a branching block
+            if dom in branch_conds:
+                cond_info = branch_conds[dom]
+                if len(cond_info) == 2:
+                    # Find which branch target each predecessor is reachable from
+                    targets = list(cond_info.keys())
+                    t0, t1 = targets
+                    cond_var, is_t0_true = cond_info[t0]
+
+                    # Build mapping: predecessor -> which target it's reachable from
+                    pred_to_target: Dict[str, str] = {}
+                    for pred in pred_blocks:
+                        t0_reaches = self._is_dominated_reachable(t0, pred, dom)
+                        t1_reaches = self._is_dominated_reachable(t1, pred, dom)
+
+                        # We want exclusive reachability
+                        if t0_reaches and not t1_reaches:
+                            pred_to_target[pred] = t0
+                        elif t1_reaches and not t0_reaches:
+                            pred_to_target[pred] = t1
+
+                    # Check if all predecessors have exclusive mappings
+                    if len(pred_to_target) == len(pred_blocks):
+                        # Group by target
+                        t0_preds = [p for p, t in pred_to_target.items() if t == t0]
+                        t1_preds = [p for p, t in pred_to_target.items() if t == t1]
+
+                        if t0_preds and t1_preds:
+                            # Get values for each group
+                            t0_vals = list(set(val_by_pred[p] for p in t0_preds))
+                            t1_vals = list(set(val_by_pred[p] for p in t1_preds))
+
+                            # If each group has a single unique value, we can resolve
+                            if len(t0_vals) == 1 and len(t1_vals) == 1:
+                                if is_t0_true:
+                                    return PHIResolution(
+                                        type=PHIResolutionType.TWO_WAY,
+                                        condition=cond_var,
+                                        true_value=t0_vals[0],
+                                        false_value=t1_vals[0],
+                                    )
+                                else:
+                                    return PHIResolution(
+                                        type=PHIResolutionType.TWO_WAY,
+                                        condition=cond_var,
+                                        true_value=t1_vals[0],
+                                        false_value=t0_vals[0],
+                                    )
+
+            current = dom
+
+        return None
+
+    def _is_dominated_reachable(self, start: str, target: str, dominator: str) -> bool:
+        """Check if target is reachable from start without going back through dominator."""
+        if start == target:
+            return True
+
+        visited = {dominator}  # Don't go back through dominator
+        stack = [start]
+
+        while stack:
+            current = stack.pop()
+            if current in visited:
+                continue
+            visited.add(current)
+
+            if current == target:
+                return True
+
+            if current in self.mir_func.blocks:
+                for succ in self.mir_func.blocks[current].successors:
+                    if succ not in visited:
+                        stack.append(succ)
+
+        return False
 
     def _resolve_via_ancestor_trace(
         self, pred0: str, pred1: str, val0: ValueId, val1: ValueId
@@ -367,16 +479,19 @@ class SSAAnalyzer:
 
         return None
 
-    def _is_reachable(self, start: str, target: str, max_depth: int = 50) -> bool:
-        """Check if target is reachable from start via successors."""
+    def _is_reachable(self, start: str, target: str) -> bool:
+        """Check if target is reachable from start via successors.
+
+        Uses visited set to prevent infinite loops. No iteration limit since
+        large CFGs (e.g., PSP102 with 2237 blocks) need full reachability analysis.
+        """
         if start == target:
             return True
 
         visited = set()
         stack = [start]
-        depth = 0
 
-        while stack and depth < max_depth:
+        while stack:
             current = stack.pop()
             if current in visited:
                 continue
@@ -390,14 +505,17 @@ class SSAAnalyzer:
                     if succ not in visited:
                         stack.append(succ)
 
-            depth += 1
-
         return False
 
     def _resolve_multi_way_phi(self, phi: MIRInstruction) -> PHIResolution:
         """Resolve a multi-way PHI node (3+ predecessors).
 
-        Groups predecessors by value and builds nested where expressions.
+        Strategy:
+        1. Group predecessors by value
+        2. If 2 unique values, try dominator-based TWO_WAY resolution
+        3. Otherwise, build nested where using hierarchical peeling:
+           a. Try dominator-based peeling first
+           b. If that fails, try ancestor trace peeling
         """
         assert phi.phi_operands and len(phi.phi_operands) >= 3
 
@@ -414,34 +532,41 @@ class SSAAnalyzer:
 
         unique_vals = list(val_to_preds.keys())
 
-        # If only 2 unique values, simplify to TWO_WAY
+        # If only 2 unique values, try dominator-based TWO_WAY resolution
         if len(unique_vals) == 2:
-            val_a, val_b = unique_vals
-            preds_a = val_to_preds[val_a]
-            preds_b = val_to_preds[val_b]
+            # Try dominator-based resolution first
+            resolution = self._resolve_via_dominator(phi.block, pred_blocks, val_by_pred)
+            if resolution:
+                return resolution
 
-            # Find condition that separates these groups
-            condition = self._find_condition_for_groups(preds_a, preds_b)
-            if condition:
-                return PHIResolution(
-                    type=PHIResolutionType.TWO_WAY,
-                    condition=condition,
-                    true_value=val_a,
-                    false_value=val_b,
-                )
+            # Try ancestor trace as fallback for 2-value case
+            # This handles cases where the controlling branch isn't in the dominator tree
+            resolution = self._resolve_via_ancestor_trace_for_groups(
+                val_to_preds, unique_vals
+            )
+            if resolution:
+                return resolution
 
-        # Build nested cases
+        # Build nested cases using hierarchical peeling
         cases: List[Tuple[str, ValueId]] = []
         remaining = list(pred_blocks)
 
-        # Try to peel off predecessors one at a time
+        # Peel off predecessors one at a time
         while len(remaining) > 1:
-            peeled = self._peel_one_predecessor(remaining, val_by_pred)
+            # Try dominator-based peeling first
+            peeled = self._peel_via_dominator(phi.block, remaining, val_by_pred)
+
+            # If dominator fails and exactly 2 remaining, try ancestor trace
+            if peeled is None and len(remaining) == 2:
+                peeled = self._peel_via_ancestor_trace(remaining, val_by_pred)
+
             if peeled is None:
                 break
-            cond, value, pred = peeled
+
+            cond, value, peeled_preds = peeled
             cases.append((cond, value))
-            remaining.remove(pred)
+            for p in peeled_preds:
+                remaining.remove(p)
 
         # Default is the remaining predecessor's value
         default = val_by_pred.get(remaining[0], phi.phi_operands[0].value) if remaining else phi.phi_operands[0].value
@@ -457,6 +582,200 @@ class SSAAnalyzer:
             cases=cases,
             default=default,
         )
+
+    def _peel_via_dominator(
+        self,
+        phi_block: str,
+        remaining: List[str],
+        val_by_pred: Dict[str, ValueId]
+    ) -> Optional[Tuple[str, ValueId, List[str]]]:
+        """Peel off a subset of predecessors using dominator-based condition.
+
+        Returns (condition, value, list_of_peeled_preds) or None.
+        """
+        idom = self.cfg.immediate_dominators
+        branch_conds = self.branch_conditions
+
+        # Walk up dominator tree
+        current = phi_block
+        visited: Set[str] = set()
+        max_depth = 100
+
+        while current and current not in visited and len(visited) < max_depth:
+            visited.add(current)
+            dom = idom.get(current)
+            if dom is None:
+                break
+
+            if dom in branch_conds:
+                cond_info = branch_conds[dom]
+                if len(cond_info) == 2:
+                    targets = list(cond_info.keys())
+                    t0, t1 = targets
+                    cond_var, is_t0_true = cond_info[t0]
+
+                    # Map remaining predecessors to targets
+                    t0_preds: List[str] = []
+                    t1_preds: List[str] = []
+                    unmapped: List[str] = []
+
+                    for pred in remaining:
+                        t0_reaches = self._is_dominated_reachable(t0, pred, dom)
+                        t1_reaches = self._is_dominated_reachable(t1, pred, dom)
+
+                        if t0_reaches and not t1_reaches:
+                            t0_preds.append(pred)
+                        elif t1_reaches and not t0_reaches:
+                            t1_preds.append(pred)
+                        else:
+                            unmapped.append(pred)
+
+                    # If we can peel some but not all, and all peeled have same value
+                    for preds, target in [(t0_preds, t0), (t1_preds, t1)]:
+                        if preds and len(preds) < len(remaining):
+                            vals = list(set(val_by_pred[p] for p in preds))
+                            if len(vals) == 1:
+                                _, is_target_true = cond_info[target]
+                                cond = cond_var if is_target_true else f"!{cond_var}"
+                                return (cond, vals[0], preds)
+
+            current = dom
+
+        return None
+
+    def _resolve_via_ancestor_trace_for_groups(
+        self,
+        val_to_preds: Dict[ValueId, List[BlockId]],
+        unique_vals: List[ValueId]
+    ) -> Optional[PHIResolution]:
+        """Resolve 2-value multi-way PHI by finding branch that separates value groups.
+
+        When the controlling branch isn't in the dominator tree, we search ALL
+        branching blocks for one that exclusively separates the two value groups.
+        """
+        if len(unique_vals) != 2:
+            return None
+
+        val0, val1 = unique_vals
+        preds0 = val_to_preds[val0]
+        preds1 = val_to_preds[val1]
+
+        branch_conds = self.branch_conditions
+
+        # For each branching block, check if it separates the two groups
+        for block_name, cond_info in branch_conds.items():
+            if len(cond_info) != 2:
+                continue
+
+            targets = list(cond_info.keys())
+            true_target = None
+            false_target = None
+
+            for target, (cond_var, is_true) in cond_info.items():
+                if is_true:
+                    true_target = target
+                else:
+                    false_target = target
+
+            if not true_target or not false_target:
+                continue
+
+            # Check reachability for ALL preds in each group
+            # Group 0 from true, Group 1 from false
+            g0_all_from_true = all(
+                self._is_reachable(true_target, p) and not self._is_reachable(false_target, p)
+                for p in preds0
+            )
+            g1_all_from_false = all(
+                self._is_reachable(false_target, p) and not self._is_reachable(true_target, p)
+                for p in preds1
+            )
+
+            if g0_all_from_true and g1_all_from_false:
+                cond_var, _ = cond_info[true_target]
+                return PHIResolution(
+                    type=PHIResolutionType.TWO_WAY,
+                    condition=cond_var,
+                    true_value=val0,
+                    false_value=val1,
+                )
+
+            # Group 0 from false, Group 1 from true
+            g0_all_from_false = all(
+                self._is_reachable(false_target, p) and not self._is_reachable(true_target, p)
+                for p in preds0
+            )
+            g1_all_from_true = all(
+                self._is_reachable(true_target, p) and not self._is_reachable(false_target, p)
+                for p in preds1
+            )
+
+            if g0_all_from_false and g1_all_from_true:
+                cond_var, _ = cond_info[true_target]
+                return PHIResolution(
+                    type=PHIResolutionType.TWO_WAY,
+                    condition=cond_var,
+                    true_value=val1,
+                    false_value=val0,
+                )
+
+        return None
+
+    def _peel_via_ancestor_trace(
+        self,
+        remaining: List[str],
+        val_by_pred: Dict[str, ValueId]
+    ) -> Optional[Tuple[str, ValueId, List[str]]]:
+        """Peel off one predecessor from a 2-predecessor list using ancestor trace.
+
+        This is a fallback when dominator peeling fails because the controlling
+        branch isn't in the dominator tree.
+        """
+        if len(remaining) != 2:
+            return None
+
+        pred0, pred1 = remaining
+        val0 = val_by_pred[pred0]
+        val1 = val_by_pred[pred1]
+
+        branch_conds = self.branch_conditions
+
+        for block_name, cond_info in branch_conds.items():
+            if len(cond_info) != 2:
+                continue
+
+            targets = list(cond_info.keys())
+            true_target = None
+            false_target = None
+
+            for target, (cond_var, is_true) in cond_info.items():
+                if is_true:
+                    true_target = target
+                else:
+                    false_target = target
+
+            if not true_target or not false_target:
+                continue
+
+            # Check exclusive reachability
+            pred0_from_true = self._is_reachable(true_target, pred0)
+            pred0_from_false = self._is_reachable(false_target, pred0)
+            pred1_from_true = self._is_reachable(true_target, pred1)
+            pred1_from_false = self._is_reachable(false_target, pred1)
+
+            cond_var, _ = cond_info[true_target]
+
+            # pred0 only from true, pred1 only from false
+            if pred0_from_true and not pred0_from_false and pred1_from_false and not pred1_from_true:
+                # Peel pred0 with condition true
+                return (str(cond_var), val0, [pred0])
+
+            # pred0 only from false, pred1 only from true
+            if pred0_from_false and not pred0_from_true and pred1_from_true and not pred1_from_false:
+                # Peel pred1 with condition true
+                return (str(cond_var), val1, [pred1])
+
+        return None
 
     def _find_condition_for_groups(self, preds_a: List[BlockId],
                                     preds_b: List[BlockId]) -> Optional[str]:

@@ -199,18 +199,19 @@ class CFGAnalyzer:
 
             # Find the immediate dominator
             # It's the dominator closest to block (dominates block,
-            # but no other dominator of block dominates it except itself)
+            # but is dominated by all other dominators of block)
             doms = dom[block] - {block}
             if not doms:
                 idom[block] = None
                 continue
 
             # Find the dominator that is dominated by all others
+            # i.e., the one closest to 'block' (furthest from entry)
             for candidate in doms:
                 is_immediate = True
                 for other in doms:
-                    if other != candidate and candidate not in dom.get(other, set()):
-                        # other does not dominate candidate, so other is "closer"
+                    if other != candidate and other not in dom.get(candidate, set()):
+                        # other does not dominate candidate, so candidate is not the closest
                         is_immediate = False
                         break
                 if is_immediate:
