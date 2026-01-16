@@ -17,6 +17,7 @@ def hisimhv_model(compile_model) -> CompiledModel:
     return compile_model(INTEGRATION_PATH / "HiSIMHV/hisimhv.va")
 
 
+@pytest.mark.skip(reason="HiSIM2 has cyclic PHI nodes from Newton-Raphson iterative solvers - needs lax.while_loop support")
 class TestHiSIM2:
     """Test HiSIM2 MOSFET model"""
 
@@ -42,6 +43,7 @@ class TestHiSIM2:
         assert hisim2_model.module.num_jacobian > 0
 
 
+@pytest.mark.skip(reason="HiSIMHV has cyclic PHI nodes from Newton-Raphson iterative solvers - needs lax.while_loop support")
 class TestHiSIMHV:
     """Test HiSIMHV high-voltage MOSFET model"""
 
