@@ -15,8 +15,10 @@ import pytest
 
 import openvaf_jax
 
-# Path to OpenVAF integration tests (in vendor submodule)
-INTEGRATION_PATH = Path(__file__).parent.parent / "vendor" / "OpenVAF" / "integration_tests"
+# Path to OpenVAF integration tests (in vendor submodule at project root)
+# Path: tests/conftest.py -> openvaf_py -> openvaf_jax -> jax-spice (root) -> vendor
+PROJECT_ROOT = Path(__file__).parent.parent.parent.parent
+INTEGRATION_PATH = PROJECT_ROOT / "vendor" / "OpenVAF" / "integration_tests"
 
 # All integration test models with their paths
 INTEGRATION_MODELS = [
