@@ -445,10 +445,11 @@ impl VaModule {
                             }
                             inst_dict.set_item("phi_operands", phi_ops).unwrap();
                         }
-                        mir::InstructionData::Branch { cond, then_dst, else_dst, .. } => {
+                        mir::InstructionData::Branch { cond, then_dst, else_dst, loop_entry } => {
                             inst_dict.set_item("condition", format!("v{}", u32::from(*cond))).unwrap();
                             inst_dict.set_item("true_block", format!("block{}", u32::from(*then_dst))).unwrap();
                             inst_dict.set_item("false_block", format!("block{}", u32::from(*else_dst))).unwrap();
+                            inst_dict.set_item("loop_entry", *loop_entry).unwrap();
                         }
                         mir::InstructionData::Jump { destination } => {
                             inst_dict.set_item("destination", format!("block{}", u32::from(*destination))).unwrap();
@@ -609,10 +610,11 @@ impl VaModule {
                             }
                             inst_dict.set_item("phi_operands", phi_ops).unwrap();
                         }
-                        mir::InstructionData::Branch { cond, then_dst, else_dst, .. } => {
+                        mir::InstructionData::Branch { cond, then_dst, else_dst, loop_entry } => {
                             inst_dict.set_item("condition", format!("v{}", u32::from(*cond))).unwrap();
                             inst_dict.set_item("true_block", format!("block{}", u32::from(*then_dst))).unwrap();
                             inst_dict.set_item("false_block", format!("block{}", u32::from(*else_dst))).unwrap();
+                            inst_dict.set_item("loop_entry", *loop_entry).unwrap();
                         }
                         mir::InstructionData::Jump { destination } => {
                             inst_dict.set_item("destination", format!("block{}", u32::from(*destination))).unwrap();

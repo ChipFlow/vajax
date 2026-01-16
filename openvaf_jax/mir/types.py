@@ -69,6 +69,7 @@ class MIRInstruction:
     condition: Optional[ValueId] = None
     true_block: Optional[str] = None
     false_block: Optional[str] = None
+    loop_entry: bool = False  # True if this branch is a loop entry point
     target_block: Optional[str] = None  # For JMP
 
     # Call-specific fields
@@ -277,6 +278,7 @@ def _parse_instruction(
         inst.condition = ValueId(cond_str) if cond_str else None
         inst.true_block = inst_data.get('true_block')
         inst.false_block = inst_data.get('false_block')
+        inst.loop_entry = inst_data.get('loop_entry', False)
     elif opcode == 'jmp':
         # JMP uses 'destination' in raw MIR data
         inst.target_block = inst_data.get('destination') or inst_data.get('target_block')
