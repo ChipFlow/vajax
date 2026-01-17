@@ -48,10 +48,12 @@ class TestJaxVsInterpreter:
             assert not np.isnan(react), f"{model_name} NaN react at {node}"
 
     # Complex models that now work with the JAX translator
-    WORKING_COMPLEX_MODELS = ['diode_cmc', 'ekv', 'psp102', 'psp103', 'juncap']
+    WORKING_COMPLEX_MODELS = ['diode_cmc', 'ekv', 'psp102', 'psp103', 'juncap',
+                               'hisim2', 'hisimhv', 'asmhemt', 'mvsg']
 
     @pytest.mark.parametrize("model_name,model_path", [
-        m for m in INTEGRATION_MODELS if m[0] in ['diode_cmc', 'ekv', 'psp102', 'psp103', 'juncap']
+        m for m in INTEGRATION_MODELS if m[0] in ['diode_cmc', 'ekv', 'psp102', 'psp103', 'juncap',
+                                                    'hisim2', 'hisimhv', 'asmhemt', 'mvsg']
     ])
     def test_working_complex_model_produces_valid_output(self, compile_model, model_name, model_path):
         """Working complex JAX function produces non-NaN resist outputs"""
@@ -68,11 +70,11 @@ class TestJaxVsInterpreter:
 
     # Models that still have issues with the JAX translator
     FAILING_COMPLEX_MODELS = ['bsim3', 'bsim4', 'bsim6', 'bsimbulk', 'bsimcmg', 'bsimsoi',
-                               'hisim2', 'hisimhv', 'hicum', 'mextram', 'asmhemt', 'mvsg']
+                               'hicum', 'mextram']
 
     @pytest.mark.parametrize("model_name,model_path", [
         m for m in INTEGRATION_MODELS if m[0] in ['bsim3', 'bsim4', 'bsim6', 'bsimbulk', 'bsimcmg', 'bsimsoi',
-                                                    'hisim2', 'hisimhv', 'hicum', 'mextram', 'asmhemt', 'mvsg']
+                                                    'hicum', 'mextram']
     ])
     @pytest.mark.xfail(reason="JAX translator has init variable issues for complex models")
     def test_failing_complex_model_produces_valid_output(self, compile_model, model_name, model_path):
@@ -214,7 +216,7 @@ class TestModelComplexity:
 
     @pytest.mark.parametrize("model_name,model_path", [
         m for m in INTEGRATION_MODELS
-        if m[0] in ('psp103',)  # PSP103 now works
+        if m[0] in ('psp103', 'bsim4', 'hisim2', 'hicum', 'mextram')  # These now work
     ])
     def test_working_complex_model_outputs(self, compile_model, model_name, model_path):
         """Working complex model produces finite outputs"""
@@ -232,25 +234,7 @@ class TestModelComplexity:
 
         assert has_finite, f"{model_name} produced no finite outputs"
 
-    @pytest.mark.parametrize("model_name,model_path", [
-        m for m in INTEGRATION_MODELS
-        if m[0] in ('bsim4', 'hisim2', 'hicum', 'mextram')  # Still failing
-    ])
-    @pytest.mark.xfail(reason="JAX translator has init variable issues for complex models")
-    def test_failing_complex_model_outputs(self, compile_model, model_name, model_path):
-        """Failing complex model produces finite outputs"""
-        model = compile_model(INTEGRATION_PATH / model_path)
-        inputs = model.build_default_inputs()
-
-        residuals, jacobian = model.jax_fn(inputs)
-
-        # Check at least one output is finite
-        has_finite = False
-        for node, res in residuals.items():
-            if np.isfinite(float(res['resist'])):
-                has_finite = True
-                break
-
-        assert has_finite, f"{model_name} produced no finite outputs"
+    # Note: bsim4, hisim2, hicum, mextram all produce finite outputs now
+    # and are tested in test_working_complex_model_outputs above
 
 

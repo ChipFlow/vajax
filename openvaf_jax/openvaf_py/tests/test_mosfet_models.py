@@ -85,7 +85,6 @@ class TestBSIM3:
         for node, res in residuals.items():
             assert not np.isnan(float(res['resist'])), f"NaN at {node}"
 
-    @pytest.mark.xfail(reason="JAX translator has init variable issues for complex models")
     def test_jacobian_valid(self, bsim3_model: CompiledModel):
         """BSIM3 jacobian is valid"""
         inputs = bsim3_model.build_default_inputs()
@@ -104,7 +103,6 @@ class TestBSIM4:
         assert 'bsim4' in bsim4_model.name.lower()
         assert len(bsim4_model.nodes) >= 4
 
-    @pytest.mark.xfail(reason="JAX translator has init variable issues for complex models")
     def test_valid_output(self, bsim4_model: CompiledModel):
         """BSIM4 produces valid outputs"""
         inputs = bsim4_model.build_default_inputs()
@@ -132,7 +130,6 @@ class TestBSIM6:
         assert 'bsim6' in bsim6_model.name.lower()
         assert len(bsim6_model.nodes) >= 4
 
-    @pytest.mark.xfail(reason="JAX translator has init variable issues for complex models")
     def test_valid_output(self, bsim6_model: CompiledModel):
         """BSIM6 produces valid outputs"""
         inputs = bsim6_model.build_default_inputs()
@@ -150,7 +147,6 @@ class TestBSIMBULK:
         assert 'bsimbulk' in bsimbulk_model.name.lower()
         assert len(bsimbulk_model.nodes) >= 4
 
-    @pytest.mark.xfail(reason="JAX translator has init variable issues for complex models")
     def test_valid_output(self, bsimbulk_model: CompiledModel):
         """BSIMBULK produces valid outputs"""
         inputs = bsimbulk_model.build_default_inputs()
@@ -188,7 +184,6 @@ class TestBSIMSOI:
         assert 'bsimsoi' in bsimsoi_model.name.lower()
         assert len(bsimsoi_model.nodes) >= 4
 
-    @pytest.mark.xfail(reason="JAX translator has init variable issues for complex models")
     def test_valid_output(self, bsimsoi_model: CompiledModel):
         """BSIMSOI produces valid outputs"""
         inputs = bsimsoi_model.build_default_inputs()

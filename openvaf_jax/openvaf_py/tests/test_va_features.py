@@ -166,13 +166,12 @@ class TestPSP103NoiseCorrelationNode:
         assert max_residual < 1e30, \
             f"Residuals too large (max={max_residual:.2e}), likely NOI node issue"
 
-    @pytest.mark.xfail(reason="Known issue: V(NOI) non-zero causes 1e40 residuals")
     def test_noi_nonzero_voltage_stability(self, psp103_model):
         """With V(NOI)=0.6V, residuals should still be bounded.
 
-        This test is expected to fail until the issue is fixed.
-        The I(NOIR) <+ V(NOI)/mig contribution with mig=1e-40 creates
-        residual = 0.6 * 1e40 = 6e39 which corrupts NR.
+        Previously this was expected to fail because
+        I(NOIR) <+ V(NOI)/mig with mig=1e-40 creates large residuals.
+        The test now passes with the fixed JAX translator.
         """
         inputs = psp103_model.build_default_inputs()
         param_names = psp103_model.param_names

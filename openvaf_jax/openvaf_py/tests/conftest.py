@@ -7,8 +7,9 @@ from pathlib import Path
 # Path: tests/conftest.py -> openvaf_py -> openvaf_jax -> jax-spice (root)
 sys.path.insert(0, str(Path(__file__).parent.parent.parent.parent))
 
-# Import jax_spice first to configure JAX precision (float64 on CPU/CUDA)
-import jax_spice  # noqa: F401 - imported for side effects
+# Configure JAX float64 precision directly (avoid full jax_spice import)
+import jax
+jax.config.update("jax_enable_x64", True)
 
 from typing import Dict, List, Tuple
 
