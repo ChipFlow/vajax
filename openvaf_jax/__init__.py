@@ -844,6 +844,116 @@ class OpenVAFToJAX:
 
         return eval_fn, metadata
 
+    def translate(
+        self,
+        params: Dict[str, float] = None,
+        temperature: float = 300.0,
+    ) -> Callable:
+        """Generate a single evaluation function (legacy API).
+
+        This is a backward-compatible wrapper around translate_init() and
+        translate_eval(). For new code, prefer using those methods directly
+        for better control over init/eval separation and caching.
+
+        Args:
+            params: Dict of parameter name -> value. Case-insensitive lookup.
+            temperature: Device temperature in Kelvin (default 300K).
+
+        Returns:
+            eval_fn with signature:
+                eval_fn(inputs: List[float]) -> (residuals_dict, jacobian_dict)
+
+            where:
+                - inputs is a list indexed by module.param_names order
+                - residuals_dict maps node_name -> {'resist': float, 'react': float}
+                - jacobian_dict maps (row, col) -> {'resist': float, 'react': float}
+        """
+        import jax
+        import jax.numpy as jnp
+        import numpy as np
+
+        if params is None:
+            params = {}
+
+        # Pre-compile with propagate_constants=False so params can change at runtime
+        init_fn, init_meta = self.translate_init(
+            params=params, temperature=temperature
+        )
+        eval_fn, eval_meta = self.translate_eval(
+            params=params, temperature=temperature, propagate_constants=False
+        )
+        init_fn = jax.jit(init_fn)
+        eval_fn = jax.jit(eval_fn)
+
+        # Build mapping from user param index to init param index
+        init_param_names = list(self.module.init_param_names)
+        user_param_names = list(self.module.param_names)
+        user_indices = []
+        init_indices = []
+        for init_idx, init_name in enumerate(init_param_names):
+            if init_name in user_param_names:
+                user_idx = user_param_names.index(init_name)
+                user_indices.append(user_idx)
+                init_indices.append(init_idx)
+        user_indices_arr = jnp.array(user_indices, dtype=jnp.int32) if user_indices else None
+        init_indices_arr = jnp.array(init_indices, dtype=jnp.int32) if init_indices else None
+
+        # Store metadata for the wrapper
+        shared_indices = eval_meta['shared_indices']
+        voltage_indices = eval_meta['voltage_indices']
+        node_names = eval_meta['node_names']
+        jacobian_keys = eval_meta['jacobian_keys']
+        default_init_inputs = jnp.array(init_meta['init_inputs'])
+        param_names = self.module.param_names
+        param_kinds = self.module.param_kinds
+
+        def wrapper(inputs: List[float]) -> Tuple[Dict, Dict]:
+            """Evaluate the model (legacy dict interface)."""
+            inputs_arr = jnp.asarray(inputs)
+
+            # Extract mfactor for simparams
+            mfactor = 1.0
+            for i, (name, kind) in enumerate(zip(param_names, param_kinds)):
+                if kind == 'sysfun' and name == 'mfactor':
+                    mfactor = float(inputs[i])
+                    break
+
+            # Build init inputs from user inputs
+            init_inputs = default_init_inputs
+            if user_indices_arr is not None:
+                user_values = inputs_arr[user_indices_arr]
+                init_inputs = init_inputs.at[init_indices_arr].set(user_values)
+
+            # Run init to get cache
+            cache, _ = init_fn(init_inputs)
+
+            # Build eval inputs
+            shared_params = inputs_arr[jnp.array(shared_indices)] if shared_indices else jnp.array([])
+            varying_params = inputs_arr[jnp.array(voltage_indices)] if voltage_indices else jnp.array([])
+
+            # Run eval with simparams [analysis_type, mfactor, gmin]
+            simparams = jnp.array([0.0, mfactor, 1e-12])
+            result = eval_fn(shared_params, varying_params, cache, simparams)
+            res_resist, res_react, jac_resist, jac_react = result[:4]
+
+            # Convert to dicts (NumPy for performance)
+            res_resist_np = np.asarray(res_resist)
+            res_react_np = np.asarray(res_react)
+            jac_resist_np = np.asarray(jac_resist)
+            jac_react_np = np.asarray(jac_react)
+
+            residuals = {
+                name: {'resist': res_resist_np[i], 'react': res_react_np[i]}
+                for i, name in enumerate(node_names)
+            }
+            jacobian = {
+                key: {'resist': jac_resist_np[i], 'react': jac_react_np[i]}
+                for i, key in enumerate(jacobian_keys)
+            }
+            return residuals, jacobian
+
+        return wrapper
+
     def translate_init_array(self) -> Tuple[Callable, Dict]:
         """Generate a vmappable init function (internal API for engine).
 

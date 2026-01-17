@@ -130,17 +130,26 @@ class CompiledModel:
         """Build input array with sensible defaults (for legacy compatibility)
 
         Returns list of floats indexed by module.param_names order.
+        Uses actual model defaults from module.get_param_defaults() where available.
         """
+        # Get model's actual parameter defaults
+        param_defaults = self.module.get_param_defaults()
+
         inputs = []
         for name, kind in zip(self.param_names, self.param_kinds):
             if kind == 'voltage':
                 inputs.append(0.0)
+            elif kind == 'current':
+                inputs.append(0.0)
+            elif kind == 'temperature':
+                inputs.append(300.15)  # Operating temperature in Kelvin
             elif kind == 'param':
-                # Use defaults from common parameters
-                if 'temperature' in name.lower() or name == '$temperature':
+                # Use model's default if available
+                if name in param_defaults:
+                    inputs.append(param_defaults[name])
+                # Fallback for common parameters not in defaults
+                elif 'temperature' in name.lower() or name == '$temperature':
                     inputs.append(300.15)
-                elif name.lower() in ('tnom', 'tref'):
-                    inputs.append(300.0)
                 elif name.lower() == 'mfactor':
                     inputs.append(1.0)
                 elif name.lower() == 'r':
@@ -153,6 +162,12 @@ class CompiledModel:
                 # params in eval functions across all tested models (resistor,
                 # capacitor, diode, bsim4, psp103). See openvaf_jax.py for details.
                 inputs.append(0.0)
+            elif kind == 'sysfun':
+                # System functions like mfactor
+                if 'mfactor' in name.lower():
+                    inputs.append(1.0)
+                else:
+                    inputs.append(0.0)
             else:
                 inputs.append(0.0)
         return inputs
