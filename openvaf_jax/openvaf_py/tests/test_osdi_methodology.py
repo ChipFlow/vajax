@@ -37,7 +37,9 @@ CJ0 = 10e-9             # Junction capacitance [F]
 VCRIT = VT * log(VT / (sqrt(2) * IS))
 
 # Paths
-OSDI_TEST_DATA = Path(__file__).parent.parent / "vendor" / "OpenVAF" / "openvaf" / "test_data" / "osdi"
+# Path: tests/test_osdi_methodology.py -> openvaf_py -> openvaf_jax -> jax-spice (root)
+PROJECT_ROOT = Path(__file__).parent.parent.parent.parent
+OSDI_TEST_DATA = PROJECT_ROOT / "vendor" / "OpenVAF" / "openvaf" / "test_data" / "osdi"
 
 
 def id_func(vd: float) -> float:
@@ -71,9 +73,10 @@ class TestDiodeLimOSDI:
 
     @pytest.fixture(scope="class")
     def diode_jax(self, diode_lim):
-        """Create JAX function from diode_lim model"""
+        """Create JAX function from diode_lim model using CompiledModel pattern"""
+        from conftest import CompiledModel
         translator = openvaf_jax.OpenVAFToJAX(diode_lim)
-        return translator.translate()
+        return CompiledModel(diode_lim, translator)
 
     def test_model_compiles(self, diode_lim):
         """Model compiles successfully"""
@@ -203,16 +206,17 @@ class TestSimpleResistorOSDI:
     @pytest.fixture(scope="class")
     def resistor(self):
         """Compile resistor model"""
-        va_path = Path(__file__).parent.parent / "vendor" / "OpenVAF" / "integration_tests" / "RESISTOR" / "resistor.va"
+        va_path = PROJECT_ROOT / "vendor" / "OpenVAF" / "integration_tests" / "RESISTOR" / "resistor.va"
         modules = openvaf_py.compile_va(str(va_path))
         assert len(modules) == 1
         return modules[0]
 
     @pytest.fixture(scope="class")
     def resistor_jax(self, resistor):
-        """Create JAX function from resistor model"""
+        """Create JAX function from resistor model using CompiledModel pattern"""
+        from conftest import CompiledModel
         translator = openvaf_jax.OpenVAFToJAX(resistor)
-        return translator.translate()
+        return CompiledModel(resistor, translator)
 
     @pytest.mark.parametrize("voltage,resistance", [
         (1.0, 1000.0),
@@ -248,7 +252,7 @@ class TestSimpleResistorOSDI:
 
         # Build JAX inputs (need to preserve order from param_names)
         jax_inputs = [interp_params[name] for name in resistor.param_names]
-        jax_residuals, jax_jacobian = resistor_jax(jax_inputs)
+        jax_residuals, jax_jacobian = resistor_jax.jax_fn(jax_inputs)
 
         # Compare
         expected_current = voltage / resistance
@@ -293,7 +297,7 @@ class TestSimpleResistorOSDI:
         _, interp_jacobian = resistor.run_init_eval(interp_params)
 
         jax_inputs = [interp_params[name] for name in resistor.param_names]
-        _, jax_jacobian = resistor_jax(jax_inputs)
+        _, jax_jacobian = resistor_jax.jax_fn(jax_inputs)
 
         expected_conductance = 1.0 / resistance
         interp_jac_dict = {(r, c): resist for r, c, resist, _ in interp_jacobian}
