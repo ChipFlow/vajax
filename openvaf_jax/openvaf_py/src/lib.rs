@@ -1,13 +1,19 @@
 use std::ffi::c_void;
 use std::collections::HashMap;
+use std::sync::Arc;
 use pyo3::prelude::*;
 use pyo3::exceptions::PyValueError;
 
+use basedb::BaseDB;
 use basedb::diagnostics::ConsoleSink;
 use hir::{CompilationDB, CompilationOpts, Expr, Literal, Type};
+use hir_def::{DefWithBodyId, ExprId};
+use hir_def::body::BodySourceMap;
+use hir_def::db::HirDefDB;
 use hir_lower::{CurrentKind, ParamKind, PlaceKind};
 use syntax::ast::UnaryOp;
 use lasso::Rodeo;
+use vfs::FileId;
 use mir::{FuncRef, Function, Param, Value, F_ZERO, ValueDef};
 use mir_interpret::{Interpreter, InterpreterState, Data};
 use paths::AbsPathBuf;
@@ -60,6 +66,29 @@ struct OsdiNoiseInfo {
     name: String,
     node1: u32,
     node2: u32,  // u32::MAX for ground
+}
+
+/// Source location data for mapping MIR back to VA source
+#[derive(Clone)]
+struct SourceLocData {
+    file_path: String,
+    line: u32,
+    column: u32,
+    #[allow(dead_code)]
+    byte_start: u32,
+    #[allow(dead_code)]
+    byte_end: u32,
+    source_line: Option<String>,
+}
+
+/// Source mapping data for a module
+struct SourceMappingData {
+    eval_body_source_map: Arc<BodySourceMap>,
+    init_body_source_map: Arc<BodySourceMap>,
+    #[allow(dead_code)]
+    root_file: FileId,
+    file_text: Arc<str>,
+    file_path: String,
 }
 
 /// Python wrapper for a compiled Verilog-A module
@@ -181,6 +210,9 @@ struct VaModule {
     /// Whether module has bound_step
     #[pyo3(get)]
     has_bound_step: bool,
+
+    /// Optional source mapping data for MIR -> VA source tracking
+    source_mapping: Option<SourceMappingData>,
 }
 
 #[pymethods]
@@ -1103,6 +1135,148 @@ impl VaModule {
 
         Ok((residuals, jacobian))
     }
+
+    /// Check if source mapping data is available
+    fn has_source_mapping(&self) -> bool {
+        self.source_mapping.is_some()
+    }
+
+    /// Get source locations for all MIR instructions in eval function
+    fn get_source_locations(&self) -> PyResult<pyo3::PyObject> {
+        use pyo3::types::PyDict;
+
+        if self.source_mapping.is_none() {
+            return Err(PyValueError::new_err("Source mapping not available - recompile with source_mapping=true"));
+        }
+
+        Python::with_gil(|py| {
+            let result = PyDict::new(py);
+            for block in self.eval_func.layout.blocks() {
+                for inst in self.eval_func.layout.block_insts(block) {
+                    // Use safe get to avoid panic on out-of-bounds
+                    let srcloc = match self.eval_func.srclocs.raw.get(u32::from(inst) as usize) {
+                        Some(s) => *s,
+                        None => continue,  // Skip instructions without source locations
+                    };
+                    let srcloc_raw: i32 = srcloc.0;
+                    if srcloc_raw > 0 {
+                        let inst_idx = u32::from(inst);
+                        let inst_key = format!("inst{}", inst_idx);
+                        if let Some(loc_data) = self.resolve_expr_to_source((srcloc_raw - 1) as u32, true) {
+                            let loc_dict = PyDict::new(py);
+                            loc_dict.set_item("file", &loc_data.file_path).unwrap();
+                            loc_dict.set_item("line", loc_data.line).unwrap();
+                            loc_dict.set_item("column", loc_data.column).unwrap();
+                            if let Some(ref src_line) = loc_data.source_line {
+                                loc_dict.set_item("source_line", src_line).unwrap();
+                            }
+                            result.set_item(&inst_key, loc_dict).unwrap();
+                        }
+                    }
+                }
+            }
+            Ok(result.into())
+        })
+    }
+
+    /// Get source location for a specific MIR value by name (e.g., "v123")
+    fn get_value_source_location(&self, value_name: &str, is_eval: bool) -> PyResult<Option<pyo3::PyObject>> {
+        use pyo3::types::PyDict;
+
+        if self.source_mapping.is_none() {
+            return Err(PyValueError::new_err("Source mapping not available"));
+        }
+
+        let value_idx: u32 = if value_name.starts_with("v") || value_name.starts_with("mir_") {
+            let idx_str = value_name.trim_start_matches("v").trim_start_matches("mir_");
+            idx_str.parse().map_err(|_| PyValueError::new_err(format!("Invalid value name: {}", value_name)))?
+        } else {
+            return Err(PyValueError::new_err(format!("Value name must start with 'v' or 'mir_': {}", value_name)));
+        };
+
+        let func = if is_eval { &self.eval_func } else { &self.init_func };
+        let val = mir::Value::with_number_(value_idx);
+
+        for block in func.layout.blocks() {
+            for inst in func.layout.block_insts(block) {
+                let results = func.dfg.inst_results(inst);
+                if results.contains(&val) {
+                    // Use safe get to avoid panic on out-of-bounds
+                    let srcloc = match func.srclocs.raw.get(u32::from(inst) as usize) {
+                        Some(s) => *s,
+                        None => continue,
+                    };
+                    let srcloc_raw: i32 = srcloc.0;
+                    if srcloc_raw > 0 {
+                        if let Some(loc_data) = self.resolve_expr_to_source((srcloc_raw - 1) as u32, is_eval) {
+                            return Python::with_gil(|py| {
+                                let loc_dict = PyDict::new(py);
+                                loc_dict.set_item("file", &loc_data.file_path).unwrap();
+                                loc_dict.set_item("line", loc_data.line).unwrap();
+                                loc_dict.set_item("column", loc_data.column).unwrap();
+                                if let Some(ref src_line) = loc_data.source_line {
+                                    loc_dict.set_item("source_line", src_line).unwrap();
+                                }
+                                Ok(Some(loc_dict.into()))
+                            });
+                        }
+                    }
+                }
+            }
+        }
+        Ok(None)
+    }
+}
+
+// Helper methods for source location resolution (not exposed to Python)
+impl VaModule {
+    fn resolve_expr_to_source(&self, expr_idx: u32, is_eval: bool) -> Option<SourceLocData> {
+        let mapping = self.source_mapping.as_ref()?;
+        let body_source_map = if is_eval {
+            &mapping.eval_body_source_map
+        } else {
+            &mapping.init_body_source_map
+        };
+
+        // Check bounds before accessing expr_map_back to avoid panics
+        // Note: TiVec's get() can still panic, so we check bounds first
+        let len = body_source_map.expr_map_back.raw.len();
+        if (expr_idx as usize) >= len {
+            return None;
+        }
+
+        let _expr_id = ExprId::from(expr_idx as usize);
+        // expr_map_back is ArenaMap<Expr, Option<AstPtr<ast::Expr>>>
+        // Access via raw slice to avoid TiSliceIndex panics
+        let ast_ptr_opt = body_source_map.expr_map_back.raw.get(expr_idx as usize)?;
+        let ast_ptr = ast_ptr_opt.as_ref()?;
+        let syntax_range = ast_ptr.syntax_node_ptr().range();
+        let byte_start = u32::from(syntax_range.start());
+        let byte_end = u32::from(syntax_range.end());
+        let (line, column) = self.offset_to_line_col(&mapping.file_text, byte_start);
+        let source_line = self.extract_source_line(&mapping.file_text, line);
+
+        Some(SourceLocData {
+            file_path: mapping.file_path.clone(),
+            line, column, byte_start, byte_end, source_line,
+        })
+    }
+
+    fn offset_to_line_col(&self, text: &str, byte_offset: u32) -> (u32, u32) {
+        let mut line = 1u32;
+        let mut col = 1u32;
+        let mut current_offset = 0u32;
+        for ch in text.chars() {
+            if current_offset >= byte_offset { break; }
+            if ch == '\n' { line += 1; col = 1; } else { col += 1; }
+            current_offset += ch.len_utf8() as u32;
+        }
+        (line, col)
+    }
+
+    fn extract_source_line(&self, text: &str, line_num: u32) -> Option<String> {
+        text.lines().nth((line_num - 1) as usize).map(|s| s.to_string())
+    }
 }
 
 /// Compile a Verilog-A file and return module information
@@ -1115,8 +1289,8 @@ impl VaModule {
 ///     allow_builtin_primitives: Allow built-in primitives like `nmos` and `pmos`.
 ///                               Default is false.
 #[pyfunction]
-#[pyo3(signature = (path, allow_analog_in_cond=false, allow_builtin_primitives=false))]
-fn compile_va(path: &str, allow_analog_in_cond: bool, allow_builtin_primitives: bool) -> PyResult<Vec<VaModule>> {
+#[pyo3(signature = (path, allow_analog_in_cond=false, allow_builtin_primitives=false, source_mapping=false))]
+fn compile_va(path: &str, allow_analog_in_cond: bool, allow_builtin_primitives: bool, source_mapping: bool) -> PyResult<Vec<VaModule>> {
     let input = std::path::Path::new(path)
         .canonicalize()
         .map_err(|e| PyValueError::new_err(format!("Failed to resolve path: {}", e)))?;
@@ -1597,6 +1771,27 @@ fn compile_va(path: &str, allow_analog_in_cond: bool, allow_builtin_primitives: 
             }
         }
 
+        // Build source mapping data if requested
+        let source_mapping_data = if source_mapping {
+            let module_id = module_info.module.module_id();
+            let eval_def = DefWithBodyId::ModuleId { initial: false, module: module_id };
+            let (_, eval_body_source_map) = db.body_with_sourcemap(eval_def);
+            let init_def = DefWithBodyId::ModuleId { initial: true, module: module_id };
+            let (_, init_body_source_map) = db.body_with_sourcemap(init_def);
+            let root_file = db.compilation_unit().root_file();
+            let file_text = db.file_text(root_file).unwrap_or_else(|_| Arc::from(""));
+
+            Some(SourceMappingData {
+                eval_body_source_map,
+                init_body_source_map,
+                root_file,
+                file_text,
+                file_path: path.to_string(),
+            })
+        } else {
+            None
+        };
+
         result.push(VaModule {
             name: module_info.module.name(&db).to_string(),
             param_names,
@@ -1643,6 +1838,7 @@ fn compile_va(path: &str, allow_analog_in_cond: bool, allow_builtin_primitives: 
             osdi_noise_sources,
             num_states,
             has_bound_step,
+            source_mapping: source_mapping_data,
         });
     }
 

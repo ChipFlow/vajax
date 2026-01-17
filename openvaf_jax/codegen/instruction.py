@@ -4,6 +4,7 @@ This module translates individual MIR instructions to JAX AST expressions.
 """
 
 import ast
+import re
 from typing import Dict, Optional
 
 from ..mir.ssa import PHIResolution, PHIResolutionType, SSAAnalyzer
@@ -104,15 +105,19 @@ class InstructionTranslator:
         'fmax': 'maximum',
     }
 
-    def __init__(self, ctx: CodeGenContext, ssa: Optional[SSAAnalyzer] = None):
+    def __init__(self, ctx: CodeGenContext, ssa: Optional[SSAAnalyzer] = None,
+                 emit_debug_prints: bool = False):
         """Initialize instruction translator.
 
         Args:
             ctx: Code generation context
             ssa: SSA analyzer for PHI resolution (optional)
+            emit_debug_prints: If True, emit jax.debug.print for $display calls.
+                              Default False because debug.print causes slow JIT tracing.
         """
         self.ctx = ctx
         self.ssa = ssa
+        self.emit_debug_prints = emit_debug_prints
 
         # Track flags for special features
         self.uses_simparam_gmin = False  # Deprecated - use ctx.simparam_registry
@@ -491,52 +496,66 @@ class InstructionTranslator:
                 self.discontinuity_warnings.append(f"$discontinuity({order}) used - ignored for DC analysis")
             return self.ctx.zero()  # No-op, but return something
 
-        # $display / $strobe / $write - check if first operand is a format string
+        # $display / $strobe / $write / $debug - check if this is a display function
+        # Only treat as display if func_name explicitly indicates it, or if first operand
+        # is a format string WITH format specifiers (contains %)
+        is_display_func = func_name and any(
+            x in func_name.lower() for x in ('display', 'strobe', 'write', 'debug')
+        )
         if inst.operands and inst.operands[0] in self.ctx.str_constants:
             fmt_str = self.ctx.str_constants[inst.operands[0]]
-            # This looks like a $display call - format string followed by values
-            self.uses_display = True
+            # Only treat as display call if:
+            # 1. Function name indicates display/strobe/write/debug, OR
+            # 2. Format string contains % (likely a format specifier)
+            has_format_specifiers = '%' in fmt_str
+            if is_display_func or has_format_specifiers:
+                self.uses_display = True
 
-            # Get the value operands (skip the format string)
-            value_operands = inst.operands[1:]
-            value_exprs = [self.ctx.get_operand(op) for op in value_operands]
+                # Track for metadata even if not emitting
+                value_operands = inst.operands[1:]
+                var_names = [str(op) for op in value_operands]
+                self.display_calls.append((fmt_str, var_names))
 
-            # Track for metadata
-            var_names = [str(op) for op in value_operands]
-            self.display_calls.append((fmt_str, var_names))
+                # Skip actual debug.print emission if disabled (default)
+                # jax.debug.print causes very slow JIT tracing
+                if not self.emit_debug_prints:
+                    return self.ctx.zero()
 
-            # Convert Verilog-A format string to Python format
-            # %g, %e, %f -> {} for jax.debug.print
-            # %d, %i -> {} (jax handles int conversion)
-            py_fmt = fmt_str.replace('%g', '{}').replace('%e', '{}').replace('%f', '{}')
-            py_fmt = py_fmt.replace('%d', '{}').replace('%i', '{}')
-            py_fmt = py_fmt.rstrip('\n')  # jax.debug.print adds newline
+                # Get the value operands (skip the format string)
+                value_exprs = [self.ctx.get_operand(op) for op in value_operands]
 
-            # Build jax.debug.print(fmt, val1, val2, ...)
-            fmt_const = ast.Constant(value=py_fmt)
-            args = [fmt_const] + value_exprs
+                # Convert Verilog-A format string to Python format
+                # Use regex to handle format specifiers with width/precision like %12.5e, %18.10g
+                # Pattern matches: % followed by optional width.precision, then type specifier
+                # Types: g, e, f, E, G (float), d, i (int), s (string)
+                py_fmt = re.sub(r'%[-+0 #]*(\d+)?(\.\d+)?[gGeEfFdis]', '{}', fmt_str)
+                py_fmt = py_fmt.rstrip('\n')  # jax.debug.print adds newline
 
-            debug_print = ast.Call(
-                func=ast.Attribute(
-                    value=ast.Attribute(
-                        value=ast_name('jax'),
-                        attr='debug',
+                # Build jax.debug.print(fmt, val1, val2, ...)
+                fmt_const = ast.Constant(value=py_fmt)
+                args = [fmt_const] + value_exprs
+
+                debug_print = ast.Call(
+                    func=ast.Attribute(
+                        value=ast.Attribute(
+                            value=ast_name('jax'),
+                            attr='debug',
+                            ctx=ast.Load()
+                        ),
+                        attr='print',
                         ctx=ast.Load()
                     ),
-                    attr='print',
-                    ctx=ast.Load()
-                ),
-                args=args,
-                keywords=[ast.keyword(arg='ordered', value=ast.Constant(value=True))]
-            )
+                    args=args,
+                    keywords=[ast.keyword(arg='ordered', value=ast.Constant(value=True))]
+                )
 
-            # jax.debug.print returns None, so we use 'or' to execute it
-            # and return 0.0: (jax.debug.print(...) or 0.0)
-            # None is falsy, so this evaluates print, gets None, then returns 0.0
-            return ast.BoolOp(
-                op=ast.Or(),
-                values=[debug_print, self.ctx.zero()]
-            )
+                # jax.debug.print returns None, so we use 'or' to execute it
+                # and return 0.0: (jax.debug.print(...) or 0.0)
+                # None is falsy, so this evaluates print, gets None, then returns 0.0
+                return ast.BoolOp(
+                    op=ast.Or(),
+                    values=[debug_print, self.ctx.zero()]
+                )
 
         # analysis() - access via simparams array using registered $analysis_type
         # $analysis_type: 0=DC, 1=AC, 2=transient, 3=noise

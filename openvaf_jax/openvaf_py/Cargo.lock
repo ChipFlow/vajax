@@ -531,6 +531,7 @@ version = "0.1.0"
 dependencies = [
  "basedb",
  "hir",
+ "hir_def",
  "hir_lower",
  "lasso",
  "mir",
@@ -540,6 +541,7 @@ dependencies = [
  "sim_back",
  "syntax",
  "typed-index-collections",
+ "vfs",
 ]
 
 [[package]]

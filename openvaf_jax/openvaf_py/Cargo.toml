@@ -16,8 +16,10 @@ mir = { path = "../../vendor/OpenVAF/openvaf/mir" }
 mir_interpret = { path = "../../vendor/OpenVAF/openvaf/mir_interpret" }
 sim_back = { path = "../../vendor/OpenVAF/openvaf/sim_back" }
 hir = { path = "../../vendor/OpenVAF/openvaf/hir" }
+hir_def = { path = "../../vendor/OpenVAF/openvaf/hir_def" }
 hir_lower = { path = "../../vendor/OpenVAF/openvaf/hir_lower" }
 basedb = { path = "../../vendor/OpenVAF/openvaf/basedb" }
+vfs = { path = "../../vendor/OpenVAF/openvaf/vfs" }
 paths = { path = "../../vendor/OpenVAF/lib/paths" }
 syntax = { path = "../../vendor/OpenVAF/openvaf/syntax" }
 

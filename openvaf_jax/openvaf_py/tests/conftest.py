@@ -68,12 +68,43 @@ TOLERANCES = {
 
 
 class CompiledModel:
-    """Wrapper for a compiled Verilog-A model with JAX function"""
+    """Wrapper for a compiled Verilog-A model with JAX functions (init + eval)"""
 
-    def __init__(self, module, translator, jax_fn):
+    def __init__(self, module, translator):
+        import jax
+        import jax.numpy as jnp
+
         self.module = module
         self.translator = translator
-        self.jax_fn = jax_fn
+
+        # Pre-computed default simparams: [analysis_type=DC, mfactor=1.0, gmin=1e-12]
+        self._default_simparams = jnp.array([0.0, 1.0, 1e-12])
+
+        # Pre-compile with default params for fast evaluation
+        self._default_init_fn, self._default_init_meta = translator.translate_init(
+            params={}, temperature=300.15
+        )
+        self._default_eval_fn, self._default_eval_meta = translator.translate_eval(
+            params={}, temperature=300.15, propagate_constants=False
+        )
+        self._default_init_fn = jax.jit(self._default_init_fn)
+        self._default_eval_fn = jax.jit(self._default_eval_fn)
+
+        # Build mapping from user param index to init param index
+        # This allows runtime params to be passed to init function
+        init_param_names = list(module.init_param_names)
+        user_param_names = list(module.param_names)
+        user_indices = []  # source indices in user's input array
+        init_indices = []  # destination indices in init input array
+        for init_idx, init_name in enumerate(init_param_names):
+            if init_name in user_param_names:
+                user_idx = user_param_names.index(init_name)
+                user_indices.append(user_idx)
+                init_indices.append(init_idx)
+        # Store as JAX arrays for vectorized scatter
+        self._user_indices = jnp.array(user_indices, dtype=jnp.int32) if user_indices else None
+        self._init_indices = jnp.array(init_indices, dtype=jnp.int32) if init_indices else None
+        self._n_init_params = len(init_param_names)
 
     @property
     def name(self) -> str:
@@ -92,7 +123,10 @@ class CompiledModel:
         return list(self.module.param_kinds)
 
     def build_default_inputs(self) -> List[float]:
-        """Build input array with sensible defaults"""
+        """Build input array with sensible defaults (for legacy compatibility)
+
+        Returns list of floats indexed by module.param_names order.
+        """
         inputs = []
         for name, kind in zip(self.param_names, self.param_kinds):
             if kind == 'voltage':
@@ -119,6 +153,79 @@ class CompiledModel:
                 inputs.append(0.0)
         return inputs
 
+    def jax_fn(self, inputs: List[float]) -> Tuple[Dict, Dict]:
+        """Evaluate the model using init + eval (legacy dict interface).
+
+        This is a compatibility wrapper that mimics the old translate() API.
+        The inputs array follows module.param_names order.
+        Returns (residuals_dict, jacobian_dict).
+
+        Uses pre-compiled functions (compiled with propagate_constants=False
+        so params are read from input arrays at runtime).
+        """
+        import jax.numpy as jnp
+
+        # Extract mfactor from inputs for simparams
+        mfactor = 1.0
+        for i, (name, kind, value) in enumerate(zip(self.param_names, self.param_kinds, inputs)):
+            if kind == 'sysfun' and name == 'mfactor':
+                mfactor = value
+                break
+
+        # Use pre-compiled functions (params read from arrays at runtime)
+        init_fn = self._default_init_fn
+        eval_fn = self._default_eval_fn
+        init_meta = self._default_init_meta
+        eval_meta = self._default_eval_meta
+
+        # Build init inputs from user inputs (map to init param positions)
+        # init_inputs needs params in init function's expected order
+        inputs_arr = jnp.asarray(inputs)
+        init_inputs = jnp.array(init_meta['init_inputs'])
+
+        # Apply user's param values to init_inputs using vectorized scatter
+        # This ensures cache is computed with correct runtime params (e.g., R for resistor)
+        if self._user_indices is not None:
+            user_values = inputs_arr[self._user_indices]
+            init_inputs = init_inputs.at[self._init_indices].set(user_values)
+
+        # Run init to get cache
+        cache, _ = init_fn(init_inputs)
+
+        # Build eval inputs
+        shared_indices = eval_meta['shared_indices']
+        voltage_indices = eval_meta['voltage_indices']
+
+        shared_params = inputs_arr[jnp.array(shared_indices)] if shared_indices else jnp.array([])
+        varying_params = inputs_arr[jnp.array(voltage_indices)] if voltage_indices else jnp.array([])
+
+        # Run eval with dynamic simparams
+        simparams = jnp.array([0.0, mfactor, 1e-12])  # [analysis_type, mfactor, gmin]
+        result = eval_fn(shared_params, varying_params, cache, simparams)
+        res_resist, res_react, jac_resist, jac_react = result[:4]
+
+        # Convert JAX arrays to NumPy first (single device-to-host transfer)
+        # Then build dicts from NumPy - much faster than indexing JAX arrays
+        import numpy as np
+        res_resist_np = np.asarray(res_resist)
+        res_react_np = np.asarray(res_react)
+        jac_resist_np = np.asarray(jac_resist)
+        jac_react_np = np.asarray(jac_react)
+
+        # Convert to dicts
+        node_names = eval_meta['node_names']
+        jacobian_keys = eval_meta['jacobian_keys']
+
+        residuals = {
+            name: {'resist': res_resist_np[i], 'react': res_react_np[i]}
+            for i, name in enumerate(node_names)
+        }
+        jacobian = {
+            key: {'resist': jac_resist_np[i], 'react': jac_react_np[i]}
+            for i, key in enumerate(jacobian_keys)
+        }
+        return residuals, jacobian
+
     def evaluate(self, inputs: List[float]) -> Tuple[Dict, Dict]:
         """Evaluate the JAX function"""
         return self.jax_fn(inputs)
@@ -132,7 +239,9 @@ class CompiledModel:
 def compile_model():
     """Factory fixture to compile VA models
 
-    Returns a function that compiles a model and returns (module, translator, jax_fn)
+    Returns a function that compiles a model and returns a CompiledModel.
+    The CompiledModel provides a jax_fn method that translates on-the-fly
+    with the specific params passed in each call (for test compatibility).
     """
     _cache = {}
 
@@ -144,8 +253,7 @@ def compile_model():
                 raise ValueError(f"No modules found in {model_path}")
             module = modules[0]
             translator = openvaf_jax.OpenVAFToJAX(module)
-            jax_fn = translator.translate()
-            _cache[cache_key] = CompiledModel(module, translator, jax_fn)
+            _cache[cache_key] = CompiledModel(module, translator)
         return _cache[cache_key]
 
     return _compile

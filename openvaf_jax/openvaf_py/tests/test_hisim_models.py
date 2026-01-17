@@ -17,7 +17,6 @@ def hisimhv_model(compile_model) -> CompiledModel:
     return compile_model(INTEGRATION_PATH / "HiSIMHV/hisimhv.va")
 
 
-@pytest.mark.skip(reason="HiSIM2 has cyclic PHI nodes from Newton-Raphson iterative solvers - needs lax.while_loop support")
 class TestHiSIM2:
     """Test HiSIM2 MOSFET model"""
 
@@ -27,7 +26,6 @@ class TestHiSIM2:
         assert 'hisim2' in hisim2_model.name.lower()
         assert len(hisim2_model.nodes) >= 4
 
-    @pytest.mark.xfail(reason="JAX translator has init variable issues for complex models")
     def test_valid_output(self, hisim2_model: CompiledModel):
         """HiSIM2 produces valid outputs"""
         inputs = hisim2_model.build_default_inputs()
@@ -43,7 +41,6 @@ class TestHiSIM2:
         assert hisim2_model.module.num_jacobian > 0
 
 
-@pytest.mark.skip(reason="HiSIMHV has cyclic PHI nodes from Newton-Raphson iterative solvers - needs lax.while_loop support")
 class TestHiSIMHV:
     """Test HiSIMHV high-voltage MOSFET model"""
 
@@ -53,7 +50,6 @@ class TestHiSIMHV:
         assert 'hisimhv' in hisimhv_model.name.lower()
         assert len(hisimhv_model.nodes) >= 4
 
-    @pytest.mark.xfail(reason="JAX translator has init variable issues for complex models")
     def test_valid_output(self, hisimhv_model: CompiledModel):
         """HiSIMHV produces valid outputs"""
         inputs = hisimhv_model.build_default_inputs()

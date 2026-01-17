@@ -275,7 +275,8 @@ class FunctionBuilder:
             return
 
         # Build initial state tuple
-        init_vals = [ctx.get_operand(lc[1]) for lc in loop_state]
+        # Cast all values to float32 to ensure type consistency
+        init_vals = [jnp_call('float32', ctx.get_operand(lc[1])) for lc in loop_state]
         init_state = tuple_expr(init_vals) if len(init_vals) > 1 else init_vals[0]
 
         # Find branch condition in header
@@ -323,7 +324,11 @@ class FunctionBuilder:
         else:
             cond_body.append(assign(state_vars[0], ast_name('_state')))
 
-        # Mark state vars as defined for this scope
+        # Mark state vars as defined in ctx so get_operand finds them
+        # This is critical: without this, SCCP constants take precedence
+        # and loop variables get replaced with their initial constant values
+        for var in state_vars:
+            ctx.defined_vars.add(var)
         local_defined = set(state_vars)
 
         # Process header block instructions to compute condition
@@ -361,7 +366,11 @@ class FunctionBuilder:
         else:
             loop_body.append(assign(state_vars[0], ast_name('_state')))
 
-        # Mark state vars as defined
+        # Mark state vars as defined in ctx so get_operand finds them
+        # This is critical: without this, SCCP constants take precedence
+        # and loop variables get replaced with their initial constant values
+        for var in state_vars:
+            ctx.defined_vars.add(var)
         local_defined = set(state_vars)
 
         # Process all blocks in loop
@@ -380,14 +389,18 @@ class FunctionBuilder:
                     local_defined.add(var_name)
 
         # Build return tuple with updated values
+        # Cast all values to float32 to ensure type consistency with init values
         update_vals = []
         for result, _, update in loop_state:
             update_var = f"{ctx.var_prefix}{update}"
             if update_var in local_defined:
-                update_vals.append(ast_name(update_var))
+                val_expr = ast_name(update_var)
             else:
                 # Fallback to operand resolution
-                update_vals.append(ctx.get_operand(update))
+                val_expr = ctx.get_operand(update)
+            # Cast to float32 to ensure type consistency
+            cast_expr = jnp_call('float32', val_expr)
+            update_vals.append(cast_expr)
 
         if len(update_vals) > 1:
             loop_body.append(return_stmt(tuple_expr(update_vals)))
