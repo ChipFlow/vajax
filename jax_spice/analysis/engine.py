@@ -1608,11 +1608,13 @@ class CircuitEngine:
         from jax_spice.analysis.integration import IntegrationMethod, get_method_from_options
 
         # Default values
+        # icmode='uic' skips DC operating point solve, matching VACASK behavior
+        # Models with correct VA defaults converge fine starting from mid-rail init
         self.analysis_params = {
             'type': 'tran',
             'step': 1e-6,
             'stop': 1e-3,
-            'icmode': 'op',
+            'icmode': 'uic',
             'tran_method': IntegrationMethod.BACKWARD_EULER,
         }
 
