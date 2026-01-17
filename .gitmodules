@@ -4,7 +4,7 @@
 	branch = jax-spice
 [submodule "vendor/VACASK"]
 	path = vendor/VACASK
-	url = https://codeberg.org/robtaylor/VACASK.git
+	url = https://github.com/robtaylor/VACASK.git
 	branch = docs
 [submodule "vendor/Xyce_Regression"]
 	path = vendor/Xyce_Regression
