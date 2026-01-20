@@ -149,8 +149,10 @@ def gmin_stepping(
         _debug_print(config, 2, f"  [step {step}] gmin={effective_gmin:.2e}, gshunt={gshunt:.2e}")
 
         # Run NR solver with analytic jacobians
-        V_new, iters, converged, max_f, _ = nr_solve(
-            V, scaled_vsource, scaled_isource, Q_prev, 0.0, device_arrays, effective_gmin, gshunt
+        # For DC analysis: integ_c0=0.0, integ_c1=0.0, integ_d1=0.0, dQdt_prev=None, integ_c2=0.0, Q_prev2=None
+        V_new, iters, converged, max_f, _, _ = nr_solve(
+            V, scaled_vsource, scaled_isource, Q_prev, 0.0, device_arrays, effective_gmin, gshunt,
+            0.0, 0.0, None, 0.0, None
         )
         total_iterations += int(iters)
 
@@ -219,8 +221,9 @@ def gmin_stepping(
 
     # Final solve at original gmin
     if continuation:
-        V_final, iters, converged, _, _ = nr_solve(
-            V_good, scaled_vsource, scaled_isource, Q_prev, 0.0, device_arrays, config.gmin, 0.0
+        V_final, iters, converged, _, _, _ = nr_solve(
+            V_good, scaled_vsource, scaled_isource, Q_prev, 0.0, device_arrays, config.gmin, 0.0,
+            0.0, 0.0, None, 0.0, None
         )
         total_iterations += int(iters)
         homotopy_steps += 1
@@ -290,8 +293,9 @@ def source_stepping(
     # Initial solve at source_factor=0
     zero_vsource = vsource_vals * 0.0
     zero_isource = isource_vals * 0.0
-    V_new, iters, converged, _, _ = nr_solve(
-        V, zero_vsource, zero_isource, Q_prev, 0.0, device_arrays, config.gmin, 0.0
+    V_new, iters, converged, _, _, _ = nr_solve(
+        V, zero_vsource, zero_isource, Q_prev, 0.0, device_arrays, config.gmin, 0.0,
+        0.0, 0.0, None, 0.0, None
     )
     total_iterations += int(iters)
     homotopy_steps += 1
@@ -358,8 +362,9 @@ def source_stepping(
 
         scaled_vsource = vsource_vals * new_factor
         scaled_isource = isource_vals * new_factor
-        V_new, iters, converged, _, _ = nr_solve(
-            V_good, scaled_vsource, scaled_isource, Q_prev, 0.0, device_arrays, config.gmin, 0.0
+        V_new, iters, converged, _, _, _ = nr_solve(
+            V_good, scaled_vsource, scaled_isource, Q_prev, 0.0, device_arrays, config.gmin, 0.0,
+            0.0, 0.0, None, 0.0, None
         )
         total_iterations += int(iters)
         homotopy_steps += 1

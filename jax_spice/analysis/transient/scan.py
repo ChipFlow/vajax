@@ -33,6 +33,7 @@ import jax
 import jax.numpy as jnp
 
 from jax_spice._logging import logger
+from jax_spice.analysis.integration import IntegrationMethod, compute_coefficients
 
 from .base import TransientStrategy
 
@@ -100,6 +101,12 @@ class ScanStrategy(TransientStrategy):
             dt = t_stop / (max_steps - 1) if max_steps > 1 else t_stop
             logger.info(f"{self.name}: Limiting to {max_steps} steps, dt={dt:.2e}s")
 
+        # Get integration method from runner's analysis_params
+        tran_method = self.runner.analysis_params.get('tran_method', IntegrationMethod.BACKWARD_EULER)
+        integ_coeffs = compute_coefficients(tran_method, dt)
+        logger.info(f"{self.name}: Using integration method: {tran_method.value} "
+                   f"(c0={integ_coeffs.c0:.2e}, c1={integ_coeffs.c1:.2e}, d1={integ_coeffs.d1})")
+
         logger.info(f"{self.name}: Starting simulation ({num_timesteps} timesteps, "
                    f"{n_total} nodes, {'sparse' if self.use_sparse else 'dense'} solver)")
 
@@ -124,15 +131,46 @@ class ScanStrategy(TransientStrategy):
         # Initial state
         V0 = jnp.zeros(n_nodes, dtype=jnp.float64)
 
+        # Initialize charge state Q_prev (from DC operating point if available)
+        Q_prev0 = jnp.zeros(n_unknowns, dtype=jnp.float64)
+        if hasattr(self.runner, '_cached_build_system') and hasattr(self.runner, '_device_arrays'):
+            # Initialize Q_prev from DC operating point
+            vsource_dc = source_device_data.get('vsource', {}).get('dc', jnp.array([]))
+            isource_dc = source_device_data.get('isource', {}).get('dc', jnp.array([]))
+            if vsource_dc is not None and len(vsource_dc) > 0:
+                vsource_dc = jnp.array(vsource_dc)
+            else:
+                vsource_dc = jnp.array([])
+            if isource_dc is not None and len(isource_dc) > 0:
+                isource_dc = jnp.array(isource_dc)
+            else:
+                isource_dc = jnp.array([])
+            _, _, Q_prev0 = self.runner._cached_build_system(
+                V0, vsource_dc, isource_dc, jnp.zeros(n_unknowns), 0.0, self.runner._device_arrays
+            )
+            Q_prev0.block_until_ready()
+
+        # Initialize dQdt_prev for trapezoidal method
+        dQdt_prev0 = jnp.zeros(n_unknowns, dtype=jnp.float64)
+
+        # Initialize Q_prev2 for Gear2 method
+        Q_prev2_0 = jnp.zeros(n_unknowns, dtype=jnp.float64)
+
+        # Get device_arrays for nr_solve
+        device_arrays = self.runner._device_arrays if hasattr(self.runner, '_device_arrays') else {}
+
         # Get or create the cached scan function
-        # Cache key does NOT include num_timesteps - JAX handles variable-length
-        scan_cache_key = (n_nodes, n_vsources, n_isources, n_external, self.use_dense)
+        # Cache key includes integration method - different methods need different scan functions
+        scan_cache_key = (n_nodes, n_vsources, n_isources, n_external, self.use_dense,
+                         integ_coeffs.c0, integ_coeffs.c1, integ_coeffs.d1, integ_coeffs.c2,
+                         integ_coeffs.needs_dqdt_history, integ_coeffs.history_depth)
 
         if self._cached_scan_fn is not None and self._cached_scan_key == scan_cache_key:
             run_simulation = self._cached_scan_fn
             logger.debug(f"{self.name}: Reusing cached lax.scan function")
         else:
-            run_simulation = self._make_scan_fn(nr_solve, n_external)
+            run_simulation = self._make_scan_fn(nr_solve, n_external, n_unknowns,
+                                                 integ_coeffs, device_arrays)
             self._cached_scan_fn = run_simulation
             self._cached_scan_key = scan_cache_key
             logger.info(f"{self.name}: Created and cached lax.scan function")
@@ -140,7 +178,9 @@ class ScanStrategy(TransientStrategy):
         # Run the simulation
         logger.info(f"{self.name}: Running lax.scan simulation...")
         t0 = time_module.perf_counter()
-        all_V, all_iters, all_converged = run_simulation(V0, all_vsource_vals, all_isource_vals)
+        all_V, all_iters, all_converged = run_simulation(
+            V0, Q_prev0, dQdt_prev0, Q_prev2_0, all_vsource_vals, all_isource_vals
+        )
         jax.block_until_ready(all_V)  # Ensure computation is complete
         wall_time = time_module.perf_counter() - t0
 
@@ -159,6 +199,7 @@ class ScanStrategy(TransientStrategy):
             'time_per_step_ms': wall_time / num_timesteps * 1000,
             'strategy': 'lax_scan',
             'solver': 'sparse' if self.use_sparse else 'dense',
+            'integration_method': tran_method.value,
         }
 
         logger.info(f"{self.name}: Completed {num_timesteps} steps in {wall_time:.3f}s "
@@ -211,7 +252,8 @@ class ScanStrategy(TransientStrategy):
 
         return jnp.stack(all_values, axis=1) if all_values else jnp.zeros((num_timesteps, 0))
 
-    def _make_scan_fn(self, nr_solve: Callable, n_external: int) -> Callable:
+    def _make_scan_fn(self, nr_solve: Callable, n_external: int, n_unknowns: int,
+                       integ_coeffs, device_arrays: Dict) -> Callable:
         """Create a JIT-compiled scan function.
 
         The function is created in a factory to ensure proper closure capture
@@ -220,31 +262,65 @@ class ScanStrategy(TransientStrategy):
         Args:
             nr_solve: JIT-compiled Newton-Raphson solver
             n_external: Number of external nodes
+            n_unknowns: Number of unknown nodes (n_total - 1)
+            integ_coeffs: Integration coefficients (c0, c1, d1, c2, needs_dqdt_history, history_depth)
+            device_arrays: Device arrays for nr_solve
 
         Returns:
             JIT-compiled function that runs the full simulation
         """
+        # Capture integration coefficients in closure
+        c0 = integ_coeffs.c0
+        c1 = integ_coeffs.c1
+        d1 = integ_coeffs.d1
+        c2 = integ_coeffs.c2
+        needs_dqdt_history = integ_coeffs.needs_dqdt_history
+        history_depth = integ_coeffs.history_depth
+
         @jax.jit
-        def run_simulation_with_outputs(V_init, all_vsource, all_isource):
+        def run_simulation_with_outputs(V_init, Q_prev_init, dQdt_prev_init, Q_prev2_init,
+                                        all_vsource, all_isource):
             """Run simulation with time-varying sources using lax.scan.
 
             Args:
                 V_init: Initial voltage vector
+                Q_prev_init: Initial charge state
+                dQdt_prev_init: Initial dQ/dt state (for trapezoidal)
+                Q_prev2_init: Initial Q from 2 timesteps ago (for Gear2)
                 all_vsource: Pre-computed vsource values [num_timesteps, n_vsources]
                 all_isource: Pre-computed isource values [num_timesteps, n_isources]
 
             Returns:
                 Tuple of (all_V, all_iters, all_converged)
             """
-            def step_fn(V, source_vals):
+            def step_fn(carry, source_vals):
+                V, Q_prev, dQdt_prev, Q_prev2 = carry
                 vsource_vals, isource_vals = source_vals
-                V_new, iterations, converged, max_f = nr_solve(V, vsource_vals, isource_vals)
-                return V_new, (V_new[:n_external], iterations, converged)
+
+                # Use dQdt_prev if trapezoidal, else None
+                _dQdt_prev = dQdt_prev if needs_dqdt_history else None
+                # Use Q_prev2 if Gear2 (history_depth >= 2), else None
+                _Q_prev2 = Q_prev2 if history_depth >= 2 else None
+
+                V_new, iterations, converged, max_f, Q, dQdt = nr_solve(
+                    V, vsource_vals, isource_vals, Q_prev, c0, device_arrays,
+                    1e-12, 0.0,  # gmin, gshunt
+                    c1, d1, _dQdt_prev, c2, _Q_prev2
+                )
+
+                # Update carry for next timestep
+                # For Gear2: Q_prev2 <- Q_prev, Q_prev <- Q
+                new_Q_prev2 = Q_prev if history_depth >= 2 else Q_prev2
+                new_carry = (V_new, Q, dQdt if needs_dqdt_history else dQdt_prev, new_Q_prev2)
+
+                return new_carry, (V_new[:n_external], iterations, converged)
 
             # Stack source arrays for scan input
             source_inputs = (all_vsource, all_isource)
+            init_carry = (V_init, Q_prev_init, dQdt_prev_init, Q_prev2_init)
+
             _, (all_V, all_iters, all_converged) = jax.lax.scan(
-                step_fn, V_init, source_inputs
+                step_fn, init_carry, source_inputs
             )
             return all_V, all_iters, all_converged
 

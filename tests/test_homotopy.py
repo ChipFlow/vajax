@@ -33,10 +33,13 @@ def create_mock_nr_solve(residual_fn_factory, max_iterations=50, abstol=1e-10):
 
     Returns:
         A function with signature:
-        nr_solve(V_init, vsource_vals, isource_vals, Q_prev, inv_dt, device_arrays, gmin, gshunt)
-            -> (V, iters, converged, max_f, Q)
+        nr_solve(V_init, vsource_vals, isource_vals, Q_prev, integ_c0, device_arrays,
+                 gmin, gshunt, integ_c1, integ_d1, dQdt_prev, integ_c2, Q_prev2)
+            -> (V, iters, converged, max_f, Q, dQdt)
     """
-    def nr_solve(V_init, vsource_vals, isource_vals, Q_prev, inv_dt, device_arrays, gmin=1e-12, gshunt=0.0):
+    def nr_solve(V_init, vsource_vals, isource_vals, Q_prev, integ_c0, device_arrays,
+                 gmin=1e-12, gshunt=0.0, integ_c1=0.0, integ_d1=0.0, dQdt_prev=None,
+                 integ_c2=0.0, Q_prev2=None):
         # Build residual function with current gmin/gshunt
         res_fn = residual_fn_factory(gmin, gshunt)
         jac_fn = jax.jacfwd(res_fn)
@@ -75,7 +78,8 @@ def create_mock_nr_solve(residual_fn_factory, max_iterations=50, abstol=1e-10):
         V_final, iters, converged, max_f = lax.while_loop(cond_fn, body_fn, init_state)
 
         Q = jnp.zeros(len(V_init) - 1)  # Dummy Q
-        return V_final, iters, converged, max_f, Q
+        dQdt = jnp.zeros(len(V_init) - 1)  # Dummy dQdt
+        return V_final, iters, converged, max_f, Q, dQdt
 
     return nr_solve
 
@@ -220,7 +224,9 @@ class TestSimpleCircuits:
 
         # For source stepping, we need a residual that uses vsource_vals
         def create_source_stepping_nr_solve():
-            def nr_solve(V_init, vsource_vals, isource_vals, Q_prev, inv_dt, device_arrays, gmin=1e-12, gshunt=0.0):
+            def nr_solve(V_init, vsource_vals, isource_vals, Q_prev, integ_c0, device_arrays,
+                         gmin=1e-12, gshunt=0.0, integ_c1=0.0, integ_d1=0.0, dQdt_prev=None,
+                         integ_c2=0.0, Q_prev2=None):
                 # Use the first vsource value as VDD (already scaled by homotopy)
                 scaled_vdd = vsource_vals[0] if len(vsource_vals) > 0 else vdd
 
@@ -251,7 +257,8 @@ class TestSimpleCircuits:
                 init_state = (V_init, 0, jnp.array(False), jnp.array(jnp.inf))
                 V_final, iters, converged, max_f = lax.while_loop(cond_fn, body_fn, init_state)
                 Q = jnp.zeros(len(V_init) - 1)
-                return V_final, iters, converged, max_f, Q
+                dQdt = jnp.zeros(len(V_init) - 1)
+                return V_final, iters, converged, max_f, Q, dQdt
             return nr_solve
 
         nr_solve = create_source_stepping_nr_solve()
@@ -291,7 +298,9 @@ class TestSimpleCircuits:
         vdd = 1.2
 
         def create_chain_nr_solve():
-            def nr_solve(V_init, vsource_vals, isource_vals, Q_prev, inv_dt, device_arrays, gmin=1e-12, gshunt=0.0):
+            def nr_solve(V_init, vsource_vals, isource_vals, Q_prev, integ_c0, device_arrays,
+                         gmin=1e-12, gshunt=0.0, integ_c1=0.0, integ_d1=0.0, dQdt_prev=None,
+                         integ_c2=0.0, Q_prev2=None):
                 scaled_vdd = vsource_vals[0] if len(vsource_vals) > 0 else vdd
 
                 def res_fn(V):
@@ -321,7 +330,8 @@ class TestSimpleCircuits:
                 init_state = (V_init, 0, jnp.array(False), jnp.array(jnp.inf))
                 V_final, iters, converged, max_f = lax.while_loop(cond_fn, body_fn, init_state)
                 Q = jnp.zeros(len(V_init) - 1)
-                return V_final, iters, converged, max_f, Q
+                dQdt = jnp.zeros(len(V_init) - 1)
+                return V_final, iters, converged, max_f, Q, dQdt
             return nr_solve
 
         nr_solve = create_chain_nr_solve()
@@ -366,7 +376,9 @@ class TestDifficultCircuits:
             return jnp.where(V_gs > vth, k * (V_gs - vth) ** 2, 0.0)
 
         def create_mosfet_nr_solve():
-            def nr_solve(V_init, vsource_vals, isource_vals, Q_prev, inv_dt, device_arrays, gmin=1e-12, gshunt=0.0):
+            def nr_solve(V_init, vsource_vals, isource_vals, Q_prev, integ_c0, device_arrays,
+                         gmin=1e-12, gshunt=0.0, integ_c1=0.0, integ_d1=0.0, dQdt_prev=None,
+                         integ_c2=0.0, Q_prev2=None):
                 scaled_vdd = vsource_vals[0] if len(vsource_vals) > 0 else vdd
 
                 def res_fn(V):
@@ -396,7 +408,8 @@ class TestDifficultCircuits:
                 init_state = (V_init, 0, jnp.array(False), jnp.array(jnp.inf))
                 V_final, iters, converged, max_f = lax.while_loop(cond_fn, body_fn, init_state)
                 Q = jnp.zeros(len(V_init) - 1)
-                return V_final, iters, converged, max_f, Q
+                dQdt = jnp.zeros(len(V_init) - 1)
+                return V_final, iters, converged, max_f, Q, dQdt
             return nr_solve
 
         nr_solve = create_mosfet_nr_solve()

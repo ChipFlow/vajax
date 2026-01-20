@@ -32,6 +32,7 @@ import jax
 import jax.numpy as jnp
 
 from jax_spice._logging import logger
+from jax_spice.analysis.integration import IntegrationMethod, compute_coefficients
 
 from .base import TransientStrategy
 
@@ -80,6 +81,7 @@ class PythonLoopStrategy(TransientStrategy):
 
         n_external = setup.n_external
         n_total = setup.n_total
+        n_unknowns = setup.n_unknowns
         source_fn = setup.source_fn
 
         # Initialize state
@@ -97,6 +99,40 @@ class PythonLoopStrategy(TransientStrategy):
             dt = t_stop / (max_steps - 1) if max_steps > 1 else t_stop
             logger.info(f"{self.name}: Limiting to {max_steps} steps, dt={dt:.2e}s")
 
+        # Get integration method from runner's analysis_params
+        tran_method = self.runner.analysis_params.get('tran_method', IntegrationMethod.BACKWARD_EULER)
+        integ_coeffs = compute_coefficients(tran_method, dt)
+        logger.info(f"{self.name}: Using integration method: {tran_method.value} "
+                   f"(c0={integ_coeffs.c0:.2e}, c1={integ_coeffs.c1:.2e}, d1={integ_coeffs.d1}, c2={integ_coeffs.c2:.2e})")
+
+        # Initialize charge state Q_prev (from DC operating point if available)
+        Q_prev = jnp.zeros(n_unknowns, dtype=jnp.float64)
+        if hasattr(self.runner, '_cached_build_system') and hasattr(self.runner, '_device_arrays'):
+            # Initialize Q_prev from DC operating point
+            vsource_dc = setup.source_device_data.get('vsource', {}).get('dc', jnp.array([]))
+            isource_dc = setup.source_device_data.get('isource', {}).get('dc', jnp.array([]))
+            if vsource_dc is not None and len(vsource_dc) > 0:
+                vsource_dc = jnp.array(vsource_dc)
+            else:
+                vsource_dc = jnp.array([])
+            if isource_dc is not None and len(isource_dc) > 0:
+                isource_dc = jnp.array(isource_dc)
+            else:
+                isource_dc = jnp.array([])
+            _, _, Q_prev = self.runner._cached_build_system(
+                V, vsource_dc, isource_dc, jnp.zeros(n_unknowns), 0.0, self.runner._device_arrays
+            )
+            Q_prev.block_until_ready()
+
+        # Initialize dQdt_prev for trapezoidal method
+        dQdt_prev = jnp.zeros(n_unknowns, dtype=jnp.float64) if integ_coeffs.needs_dqdt_history else None
+
+        # Initialize Q_prev2 for Gear2 method (history_depth >= 2)
+        Q_prev2 = jnp.zeros(n_unknowns, dtype=jnp.float64) if integ_coeffs.history_depth >= 2 else None
+
+        # Get device_arrays for nr_solve
+        device_arrays = self.runner._device_arrays if hasattr(self.runner, '_device_arrays') else {}
+
         logger.info(f"{self.name}: Starting simulation ({num_timesteps} timesteps, "
                    f"{n_total} nodes, {'sparse' if self.use_sparse else 'dense'} solver)")
         t_start = time_module.perf_counter()
@@ -108,8 +144,13 @@ class PythonLoopStrategy(TransientStrategy):
             source_values = source_fn(t)
             vsource_vals, isource_vals = self._build_source_arrays(source_values)
 
-            # JIT-compiled NR solve
-            V_new, iterations, converged, max_f = nr_solve(V, vsource_vals, isource_vals)
+            # JIT-compiled NR solve with integration coefficients
+            V_new, iterations, converged, max_f, Q, dQdt = nr_solve(
+                V, vsource_vals, isource_vals, Q_prev, integ_coeffs.c0, device_arrays,
+                1e-12, 0.0,  # gmin, gshunt
+                integ_coeffs.c1, integ_coeffs.d1, dQdt_prev,
+                integ_coeffs.c2, Q_prev2
+            )
 
             # Extract Python values for tracking
             nr_iters = int(iterations)
@@ -117,6 +158,11 @@ class PythonLoopStrategy(TransientStrategy):
             residual = float(max_f)
 
             V = V_new
+            # Update charge history for next timestep (order matters for Gear2!)
+            if integ_coeffs.history_depth >= 2:
+                Q_prev2 = Q_prev  # Shift: Q_prev becomes Q_prev2
+            Q_prev = Q  # Current Q becomes Q_prev
+            dQdt_prev = dQdt if integ_coeffs.needs_dqdt_history else None  # Update dQdt for trap
             total_nr_iters += nr_iters
 
             if not is_converged:
@@ -153,6 +199,7 @@ class PythonLoopStrategy(TransientStrategy):
             'time_per_step_ms': wall_time / len(times_list) * 1000 if times_list else 0,
             'strategy': 'python_loop',
             'solver': 'sparse' if self.use_sparse else 'dense',
+            'integration_method': tran_method.value,
         }
 
         logger.info(f"{self.name}: Completed {len(times_list)} steps in {wall_time:.3f}s "
