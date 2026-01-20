@@ -45,6 +45,14 @@ from jax_spice.debug.mir_inspector import (
     inspect_model,
 )
 
+from jax_spice.debug.simulation_tracer import (
+    SimulationTracer,
+    NodeAllocation,
+    VoltageMapping,
+    DeviceParamsTrace,
+    trace_simulation,
+)
+
 # MIR analysis imports are optional (require networkx/pydot)
 try:
     from jax_spice.debug.mir_analysis import (
@@ -103,6 +111,12 @@ __all__ = [
     "ParamSummary",
     "PHIInfo",
     "inspect_model",
+    # Simulation tracing
+    "SimulationTracer",
+    "NodeAllocation",
+    "VoltageMapping",
+    "DeviceParamsTrace",
+    "trace_simulation",
     # MIR analysis (optional)
     "generate_mir_dot",
     "load_mir_cfg",

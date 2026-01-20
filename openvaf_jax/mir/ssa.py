@@ -841,8 +841,28 @@ class SSAAnalyzer:
                     # it takes the branch that leads directly or indirectly to the PHI block
                     # But since pred IS the branching block, the edge pred->PHI must be one of the targets
                     if true_target not in pred_blocks and false_target not in pred_blocks:
-                        # Neither target is another predecessor, use reachability
-                        pass
+                        # Neither target is another predecessor.
+                        # The PHI block must be one of the targets (since pred edges to PHI).
+                        # Determine which by checking if targets can reach OTHER predecessors.
+                        # The target that CAN reach other preds leads to them;
+                        # the target that CANNOT reach other preds is likely the PHI block.
+                        other_preds = [p for p in pred_blocks if p != pred]
+                        true_reaches_others = any(
+                            self._is_reachable(true_target, op) for op in other_preds
+                        )
+                        false_reaches_others = any(
+                            self._is_reachable(false_target, op) for op in other_preds
+                        )
+
+                        if true_reaches_others and not false_reaches_others:
+                            # true_target leads to other preds, so pred goes via false to PHI
+                            from_true = False
+                            from_false = True
+                        elif false_reaches_others and not true_reaches_others:
+                            # false_target leads to other preds, so pred goes via true to PHI
+                            from_true = True
+                            from_false = False
+                        # else: both or neither reach others, can't determine
                     elif true_target in pred_blocks and false_target not in pred_blocks:
                         # true_target is another predecessor, so this pred goes via true
                         # Wait no - if pred IS block_name and true_target is another pred,
