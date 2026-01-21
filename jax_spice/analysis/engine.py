@@ -1856,7 +1856,9 @@ class CircuitEngine:
                       use_scan: bool = False,
                       use_while_loop: bool = True,
                       profile_config: Optional['ProfileConfig'] = None,
-                      temperature: float = DEFAULT_TEMPERATURE_K) -> TransientResult:
+                      temperature: float = DEFAULT_TEMPERATURE_K,
+                      adaptive: bool = False,
+                      adaptive_config: Optional['AdaptiveConfig'] = None) -> TransientResult:
         """Run transient analysis.
 
         All computation is JIT-compiled. Automatically uses sparse matrices
@@ -1864,7 +1866,8 @@ class CircuitEngine:
 
         Args:
             t_stop: Stop time (default: from analysis params or 1ms)
-            dt: Time step (default: from analysis params or 1µs)
+            dt: Time step (default: from analysis params or 1µs). For adaptive mode,
+                this is the initial timestep which will be adjusted automatically.
             max_steps: Maximum number of time steps (default: 1M)
             use_sparse: Force sparse (True) or dense (False) solver. If None, auto-detect.
             backend: 'gpu', 'cpu', or None (auto-select based on circuit size).
@@ -1873,6 +1876,10 @@ class CircuitEngine:
             use_while_loop: Use lax.while_loop for 2x faster per-step execution (default: True)
             profile_config: If provided, profile just the core simulation (not setup)
             temperature: Simulation temperature in Kelvin (default: 300.15K = 27°C)
+            adaptive: If True, use LTE-based adaptive timestep control. The timestep
+                      will be automatically adjusted based on local truncation error.
+            adaptive_config: Configuration for adaptive timestep control. If None,
+                             uses default AdaptiveConfig. Only used when adaptive=True.
 
         Returns:
             TransientResult with times, voltages, and stats
@@ -1912,6 +1919,48 @@ class CircuitEngine:
             use_sparse = False
 
         use_dense = not use_sparse
+
+        # Adaptive timestep mode
+        if adaptive:
+            from jax_spice.analysis.transient import AdaptiveConfig, AdaptiveStrategy
+
+            # Use provided config or create default
+            config = adaptive_config or AdaptiveConfig()
+
+            # Override config from analysis_params if not explicitly set
+            if 'tran_lteratio' in self.analysis_params and adaptive_config is None:
+                config = AdaptiveConfig(
+                    lte_ratio=float(self.analysis_params['tran_lteratio']),
+                    redo_factor=config.redo_factor,
+                    reltol=config.reltol,
+                    abstol=config.abstol,
+                    min_dt=config.min_dt,
+                    max_dt=config.max_dt,
+                )
+            if 'tran_redofactor' in self.analysis_params and adaptive_config is None:
+                config = AdaptiveConfig(
+                    lte_ratio=config.lte_ratio,
+                    redo_factor=float(self.analysis_params['tran_redofactor']),
+                    reltol=config.reltol,
+                    abstol=config.abstol,
+                    min_dt=config.min_dt,
+                    max_dt=config.max_dt,
+                )
+
+            logger.info(f"Using adaptive timestep solver ({self.num_nodes} nodes, "
+                       f"lte_ratio={config.lte_ratio}, redo_factor={config.redo_factor})")
+
+            strategy = AdaptiveStrategy(self, use_sparse=use_sparse,
+                                        backend=backend, config=config)
+            times, voltages, stats = strategy.run(t_stop, dt, max_steps)
+
+            # Convert to TransientResult
+            return TransientResult(
+                times=times,
+                voltages=voltages,
+                currents={},  # TODO: extract currents if needed
+                stats=stats,
+            )
 
         if use_while_loop:
             # lax.while_loop version - computes sources on-the-fly

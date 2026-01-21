@@ -62,12 +62,18 @@ class IntegrationCoeffs(NamedTuple):
     Where coefficients depend on the method:
         BE:    dQ/dt = (Q_new - Q_prev) / dt
                c0 = 1/dt, c1 = -1/dt, c2 = 0, d1 = 0
+               error_coeff = 1/2
 
         Trap:  dQ/dt = 2/dt * (Q_new - Q_prev) - dQdt_prev
                c0 = 2/dt, c1 = -2/dt, c2 = 0, d1 = -1
+               error_coeff = 1/12
 
         Gear2: dQ/dt = (3*Q_new - 4*Q_prev + Q_prev2) / (2*dt)
                c0 = 3/(2*dt), c1 = -4/(2*dt), c2 = 1/(2*dt), d1 = 0
+               error_coeff = 2/9
+
+    The error_coeff is used for Local Truncation Error (LTE) estimation
+    in adaptive timestep control.
     """
     c0: float  # Coefficient for Q_new (leading coefficient)
     c1: float  # Coefficient for Q_prev
@@ -75,6 +81,7 @@ class IntegrationCoeffs(NamedTuple):
     d1: float  # Coefficient for dQdt_prev (only trap)
     history_depth: int  # Number of past Q values needed (1 for BE/trap, 2 for Gear2)
     needs_dqdt_history: bool  # Whether dQdt history is needed (only trap)
+    error_coeff: float = 0.5  # LTE error coefficient (default BE value)
 
 
 def compute_coefficients(method: IntegrationMethod, dt: float) -> IntegrationCoeffs:
@@ -91,6 +98,7 @@ def compute_coefficients(method: IntegrationMethod, dt: float) -> IntegrationCoe
 
     if method == IntegrationMethod.BACKWARD_EULER:
         # dQ/dt = (Q_new - Q_prev) / dt
+        # Error coefficient: 1/2 (first-order method)
         return IntegrationCoeffs(
             c0=inv_dt,
             c1=-inv_dt,
@@ -98,9 +106,11 @@ def compute_coefficients(method: IntegrationMethod, dt: float) -> IntegrationCoe
             d1=0.0,
             history_depth=1,
             needs_dqdt_history=False,
+            error_coeff=0.5,
         )
     elif method == IntegrationMethod.TRAPEZOIDAL:
         # dQ/dt = 2/dt * (Q_new - Q_prev) - dQdt_prev
+        # Error coefficient: 1/12 (second-order method)
         return IntegrationCoeffs(
             c0=2.0 * inv_dt,
             c1=-2.0 * inv_dt,
@@ -108,9 +118,11 @@ def compute_coefficients(method: IntegrationMethod, dt: float) -> IntegrationCoe
             d1=-1.0,
             history_depth=1,
             needs_dqdt_history=True,
+            error_coeff=1.0 / 12.0,
         )
     elif method in (IntegrationMethod.GEAR2, IntegrationMethod.BDF2):
         # dQ/dt = (3*Q_new - 4*Q_prev + Q_prev2) / (2*dt)
+        # Error coefficient: 2/9 (second-order method)
         return IntegrationCoeffs(
             c0=1.5 * inv_dt,
             c1=-2.0 * inv_dt,
@@ -118,6 +130,7 @@ def compute_coefficients(method: IntegrationMethod, dt: float) -> IntegrationCoe
             history_depth=2,
             d1=0.0,
             needs_dqdt_history=False,
+            error_coeff=2.0 / 9.0,
         )
     else:
         raise ValueError(f"Unknown integration method: {method}")
