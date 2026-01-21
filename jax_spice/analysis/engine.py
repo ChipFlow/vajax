@@ -1952,13 +1952,13 @@ class CircuitEngine:
 
             strategy = AdaptiveStrategy(self, use_sparse=use_sparse,
                                         backend=backend, config=config)
-            times, voltages, stats = strategy.run(t_stop, dt, max_steps)
+            times, voltages, currents, stats = strategy.run(t_stop, dt, max_steps)
 
             # Convert to TransientResult
             return TransientResult(
                 times=times,
                 voltages=voltages,
-                currents={},  # TODO: extract currents if needed
+                currents=currents,
                 stats=stats,
             )
 

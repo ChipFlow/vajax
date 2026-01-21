@@ -179,7 +179,7 @@ class AdaptiveStrategy(TransientStrategy):
 
     def run(
         self, t_stop: float, dt: float, max_steps: int = 1000000
-    ) -> Tuple[jax.Array, Dict[str, jax.Array], Dict]:
+    ) -> Tuple[jax.Array, Dict[str, jax.Array], Dict[str, jax.Array], Dict]:
         """Run transient analysis with adaptive timestep control.
 
         Args:
@@ -188,9 +188,10 @@ class AdaptiveStrategy(TransientStrategy):
             max_steps: Maximum number of timesteps (safety limit)
 
         Returns:
-            Tuple of (times, voltages, stats) where:
+            Tuple of (times, voltages, currents, stats) where:
             - times: JAX array of accepted time points
             - voltages: Dict mapping node name to voltage array
+            - currents: Dict mapping vsource name to current array
             - stats: Dict with adaptive timestep statistics
         """
         # Ensure setup and solver are ready
@@ -216,6 +217,10 @@ class AdaptiveStrategy(TransientStrategy):
         # Result accumulators (Python lists for dynamic sizing)
         times_list: List[float] = []
         voltages_dict: Dict[int, List[float]] = {i: [] for i in range(n_external)}
+
+        # Get vsource names for current tracking
+        vsource_names = setup.source_device_data.get('vsource', {}).get('names', [])
+        current_history: List[jax.Array] = []
 
         # Initialize charge state from DC operating point
         Q_prev = jnp.zeros(n_unknowns, dtype=jnp.float64)
@@ -283,6 +288,10 @@ class AdaptiveStrategy(TransientStrategy):
         for i in range(n_external):
             voltages_dict[i].append(float(V[i]))
 
+        # Record initial current (zeros at t=0 before simulation starts)
+        if len(vsource_names) > 0:
+            current_history.append(jnp.zeros(len(vsource_names), dtype=jnp.float64))
+
         # Main simulation loop
         t = 0.0
         step_count = 0
@@ -317,8 +326,7 @@ class AdaptiveStrategy(TransientStrategy):
                     pred_coeffs = None
 
             # Corrector step: Newton-Raphson solve
-            # Note: nr_solve returns 7 values, but adaptive mode doesn't track currents yet
-            V_new, iterations, converged, max_f, Q, dQdt, _ = nr_solve(
+            V_new, iterations, converged, max_f, Q, dQdt, I_vsource = nr_solve(
                 V_init,
                 vsource_vals,
                 isource_vals,
@@ -414,6 +422,10 @@ class AdaptiveStrategy(TransientStrategy):
             for i in range(n_external):
                 voltages_dict[i].append(float(V[i]))
 
+            # Record vsource currents (computed from KCL in build_system)
+            if len(vsource_names) > 0 and I_vsource.size > 0:
+                current_history.append(I_vsource)
+
             # Check if warmup is complete
             if not warmup_complete and history.depth >= config.warmup_steps:
                 warmup_complete = True
@@ -442,6 +454,13 @@ class AdaptiveStrategy(TransientStrategy):
             if 0 < idx < n_external:
                 voltages[name] = idx_to_voltage[idx]
 
+        # Build currents dictionary from current history
+        currents: Dict[str, jax.Array] = {}
+        if current_history and len(vsource_names) > 0:
+            I_stacked = jnp.stack(current_history)  # Shape: (n_timesteps, n_vsources)
+            for i, name in enumerate(vsource_names):
+                currents[name] = I_stacked[:, i]
+
         # Build stats dict
         stats_dict = {
             "total_timesteps": stats.total_timesteps,
@@ -469,4 +488,4 @@ class AdaptiveStrategy(TransientStrategy):
             f"dt range [{stats.min_dt_used:.2e}, {stats.max_dt_used:.2e}])"
         )
 
-        return times, voltages, stats_dict
+        return times, voltages, currents, stats_dict
