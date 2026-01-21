@@ -200,7 +200,95 @@ class SolutionHistory:
     @property
     def depth(self) -> int:
         """Number of valid history entries."""
-        return self.count
+        return len(self.V)
+
+
+# =============================================================================
+# JAX-Compatible Solution History (for JIT-compiled loops)
+# =============================================================================
+
+
+class SolutionHistoryJAX(NamedTuple):
+    """JAX-compatible solution history using fixed-size arrays.
+
+    Uses a "shift and write" approach where new entries are written to index 0
+    and old entries are shifted down using jnp.roll.
+
+    This is a NamedTuple so it's a valid JAX pytree and can be passed through
+    JIT boundaries without issues.
+
+    Attributes:
+        V: Past voltage vectors, shape (max_depth, n_unknowns), most recent first
+        Q: Past charge vectors, shape (max_depth, n_unknowns), most recent first
+        dt: Past timesteps, shape (max_depth,), most recent first
+        depth: Number of valid history entries (0 to max_depth)
+    """
+
+    V: Array  # (max_depth, n_unknowns)
+    Q: Array  # (max_depth, n_unknowns)
+    dt: Array  # (max_depth,)
+    depth: Array  # Scalar int
+
+
+def create_solution_history_jax(
+    max_depth: int, n_voltages: int, n_charges: int = None, dtype=jnp.float64
+) -> SolutionHistoryJAX:
+    """Create an empty JAX-compatible solution history.
+
+    Args:
+        max_depth: Maximum number of history entries
+        n_voltages: Number of voltage values (typically n_total)
+        n_charges: Number of charge values (typically n_unknowns).
+            If None, defaults to n_voltages.
+
+    Returns:
+        Empty SolutionHistoryJAX
+    """
+    if n_charges is None:
+        n_charges = n_voltages
+    return SolutionHistoryJAX(
+        V=jnp.zeros((max_depth, n_voltages), dtype=dtype),
+        Q=jnp.zeros((max_depth, n_charges), dtype=dtype),
+        dt=jnp.zeros(max_depth, dtype=dtype),
+        depth=jnp.array(0, dtype=jnp.int32),
+    )
+
+
+def push_solution_history_jax(
+    history: SolutionHistoryJAX,
+    V_new: Array,
+    Q_new: Array,
+    dt_new: Array,
+) -> SolutionHistoryJAX:
+    """Add new solution to history, shifting old entries.
+
+    This function is JIT-compatible.
+
+    Args:
+        history: Current history state
+        V_new: New voltage vector
+        Q_new: New charge vector
+        dt_new: New timestep (as JAX scalar)
+
+    Returns:
+        Updated SolutionHistoryJAX with new entry at index 0
+    """
+    max_depth = history.V.shape[0]
+
+    # Shift old entries down by rolling and then overwriting index 0
+    V_shifted = jnp.roll(history.V, 1, axis=0).at[0].set(V_new)
+    Q_shifted = jnp.roll(history.Q, 1, axis=0).at[0].set(Q_new)
+    dt_shifted = jnp.roll(history.dt, 1).at[0].set(dt_new)
+
+    # Increment depth up to max_depth
+    new_depth = jnp.minimum(history.depth + 1, max_depth)
+
+    return SolutionHistoryJAX(
+        V=V_shifted,
+        Q=Q_shifted,
+        dt=dt_shifted,
+        depth=new_depth,
+    )
 
 
 @dataclass
@@ -294,8 +382,12 @@ class AdaptiveStrategy(TransientStrategy):
 
         # Initialize state
         V = jnp.zeros(n_total, dtype=jnp.float64)
-        # V_buffer stores n_total (full voltage), Q_buffer stores n_unknowns (charges)
-        history = SolutionHistory.create(n_total, n_unknowns, max_depth=config.max_order + 2)
+        max_history = config.max_order + 2
+        # Use JAX-compatible history for JIT-friendly state updates
+        # V is (n_total,), Q is (n_unknowns,) - different sizes
+        history = create_solution_history_jax(
+            max_history, n_voltages=n_total, n_charges=n_unknowns, dtype=jnp.float64
+        )
         stats = AdaptiveStats()
 
         # Result accumulators - use Python lists (faster than JAX .at[].set() in loop)
@@ -349,12 +441,15 @@ class AdaptiveStrategy(TransientStrategy):
             )
             Q_prev.block_until_ready()
 
-        # Initialize dQdt_prev and Q_prev2
-        # Always use arrays (not None) to ensure consistent nr_solve signature
-        # and avoid JIT recompilation when switching integration methods
+        # Initialize dQdt_prev for tran_method
+        # Always use JAX arrays (not None) for JIT-compatible jnp.where
         integ_coeffs = compute_coefficients(tran_method, dt)
         dQdt_prev = jnp.zeros(n_unknowns, dtype=jnp.float64)
+        needs_dqdt = integ_coeffs.needs_dqdt_history
+
+        # Initialize Q_prev2 for Gear2 method
         Q_prev2 = jnp.zeros(n_unknowns, dtype=jnp.float64)
+        needs_q_prev2 = integ_coeffs.history_depth >= 2
 
         # Get device_arrays for nr_solve
         device_arrays = (
@@ -380,8 +475,13 @@ class AdaptiveStrategy(TransientStrategy):
         current_write_idx = 1  # Next write position after initial zeros
 
         # Main simulation loop
-        t = 0.0
+        # =====================================================================
+        # Phase 2 optimization: Only 1 JAX↔Python crossing per iteration
+        # The loop condition is the ONLY crossing; all state updates use jnp.where
+        # =====================================================================
         step_count = 0
+        warmup_count_jax = jnp.array(0, dtype=jnp.int32)
+        cfg_warmup_steps = jnp.array(config.warmup_steps, dtype=jnp.int32)
 
         while t < t_stop and step_count < max_steps:
             step_count += 1
@@ -397,26 +497,24 @@ class AdaptiveStrategy(TransientStrategy):
             # ================================================================
             # Prediction step (unconditional - use jnp.where for selection)
             # ================================================================
-            # Can predict when we have at least 2 history points
-            can_predict = history.depth >= 2
+            warmup_complete_jax = warmup_count_jax >= cfg_warmup_steps
+            can_predict = warmup_complete_jax & (history.depth >= 2)
 
-            if warmup_complete and history.depth >= 2:
-                # Compute predictor coefficients
-                order = min(history.depth - 1, config.max_order)
-                try:
-                    # Get history as lists for predictor (fixed depth, no recompilation)
-                    past_dt = history.get_dt_list(order + 1)
-                    past_V = history.get_V_list(order + 1)
-                    pred_coeffs = compute_predictor_coeffs(
-                        past_dt, current_dt, order
-                    )
-                    # Predict solution
-                    V_init = predict(pred_coeffs, past_V)
-                except Exception as e:
-                    logger.warning(f"Predictor failed: {e}, using previous solution")
-                    pred_coeffs = None
+            # Use JAX predictor with fixed-size history arrays
+            # compute_predictor_coeffs_jax expects order to be static, so we use
+            # a fixed order and the predictor handles variable history internally
+            pred_order = config.max_order
+            pred_coeffs_jax = compute_predictor_coeffs_jax(
+                history.dt, dt_jax, pred_order
+            )
+            V_pred = predict_jax(pred_coeffs_jax.a, history.V, pred_order + 1)
 
-            # Corrector step: Newton-Raphson solve
+            # Select V_init based on whether we can predict
+            V_init = jnp.where(can_predict, V_pred, V)
+
+            # ================================================================
+            # Corrector step: Newton-Raphson solve (unconditional)
+            # ================================================================
             V_new, iterations, converged, max_f, Q, dQdt, I_vsource = nr_solve(
                 V_init,
                 vsource_vals,
@@ -437,59 +535,113 @@ class AdaptiveStrategy(TransientStrategy):
             is_converged = bool(converged)
             stats.total_nr_iterations += nr_iters
 
-            # Handle NR convergence failure
-            if not is_converged:
-                # Halve timestep and retry
-                old_dt = current_dt
-                current_dt = max(current_dt / 2, config.min_dt)
-                stats.rejected_steps += 1
-                logger.debug(
-                    f"t={t:.2e}s: NR failed after {nr_iters} iters, "
-                    f"reducing dt {old_dt:.2e} -> {current_dt:.2e}"
-                )
-                if current_dt <= config.min_dt:
-                    logger.warning(f"t={t:.2e}s: dt at minimum, accepting anyway")
-                else:
-                    continue  # Retry with smaller timestep
+            # ================================================================
+            # LTE estimation (unconditional - use jnp.where for selection)
+            # ================================================================
+            # Compute LTE even if we won't use it (cheaper than Python branching)
+            lte = (V_new - V_pred) * (
+                jit_coeffs.error_coeff
+                / (jit_coeffs.error_coeff - pred_coeffs_jax.error_coeff + 1e-30)
+            )
 
-            # LTE estimation and timestep adjustment (only after warmup)
-            dt_new = current_dt
-            accept_step = True
+            # Compute new timestep from LTE
+            dt_lte, max_lte_ratio = compute_new_timestep_jax(
+                lte, V_new,
+                cfg_reltol, cfg_abstol, cfg_lte_ratio,
+                dt_jax, pred_order,
+                cfg_min_dt, cfg_max_dt,
+            )
 
-            if warmup_complete and pred_coeffs is not None:
-                # Estimate LTE from predictor-corrector difference
-                lte = estimate_lte(
-                    V_init,  # V_predicted
-                    V_new,  # V_corrected
-                    pred_coeffs.error_coeff,
-                    integ_coeffs.error_coeff,
-                )
+            # ================================================================
+            # Accept/reject decision (all in JAX - no Python control flow)
+            # ================================================================
+            # NR convergence check: accept if converged OR dt at minimum
+            at_min_dt = dt_jax <= cfg_min_dt
+            nr_ok = converged | at_min_dt
 
-<<<<<<< HEAD
-                # Compute new timestep based on LTE
-                dt_new, max_lte_ratio = compute_new_timestep(
-                    lte,
-                    V_new,
-                    config.reltol,
-                    config.abstol,
-                    config.lte_ratio,
-                    current_dt,
-                    pred_coeffs.order,
-                    config.min_dt,
-                    config.max_dt,
-                )
+            # LTE check: accept if not in warmup OR ratio is acceptable
+            lte_ratio_ok = (dt_jax / dt_lte) <= cfg_redo_factor
+            lte_ok = ~warmup_complete_jax | ~can_predict | lte_ratio_ok
 
-                # Accept/reject decision
-                if current_dt / dt_new > config.redo_factor:
-                    # LTE too large - reject and retry with smaller timestep
-                    stats.rejected_steps += 1
-                    current_dt = dt_new
-                    logger.debug(
-                        f"t={t:.2e}s: LTE too large (ratio={max_lte_ratio:.2f}), "
-                        f"reducing dt to {current_dt:.2e}"
+            # Combined accept condition
+            accept = nr_ok & lte_ok
+
+            # ================================================================
+            # State updates using jnp.where (no Python branching)
+            # ================================================================
+
+            # Compute candidate values for accepted step
+            t_accepted = t_jax + dt_jax
+
+            # Compute dt for next iteration based on outcome:
+            # - If NR failed: halve dt
+            # - If LTE rejected: use dt_lte
+            # - If accepted during warmup: grow dt
+            # - If accepted after warmup: use min(dt_lte, dt * grow_factor)
+            dt_nr_failed = jnp.maximum(dt_jax / 2, cfg_min_dt)
+            dt_warmup_grow = jnp.minimum(dt_jax * cfg_grow_factor, cfg_max_dt)
+            dt_lte_capped = jnp.minimum(dt_lte, dt_jax * cfg_grow_factor)
+
+            # Select dt_next based on outcome
+            dt_next = jnp.where(
+                ~converged & ~at_min_dt,  # NR failed, not at min
+                dt_nr_failed,
+                jnp.where(
+                    ~lte_ok,  # LTE rejected
+                    dt_lte,
+                    jnp.where(
+                        warmup_complete_jax,  # After warmup
+                        dt_lte_capped,
+                        dt_warmup_grow,  # During warmup
                     )
-                    continue  # Retry with smaller timestep
-=======
+                )
+            )
+
+            # Update time (only on accept)
+            t_jax = jnp.where(accept, t_accepted, t_jax)
+
+            # Update voltage state (only on accept)
+            V = jnp.where(accept, V_new, V)
+
+            # Update charge states (only on accept)
+            # Q_prev2 = old Q_prev, Q_prev = Q (shift history)
+            Q_prev2_new = jnp.where(needs_q_prev2 & accept, Q_prev, Q_prev2)
+            Q_prev_new = jnp.where(accept, Q, Q_prev)
+            dQdt_prev_new = jnp.where(needs_dqdt & accept, dQdt, dQdt_prev)
+            Q_prev2 = Q_prev2_new
+            Q_prev = Q_prev_new
+            dQdt_prev = dQdt_prev_new
+
+            # Update history (only on accept)
+            history_new = push_solution_history_jax(history, V_new, Q, dt_jax)
+            history = SolutionHistoryJAX(
+                V=jnp.where(accept, history_new.V, history.V),
+                Q=jnp.where(accept, history_new.Q, history.Q),
+                dt=jnp.where(accept, history_new.dt, history.dt),
+                depth=jnp.where(accept, history_new.depth, history.depth),
+            )
+
+            # Update output arrays (only on accept, and only if space available)
+            idx = out_idx
+            can_write = accept & (idx < est_max_steps)
+            times_out = jnp.where(
+                can_write,
+                times_out.at[idx].set(t_accepted),
+                times_out,
+            )
+            V_out = jnp.where(
+                can_write,
+                V_out.at[idx].set(V_new[:n_external]),
+                V_out,
+            )
+            if n_vsources_out > 0:
+                I_out = jnp.where(
+                    can_write,
+                    I_out.at[idx].set(I_vsource[:n_vsources_out]),
+                    I_out,
+                )
+            out_idx = jnp.where(accept & (idx < est_max_steps), idx + 1, idx)
+
             # LTE check: accept if can't predict (no history) OR ratio is acceptable
             lte_ratio_ok = (dt_jax / dt_lte) <= cfg_redo_factor
             lte_ok = ~can_predict | lte_ratio_ok
@@ -521,35 +673,15 @@ class AdaptiveStrategy(TransientStrategy):
                     dt_lte_capped,  # Accepted: use LTE-based dt capped by grow_factor
                 )
             )
->>>>>>> d41e44f (Remove warmup path from all adaptive timestep strategies)
 
-            # Step accepted - update state
-            stats.accepted_steps += 1
-            stats.min_dt_used = min(stats.min_dt_used, current_dt)
-            stats.max_dt_used = max(stats.max_dt_used, current_dt)
+            # Update stats (only on accept for some, always for rejected_steps)
+            accepted_steps = jnp.where(accept, accepted_steps + 1, accepted_steps)
+            rejected_steps = jnp.where(accept, rejected_steps, rejected_steps + 1)
+            min_dt_used = jnp.where(accept, jnp.minimum(min_dt_used, dt_jax), min_dt_used)
+            max_dt_used = jnp.where(accept, jnp.maximum(max_dt_used, dt_jax), max_dt_used)
 
-            # Update history (immutable update)
-            history = history.push(V_new, Q, current_dt)
-
-            # Update charge state for next step
-            if integ_coeffs.history_depth >= 2:
-                Q_prev2 = Q_prev
-            Q_prev = Q
-            if integ_coeffs.needs_dqdt_history:
-                dQdt_prev = dQdt
-
-            # Update voltage
-            V = V_new
-
-            # Record accepted state - store JAX arrays directly (fast list append)
-            t = t_next
-            times_list.append(t)
-            voltages_list.append(V[:n_external])
-
-            # Record vsource currents
-            if n_vsources > 0 and I_vsource.size > 0:
-                currents_buffer = currents_buffer.at[current_write_idx].set(I_vsource)
-                current_write_idx += 1
+            # Update warmup counter (only on accept)
+            warmup_count_jax = jnp.where(accept, warmup_count_jax + 1, warmup_count_jax)
 
             # Update dt for next iteration, clipped to not overshoot t_stop
             t_remaining = jnp.array(t_stop, dtype=jnp.float64) - t_jax
@@ -814,9 +946,7 @@ def _make_adaptive_scan_fn(
         t_stop: Simulation stop time
         warmup_steps: Number of warmup steps before enabling LTE control
         tran_method: Integration method
-=======
         method_idx: Integration method index (0=BE, 1=TRAP, 2=GEAR2)
->>>>>>> d41e44f (Remove warmup path from all adaptive timestep strategies)
         dtype: Float dtype to use (float32 or float64)
     """
 
@@ -1261,11 +1391,7 @@ def _make_while_loop_fns(
     n_vsources: int,
     max_steps: int,
     t_stop: float,
-<<<<<<< HEAD
-    warmup_steps: int,
-=======
     method_idx: int,
->>>>>>> d41e44f (Remove warmup path from all adaptive timestep strategies)
     dtype,
 ):
     """Create cond and body functions for while_loop adaptive timestep."""
