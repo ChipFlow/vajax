@@ -589,7 +589,7 @@ class AdaptiveStrategy(TransientStrategy):
 from typing import NamedTuple, Callable
 from jax import lax
 
-from jax_spice import get_float_dtype
+# Use jnp.float64 directly (JAX-SPICE uses 64-bit precision on CPU)
 
 
 def _make_jit_source_evaluator(
@@ -616,7 +616,7 @@ def _make_jit_source_evaluator(
     """
     n_vsources = len(vsource_names)
     n_isources = len(isource_names)
-    dtype = get_float_dtype()
+    dtype = jnp.float64
 
     # Build vectorized evaluator by calling each source function
     # Note: source_fn internally calls jnp.where, so individual evaluations are JIT-safe
@@ -1060,7 +1060,7 @@ class AdaptiveScanStrategy(TransientStrategy):
         )
 
         # Get dtype based on x64 configuration
-        dtype = get_float_dtype()
+        dtype = jnp.float64
 
         # Get source info for JIT-compatible evaluator
         vsource_data = setup.source_device_data.get('vsource', {})
@@ -1430,7 +1430,7 @@ class AdaptiveWhileLoopStrategy(TransientStrategy):
             "tran_method", IntegrationMethod.BACKWARD_EULER
         )
 
-        dtype = get_float_dtype()
+        dtype = jnp.float64
 
         vsource_data = setup.source_device_data.get('vsource', {})
         isource_data = setup.source_device_data.get('isource', {})
