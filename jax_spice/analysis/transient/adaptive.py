@@ -293,8 +293,49 @@ class AdaptiveStrategy(TransientStrategy):
             "tran_method", IntegrationMethod.BACKWARD_EULER
         )
 
-        # Initialize state
-        V = jnp.zeros(n_total, dtype=jnp.float64)
+        # Get device_arrays for nr_solve (needed for DC OP)
+        device_arrays = (
+            self.runner._device_arrays
+            if hasattr(self.runner, "_device_arrays")
+            else {}
+        )
+
+        # Get vsource/isource names for DC operating point and current tracking
+        vsource_names = setup.source_device_data.get('vsource', {}).get('names', [])
+        n_vsources = len(vsource_names)
+        n_isources = len(setup.source_device_data.get('isource', {}).get('names', []))
+
+        # Initialize state - compute DC operating point if icmode='op' (default)
+        icmode = self.runner.analysis_params.get('icmode', 'op')
+
+        if icmode == 'op':
+            logger.info("Computing DC operating point for transient initial condition...")
+            V = self.runner._compute_dc_operating_point(
+                n_nodes=n_total,
+                n_vsources=n_vsources,
+                n_isources=n_isources,
+                nr_solve=nr_solve,
+                device_arrays=device_arrays,
+                backend=self.backend,
+                use_dense=not self.use_sparse,
+                device_internal_nodes=setup.device_internal_nodes,
+                source_device_data=setup.source_device_data,
+                vmapped_fns=setup.vmapped_fns,
+                static_inputs_cache=setup.static_inputs_cache,
+            )
+        else:
+            # icmode='uic' - use mid-rail initialization
+            vdd_value = self.runner._get_vdd_value()
+            mid_rail = vdd_value / 2.0
+            V = jnp.full(n_total, mid_rail, dtype=get_float_dtype())
+            V = V.at[0].set(0.0)  # Ground is always 0
+            # Set VDD/VCC nodes to supply voltage
+            for name, idx in self.runner.node_names.items():
+                name_lower = name.lower()
+                if 'vdd' in name_lower or 'vcc' in name_lower:
+                    V = V.at[idx].set(vdd_value)
+                elif name_lower in ('gnd', 'vss', '0'):
+                    V = V.at[idx].set(0.0)
         # V_buffer stores n_total (full voltage), Q_buffer stores n_unknowns (charges)
         history = SolutionHistory.create(n_total, n_unknowns, max_depth=config.max_order + 2)
         stats = AdaptiveStats()
@@ -302,10 +343,6 @@ class AdaptiveStrategy(TransientStrategy):
         # Result accumulators - use Python lists (faster than JAX .at[].set() in loop)
         times_list: List[float] = []
         voltages_list: List[jax.Array] = []  # Store V arrays directly, convert at end
-
-        # Get vsource names for current tracking
-        vsource_names = setup.source_device_data.get('vsource', {}).get('names', [])
-        n_vsources = len(vsource_names)
 
         # Pre-allocate currents buffer (vsource currents need JAX buffer for .at[].set())
         currents_buffer = jnp.zeros((max_steps + 1, max(n_vsources, 1)), dtype=jnp.float64)
@@ -356,13 +393,6 @@ class AdaptiveStrategy(TransientStrategy):
         integ_coeffs = compute_coefficients(tran_method, dt)
         dQdt_prev = jnp.zeros(n_unknowns, dtype=jnp.float64)
         Q_prev2 = jnp.zeros(n_unknowns, dtype=jnp.float64)
-
-        # Get device_arrays for nr_solve
-        device_arrays = (
-            self.runner._device_arrays
-            if hasattr(self.runner, "_device_arrays")
-            else {}
-        )
 
         # Apply max_dt constraint from config
         current_dt = min(dt, config.max_dt)
@@ -1114,6 +1144,7 @@ class AdaptiveScanStrategy(TransientStrategy):
         n_vsources = len(vsource_names)
 
         device_arrays = self.runner._device_arrays
+        n_isources = len(isource_names)
 
         max_history = config.max_order + 2
 
@@ -1126,8 +1157,36 @@ class AdaptiveScanStrategy(TransientStrategy):
             isource_dc=isource_dc,
         )
 
-        # Initialize state
-        V = jnp.zeros(n_total, dtype=dtype)
+        # Initialize state - compute DC operating point if icmode='op' (default)
+        icmode = self.runner.analysis_params.get('icmode', 'op')
+
+        if icmode == 'op':
+            logger.info("Computing DC operating point for transient initial condition...")
+            V = self.runner._compute_dc_operating_point(
+                n_nodes=n_total,
+                n_vsources=n_vsources,
+                n_isources=n_isources,
+                nr_solve=nr_solve,
+                device_arrays=device_arrays,
+                backend=self.backend,
+                use_dense=not self.use_sparse,
+                device_internal_nodes=setup.device_internal_nodes,
+                source_device_data=setup.source_device_data,
+                vmapped_fns=setup.vmapped_fns,
+                static_inputs_cache=setup.static_inputs_cache,
+            )
+        else:
+            # icmode='uic' - use mid-rail initialization
+            vdd_value = self.runner._get_vdd_value()
+            mid_rail = vdd_value / 2.0
+            V = jnp.full(n_total, mid_rail, dtype=dtype)
+            V = V.at[0].set(0.0)  # Ground is always 0
+            for name, idx in self.runner.node_names.items():
+                name_lower = name.lower()
+                if 'vdd' in name_lower or 'vcc' in name_lower:
+                    V = V.at[idx].set(vdd_value)
+                elif name_lower in ('gnd', 'vss', '0'):
+                    V = V.at[idx].set(0.0)
 
         # Initialize Q from build_system at DC
         Q_init = jnp.zeros(n_unknowns, dtype=dtype)
@@ -1494,7 +1553,9 @@ class AdaptiveWhileLoopStrategy(TransientStrategy):
         isource_names = isource_data.get('names', [])
         vsource_dc = jnp.asarray(vsource_data.get('dc', []), dtype=dtype)
         isource_dc = jnp.asarray(isource_data.get('dc', []), dtype=dtype)
-        n_vsources = max(len(vsource_names), 1)
+        n_vsources_actual = len(vsource_names)
+        n_vsources = max(n_vsources_actual, 1)  # For output array sizing
+        n_isources = len(isource_names)
 
         device_arrays = self.runner._device_arrays
         max_history = config.max_order + 2
@@ -1503,8 +1564,36 @@ class AdaptiveWhileLoopStrategy(TransientStrategy):
             source_fn, vsource_names, vsource_dc, isource_names, isource_dc
         )
 
-        # Initialize state
-        V = jnp.zeros(n_total, dtype=dtype)
+        # Initialize state - compute DC operating point if icmode='op' (default)
+        icmode = self.runner.analysis_params.get('icmode', 'op')
+
+        if icmode == 'op':
+            logger.info("Computing DC operating point for transient initial condition...")
+            V = self.runner._compute_dc_operating_point(
+                n_nodes=n_total,
+                n_vsources=n_vsources_actual,
+                n_isources=n_isources,
+                nr_solve=nr_solve,
+                device_arrays=device_arrays,
+                backend=self.backend,
+                use_dense=not self.use_sparse,
+                device_internal_nodes=setup.device_internal_nodes,
+                source_device_data=setup.source_device_data,
+                vmapped_fns=setup.vmapped_fns,
+                static_inputs_cache=setup.static_inputs_cache,
+            )
+        else:
+            # icmode='uic' - use mid-rail initialization
+            vdd_value = self.runner._get_vdd_value()
+            mid_rail = vdd_value / 2.0
+            V = jnp.full(n_total, mid_rail, dtype=dtype)
+            V = V.at[0].set(0.0)  # Ground is always 0
+            for name, idx in self.runner.node_names.items():
+                name_lower = name.lower()
+                if 'vdd' in name_lower or 'vcc' in name_lower:
+                    V = V.at[idx].set(vdd_value)
+                elif name_lower in ('gnd', 'vss', '0'):
+                    V = V.at[idx].set(0.0)
         Q_init = jnp.zeros(n_unknowns, dtype=dtype)
         if hasattr(self.runner, "_cached_build_system"):
             vsource_dc_init = vsource_dc if len(vsource_dc) > 0 else jnp.array([], dtype=dtype)
