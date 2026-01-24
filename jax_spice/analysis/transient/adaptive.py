@@ -601,6 +601,7 @@ class AdaptiveStrategy(TransientStrategy):
             "integration_method": tran_method.value,
             "lte_ratio": config.lte_ratio,
             "redo_factor": config.redo_factor,
+            "convergence_rate": stats.accepted_steps / max(stats.accepted_steps + stats.rejected_steps, 1),
         }
 
         logger.info(

@@ -85,6 +85,8 @@ class TestBenchmarkTransient:
         info = get_benchmark(benchmark_name)
         if info.is_large:
             pytest.skip(f"{benchmark_name} too large for dense solver")
+        if info.xfail:
+            pytest.xfail(info.xfail_reason)
 
         engine = CircuitEngine(info.sim_path)
         engine.parse()

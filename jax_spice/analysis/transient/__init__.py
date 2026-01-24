@@ -14,19 +14,19 @@ Strategy classes for transient simulation:
   - 5x+ speedup over Python loop
   - Limited per-step debugging
 
-- AdaptiveStrategy: Adaptive timestep with Python loop (RECOMMENDED for adaptive)
-  - Automatically adjusts timestep based on LTE (Local Truncation Error)
+- AdaptiveWhileLoopStrategy: LTE-based adaptive timestep using lax.while_loop (DEFAULT)
+  - Automatically adjusts timestep based on solution accuracy
   - Smaller steps during fast transients, larger steps during slow evolution
   - Uses predictor-corrector scheme with polynomial extrapolation
   - Compatible with VACASK for validation
-  - Python loop with JIT-compiled NR solver (~1ms/step)
-  - Most reliable across all circuit sizes - no JIT compilation issues
+  - Full JIT compilation with proper caching (~300-450us/step)
+  - Best performance when actual_steps << max_steps (early termination)
 
-- AdaptiveWhileLoopStrategy: Adaptive timestep using lax.while_loop
-  - Same algorithm as AdaptiveStrategy, fully JIT-compiled
-  - Early termination when t >= t_stop
-  - CAUTION: Can have very long JIT compilation times for complex circuits
-  - Best for small circuits with simple device models
+- AdaptiveStrategy: Adaptive timestep with Python loop
+  - Same algorithm as AdaptiveWhileLoopStrategy
+  - Python loop with JIT-compiled NR solver (~1ms/step)
+  - More reliable for complex circuits with long JIT times
+  - No recompilation for different t_stop values
 
 - AdaptiveScanStrategy: Adaptive timestep using lax.scan (NOT recommended)
   - Full JIT compilation with lax.scan
@@ -39,13 +39,12 @@ Strategy classes for transient simulation:
   - Smoother dI/dt matching VACASK reference
 
 Performance Notes:
-  For adaptive timestep, AdaptiveStrategy (Python loop) is recommended:
-  - Reliable across all circuit sizes and complexities
-  - NR solver is JIT-compiled (heavy computation is fast)
-  - Python loop handles dynamic control flow naturally
-  - ~1ms/step overhead is negligible compared to solver work
+  For adaptive timestep, AdaptiveWhileLoopStrategy is the default because:
+  - Early termination when simulation completes (unlike lax.scan)
+  - JIT caching avoids recompilation for same circuit structure
+  - ~300-450us/step with proper caching
 
-  lax.while_loop/scan approaches have JIT compilation issues for complex circuits
+  Use AdaptiveStrategy (Python loop) for complex circuits with long JIT times.
 
 Strategy Usage:
     from jax_spice.analysis.transient import PythonLoopStrategy, ScanStrategy
@@ -59,9 +58,9 @@ Strategy Usage:
     times, voltages, stats = strategy.run(t_stop=1e-6, dt=1e-9)
 
     # Using adaptive timestep (best accuracy, automatic step sizing)
-    from jax_spice.analysis.transient import AdaptiveStrategy, AdaptiveConfig
+    from jax_spice.analysis.transient import AdaptiveWhileLoopStrategy, AdaptiveConfig
     config = AdaptiveConfig(lte_ratio=3.5, redo_factor=2.5)
-    strategy = AdaptiveStrategy(runner, config=config)
+    strategy = AdaptiveWhileLoopStrategy(runner, config=config)
     times, voltages, stats = strategy.run(t_stop=1e-6, dt=1e-9)
 
     # Using full MNA for accurate current extraction
