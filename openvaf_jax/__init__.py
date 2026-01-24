@@ -104,6 +104,117 @@ class OpenVAFToJAX:
         }
 
     @classmethod
+    def from_cache(cls, cached_data: Dict[str, Any]) -> "OpenVAFToJAX":
+        """Create translator from cached MIR data.
+
+        This avoids re-running openvaf_py.compile_va() by loading
+        previously cached MIR data and metadata.
+
+        Args:
+            cached_data: Dict with keys (see get_cache_data for full list)
+
+        Returns:
+            OpenVAFToJAX instance
+        """
+        # Create instance without calling __init__
+        instance = cls.__new__(cls)
+
+        # Create a mock module object with the cached data
+        # This allows existing code to work without modification
+        class MockModule:
+            pass
+
+        mock = MockModule()
+        mock.param_names = cached_data['param_names']
+        mock.param_kinds = cached_data['param_kinds']
+        mock.nodes = cached_data['nodes']
+        mock.collapse_decision_outputs = cached_data['collapse_decision_outputs']
+        mock.collapsible_pairs = cached_data['collapsible_pairs']
+        mock.num_collapsible = cached_data['num_collapsible']
+        mock.init_param_names = cached_data['init_param_names']
+        mock.init_param_kinds = cached_data['init_param_kinds']
+        mock.name = cached_data.get('model_name', 'cached_model')
+
+        # Cached callables
+        _param_defaults = cached_data['param_defaults']
+        _osdi_descriptor = cached_data['osdi_descriptor']
+
+        mock.get_param_defaults = lambda: _param_defaults.items()
+        mock.get_osdi_descriptor = lambda: _osdi_descriptor
+        mock.get_all_func_params = lambda: cached_data['all_func_params']
+
+        instance.module = mock
+
+        # Load MIR data from cache
+        instance.mir_data = cached_data['mir_data']
+        instance.dae_data = cached_data['dae_data']
+        instance.init_mir_data = cached_data['init_mir_data']
+        instance.str_constants = cached_data['str_constants']
+
+        # Parse into structured MIR
+        instance.eval_mir = parse_mir_function('eval', instance.mir_data, instance.str_constants)
+        instance.init_mir = parse_mir_function('init', instance.init_mir_data, instance.str_constants)
+
+        # Extract metadata
+        instance.params = list(instance.mir_data['params'])
+        instance.constants = dict(instance.mir_data['constants'])
+        instance.bool_constants = dict(instance.mir_data.get('bool_constants', {}))
+        instance.int_constants = dict(instance.mir_data.get('int_constants', {}))
+
+        instance.init_params = list(instance.init_mir_data['params'])
+        instance.cache_mapping = list(instance.init_mir_data['cache_mapping'])
+
+        # Node collapse support
+        instance.collapse_decision_outputs = cached_data['collapse_decision_outputs']
+        instance.collapsible_pairs = cached_data['collapsible_pairs']
+
+        # Build param index to value mapping
+        all_func_params = cached_data['all_func_params']
+        instance.param_idx_to_val = {p[0]: f"v{p[1]}" for p in all_func_params}
+
+        # Track feature usage (will be set during code generation)
+        instance.uses_simparam_gmin = False
+        instance.uses_analysis = False
+        instance.analysis_type_map = {
+            'dc': 0, 'static': 0,
+            'ac': 1,
+            'tran': 2, 'transient': 2,
+            'noise': 3,
+            'nodeset': 4,
+        }
+
+        logger.info("Created OpenVAFToJAX from cached MIR data")
+        return instance
+
+    def get_cache_data(self) -> Dict[str, Any]:
+        """Get data needed to reconstruct this translator from cache.
+
+        Returns:
+            Dict with all data needed by from_cache()
+        """
+        if self.module is None or not hasattr(self.module, 'get_mir_instructions'):
+            raise ValueError("Cannot get cache data from a translator loaded from cache")
+
+        return {
+            'mir_data': self.mir_data,
+            'init_mir_data': self.init_mir_data,
+            'dae_data': self.dae_data,
+            'str_constants': self.str_constants,
+            'param_names': list(self.module.param_names),
+            'param_kinds': list(self.module.param_kinds),
+            'nodes': list(self.module.nodes),
+            'collapse_decision_outputs': list(self.module.collapse_decision_outputs),
+            'collapsible_pairs': list(self.module.collapsible_pairs),
+            'num_collapsible': self.module.num_collapsible,
+            'all_func_params': list(self.module.get_all_func_params()),
+            'init_param_names': list(self.module.init_param_names),
+            'init_param_kinds': list(self.module.init_param_kinds),
+            'param_defaults': dict(self.module.get_param_defaults()),
+            'osdi_descriptor': self.module.get_osdi_descriptor(),
+            'model_name': self.module.name if hasattr(self.module, 'name') else 'model',
+        }
+
+    @classmethod
     def from_file(cls, va_path: str) -> "OpenVAFToJAX":
         """Create translator from a Verilog-A file.
 

@@ -685,23 +685,76 @@ class CircuitEngine:
             if not full_path.exists():
                 raise FileNotFoundError(f"VA model not found: {full_path}")
 
-            # Compile from scratch
             import time
-            t0 = time.perf_counter()
-            log(f"  {model_type}: compiling VA...")
-            modules = openvaf_py.compile_va(str(full_path))
-            t1 = time.perf_counter()
-            log(f"  {model_type}: VA compiled in {t1-t0:.1f}s")
-            if not modules:
-                raise ValueError(f"Failed to compile {va_path}")
+            import pickle
+            from openvaf_jax.cache import (
+                compute_va_hash, get_model_cache_path, load_cached_model, save_model_cache
+            )
 
-            log(f"  {model_type}: creating translator...")
-            module = modules[0]
-            translator = openvaf_jax.OpenVAFToJAX(module)
-            t2 = time.perf_counter()
-            log(f"  {model_type}: translator created in {t2-t1:.1f}s")
+            t0 = time.perf_counter()
+
+            # Try to load from persistent cache
+            va_hash = compute_va_hash(full_path)
+            cache_path = get_model_cache_path(model_type, va_hash)
+            mir_cache_file = cache_path / 'mir_data.pkl'
+
+            translator = None
+            module = None
+
+            if mir_cache_file.exists():
+                try:
+                    log(f"  {model_type}: loading from persistent cache...")
+                    with open(mir_cache_file, 'rb') as f:
+                        cached_data = pickle.load(f)
+                    translator = openvaf_jax.OpenVAFToJAX.from_cache(cached_data)
+                    t1 = time.perf_counter()
+                    log(f"  {model_type}: loaded from cache in {t1-t0:.1f}s")
+                except Exception as e:
+                    log(f"  {model_type}: cache load failed ({e}), recompiling...")
+                    translator = None
+
+            if translator is None:
+                # Compile from scratch
+                log(f"  {model_type}: compiling VA...")
+                modules = openvaf_py.compile_va(str(full_path))
+                t1 = time.perf_counter()
+                log(f"  {model_type}: VA compiled in {t1-t0:.1f}s")
+                if not modules:
+                    raise ValueError(f"Failed to compile {va_path}")
+
+                log(f"  {model_type}: creating translator...")
+                module = modules[0]
+                translator = openvaf_jax.OpenVAFToJAX(module)
+                t2 = time.perf_counter()
+                log(f"  {model_type}: translator created in {t2-t1:.1f}s")
+
+                # Save to persistent cache
+                try:
+                    cache_path.mkdir(parents=True, exist_ok=True)
+                    cache_data = translator.get_cache_data()
+                    with open(mir_cache_file, 'wb') as f:
+                        pickle.dump(cache_data, f)
+                    log(f"  {model_type}: saved to persistent cache (hash={va_hash})")
+                except Exception as e:
+                    log(f"  {model_type}: failed to save cache: {e}")
+
+            # Get model metadata - either from module or cached data
+            if module is not None:
+                param_names = list(module.param_names)
+                param_kinds = list(module.param_kinds)
+                nodes = list(module.nodes)
+                collapsible_pairs = list(module.collapsible_pairs)
+                num_collapsible = module.num_collapsible
+            else:
+                # Load from cached data (already loaded above)
+                param_names = cached_data['param_names']
+                param_kinds = cached_data['param_kinds']
+                nodes = cached_data['nodes']
+                collapsible_pairs = cached_data['collapsible_pairs']
+                num_collapsible = cached_data['num_collapsible']
 
             # Get DAE metadata (node names, jacobian keys, etc.) without generating code
+            t2 = time.perf_counter()  # Reset timer after cache load
             dae_metadata = translator.get_dae_metadata()
             t3 = time.perf_counter()
             log(f"  {model_type}: DAE metadata extracted in {t3-t2:.3f}s")
@@ -714,7 +767,7 @@ class CircuitEngine:
             log(f"  {model_type}: init function done in {t4-t3:.1f}s (cache_size={init_meta['cache_size']})")
 
             # Build init->eval index mapping for extracting init inputs from eval inputs
-            eval_name_to_idx = {n.lower(): i for i, n in enumerate(module.param_names)}
+            eval_name_to_idx = {n.lower(): i for i, n in enumerate(param_names)}
             init_to_eval_indices = []
             for name in init_meta['param_names']:
                 eval_idx = eval_name_to_idx.get(name.lower(), -1)
@@ -726,14 +779,14 @@ class CircuitEngine:
             # This saves ~28MB for PSP103 after circuit setup is complete
 
             compiled = {
-                'module': module,
+                'module': module,  # May be None if loaded from cache
                 'translator': translator,  # Stored for split function generation
                 'dae_metadata': dae_metadata,
-                'param_names': list(module.param_names),
-                'param_kinds': list(module.param_kinds),
-                'nodes': list(module.nodes),
-                'collapsible_pairs': list(module.collapsible_pairs),
-                'num_collapsible': module.num_collapsible,
+                'param_names': param_names,
+                'param_kinds': param_kinds,
+                'nodes': nodes,
+                'collapsible_pairs': collapsible_pairs,
+                'num_collapsible': num_collapsible,
                 # Init function
                 'init_fn': init_fn,
                 'vmapped_init': vmapped_init,
@@ -753,7 +806,7 @@ class CircuitEngine:
             self._compiled_models[model_type] = compiled
             _COMPILED_MODEL_CACHE[model_type] = compiled
 
-            log(f"  {model_type}: done ({len(module.param_names)} params, {len(module.nodes)} nodes)")
+            log(f"  {model_type}: done ({len(param_names)} params, {len(nodes)} nodes)")
 
     def _compute_early_collapse_decisions(self):
         """Compute collapse decisions for all devices using OpenVAF vmapped_init.
