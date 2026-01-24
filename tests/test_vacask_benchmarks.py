@@ -91,11 +91,15 @@ class TestBenchmarkTransient:
         engine = CircuitEngine(info.sim_path)
         engine.parse()
 
-        # Run short transient (10 steps)
+        # Diode circuits need adaptive timestep for convergence
+        use_adaptive = info.uses_diode
+
+        # Run short transient (10 steps for fixed, more for adaptive)
         result = engine.run_transient(
             t_stop=info.dt * 10,
             dt=info.dt,
-            use_sparse=False
+            use_sparse=False,
+            adaptive=use_adaptive,
         )
 
         assert result.num_steps > 0, "No timesteps returned"

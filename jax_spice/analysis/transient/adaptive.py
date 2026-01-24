@@ -1696,6 +1696,7 @@ class AdaptiveWhileLoopStrategy(TransientStrategy):
             "time_per_step_ms": wall_time / max(n_steps, 1) * 1000,
             "strategy": "adaptive_while",
             "solver": "sparse" if self.use_sparse else "dense",
+            "convergence_rate": n_steps / max(n_steps + int(final_state.rejected_steps), 1),
         }
 
         logger.info(

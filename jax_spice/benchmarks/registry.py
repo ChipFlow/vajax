@@ -215,8 +215,7 @@ def _parse_benchmark(sim_path: Path, name: str) -> BenchmarkInfo:
             info.max_steps = 10
         elif name == "mul":
             # Diode cascade circuit is numerically stiff, needs adaptive timestep
-            info.xfail = True
-            info.xfail_reason = "Diode circuit requires adaptive timestep for convergence"
+            pass  # Use adaptive=True in tests for this benchmark
 
         return info
 
