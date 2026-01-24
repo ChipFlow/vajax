@@ -28,6 +28,7 @@ from typing import Dict, List, Optional
 import jax
 import jax.numpy as jnp
 from jax import Array
+from jax_spice import get_float_dtype
 
 logger = logging.getLogger(__name__)
 
@@ -81,7 +82,7 @@ def generate_frequencies(config: ACConfig) -> Array:
     if config.mode == 'list':
         if config.values is None:
             raise ValueError("'values' must be provided for 'list' mode")
-        return jnp.array(config.values, dtype=jnp.float64)
+        return jnp.array(config.values, dtype=get_float_dtype())
 
     elif config.mode == 'lin':
         if config.step is None:

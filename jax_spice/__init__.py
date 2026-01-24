@@ -83,6 +83,21 @@ def get_precision_info() -> dict:
 _x64_enabled = configure_precision()
 
 
+def get_float_dtype():
+    """Get the appropriate float dtype based on x64 configuration.
+
+    Returns:
+        jnp.float64 if x64 is enabled, jnp.float32 otherwise.
+
+    Example:
+        >>> import jax_spice
+        >>> dtype = jax_spice.get_float_dtype()
+        >>> V = jnp.zeros(n_nodes, dtype=dtype)
+    """
+    import jax.numpy as jnp
+    return jnp.float64 if jax.config.jax_enable_x64 else jnp.float32
+
+
 # =============================================================================
 # Simparam helpers (VAMS-LRM Table 9-27)
 # =============================================================================
