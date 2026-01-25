@@ -776,6 +776,8 @@ class FullMNAStrategy(_FullMNABase):
 
         final_state = run_while(init_state)
 
+        # Block until computation completes for accurate timing
+        final_state.step_idx.block_until_ready()
         wall_time = time_module.perf_counter() - t_start
 
         # Extract results

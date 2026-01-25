@@ -57,6 +57,7 @@ import jax.numpy as jnp
 # Metal/TPU use f32, CPU/CUDA use f64
 
 from jax_spice.analysis import CircuitEngine
+from jax_spice.analysis.transient import AdaptiveConfig
 from jax_spice.benchmarks.registry import (
     BENCHMARKS as BENCHMARK_REGISTRY,
     BenchmarkInfo,
@@ -315,11 +316,14 @@ def run_jax_spice(config: BenchmarkInfo, num_steps: int, use_scan: bool,
 
         # Warmup (includes JIT compilation)
         # Step count affects JIT caching, so use same steps as timed run
+        # Use max_dt = 10x the initial dt to allow some adaptation but not grow unbounded
+        adaptive_config = AdaptiveConfig(max_dt=config.dt * 10, min_dt=1e-15)
         startup_start = time.perf_counter()
         engine.run_transient(
             t_stop=t_stop, dt=config.dt,
             use_sparse=use_sparse,
             backend=backend,
+            adaptive_config=adaptive_config,
         )
         startup_time = time.perf_counter() - startup_start
 
@@ -367,6 +371,7 @@ def run_jax_spice(config: BenchmarkInfo, num_steps: int, use_scan: bool,
             use_sparse=use_sparse,
             backend=backend,
             profile_config=sim_profile_config,
+            adaptive_config=adaptive_config,
         )
         after_transient = time.perf_counter()
         print(f"AFTER_RUN_TRANSIENT: {after_transient:.6f} (elapsed: {after_transient - start:.6f}s)")

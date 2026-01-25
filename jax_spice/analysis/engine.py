@@ -2057,11 +2057,26 @@ class CircuitEngine:
                 max_dt=config.max_dt,
             )
 
-        logger.info(f"Using FullMNAStrategy ({self.num_nodes} nodes, "
-                   f"{'sparse' if use_sparse else 'dense'}, "
-                   f"lte_ratio={config.lte_ratio}, redo_factor={config.redo_factor})")
-        strategy = FullMNAStrategy(self, use_sparse=use_sparse,
-                                   backend=backend, config=config)
+        # Cache strategy instance for JIT reuse across calls
+        # Key includes all parameters that affect strategy construction
+        cache_key = (use_sparse, backend,
+                     config.lte_ratio, config.redo_factor, config.reltol,
+                     config.abstol, config.min_dt, config.max_dt)
+
+        if not hasattr(self, '_full_mna_strategy_cache'):
+            self._full_mna_strategy_cache = {}
+
+        if cache_key not in self._full_mna_strategy_cache:
+            logger.info(f"Using FullMNAStrategy ({self.num_nodes} nodes, "
+                       f"{'sparse' if use_sparse else 'dense'}, "
+                       f"lte_ratio={config.lte_ratio}, redo_factor={config.redo_factor})")
+            strategy = FullMNAStrategy(self, use_sparse=use_sparse,
+                                       backend=backend, config=config)
+            self._full_mna_strategy_cache[cache_key] = strategy
+        else:
+            strategy = self._full_mna_strategy_cache[cache_key]
+            logger.debug(f"Reusing cached FullMNAStrategy")
+
         times, voltages, stats = strategy.run(t_stop, dt, max_steps)
 
         return TransientResult(
