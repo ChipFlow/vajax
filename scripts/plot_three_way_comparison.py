@@ -11,7 +11,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 
 from jax_spice.analysis.engine import CircuitEngine
-from jax_spice.analysis.transient import FullMNAStrategy
+from jax_spice.analysis.transient import AdaptiveConfig, FullMNAStrategy
 
 
 def read_spice_raw(filename):
@@ -88,7 +88,9 @@ def main():
     print("Running Full MNA (20ns)...")
     runner = CircuitEngine(ring_sim)
     runner.parse()
-    full_mna = FullMNAStrategy(runner, use_sparse=False)
+    # max_dt must be less than oscillation period (~3.5ns) to capture dynamics
+    config = AdaptiveConfig(max_dt=50e-12, min_dt=1e-15)
+    full_mna = FullMNAStrategy(runner, use_sparse=False, config=config)
     times_mna, voltages_mna, stats_mna = full_mna.run(t_stop=20e-9, dt=1e-12)
 
     t_mna = np.asarray(times_mna)
