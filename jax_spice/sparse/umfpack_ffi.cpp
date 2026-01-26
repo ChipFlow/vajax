@@ -259,7 +259,9 @@ ffi::Error UmfpackSolveF64Impl(
     // Clean up numeric factorization (cannot be reused)
     umfpack_di_free_numeric(&Numeric);
 
-    if (status != UMFPACK_OK) {
+    // Allow singular matrix warning - the solve may still produce useful results
+    // (same behavior as scikit-umfpack which issues a warning but continues)
+    if (status != UMFPACK_OK && status != UMFPACK_WARNING_singular_matrix) {
         return ffi::Error::Internal(
             std::string("UMFPACK solve: ") + UmfpackStatusString(status));
     }
@@ -404,7 +406,8 @@ ffi::Error UmfpackSolveTransposeF64Impl(
 
     umfpack_di_free_numeric(&Numeric);
 
-    if (status != UMFPACK_OK) {
+    // Allow singular matrix warning - same as regular solve
+    if (status != UMFPACK_OK && status != UMFPACK_WARNING_singular_matrix) {
         return ffi::Error::Internal(
             std::string("UMFPACK solve transpose: ") + UmfpackStatusString(status));
     }
