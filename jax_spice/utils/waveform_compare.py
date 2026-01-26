@@ -158,8 +158,12 @@ def run_vacask(
 
         # Find the .raw file - check even if returncode != 0 because
         # postprocess scripts may fail but simulation still produces output
+        # Prefer transient files (tran*.raw) over operating point (op*.raw)
         raw_files = list(output_dir.glob("*.raw"))
         if raw_files:
+            tran_files = [f for f in raw_files if f.name.startswith('tran')]
+            if tran_files:
+                return tran_files[0], None
             return raw_files[0], None
 
         # No raw file found - report the actual error

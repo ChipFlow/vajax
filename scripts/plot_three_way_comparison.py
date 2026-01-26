@@ -15,6 +15,8 @@ Usage:
 """
 
 import argparse
+import hashlib
+import json
 import os
 import re
 import struct
@@ -70,7 +72,7 @@ BENCHMARKS = {
         name='C6288 16x16 Multiplier',
         vacask_sim=Path('vendor/VACASK/benchmark/c6288/vacask/runme.sim'),
         ngspice_sim=Path('vendor/VACASK/benchmark/c6288/ngspice/runme.sim'),
-        t_stop=2e-12,
+        t_stop=2e-11,
         dt=2e-15,
         max_dt=10e-14,
         plot_window=(0.0, 2e-9),
@@ -126,6 +128,38 @@ def read_spice_raw(filename: Path) -> Dict[str, np.ndarray]:
     return {name: data[:, i] for i, name in enumerate(variables)}
 
 
+def get_config_hash(config: BenchmarkConfig, simulator: str) -> str:
+    """Compute hash of config parameters relevant for caching."""
+    # Include key parameters that affect simulation output
+    params = {
+        'simulator': simulator,
+        't_stop': config.t_stop,
+        'dt': config.dt,
+        'current_source': config.current_source,
+        'sim_file_mtime': config.vacask_sim.stat().st_mtime if simulator == 'vacask'
+        else config.ngspice_sim.stat().st_mtime,
+    }
+    return hashlib.md5(json.dumps(params, sort_keys=True).encode()).hexdigest()[:12]
+
+
+def check_cache(raw_file: Path, stamp_file: Path, expected_hash: str) -> bool:
+    """Check if cached data is valid. Returns True if cache hit."""
+    if not raw_file.exists():
+        return False
+    if not stamp_file.exists():
+        return False
+    try:
+        stored_hash = stamp_file.read_text().strip()
+        return stored_hash == expected_hash
+    except Exception:
+        return False
+
+
+def write_stamp(stamp_file: Path, config_hash: str) -> None:
+    """Write stamp file with config hash."""
+    stamp_file.write_text(config_hash)
+
+
 def run_vacask(config: BenchmarkConfig, output_dir: Path, benchmark_key: str) -> Optional[Path]:
     """Run VACASK simulator and return path to raw file."""
     import shutil
@@ -133,6 +167,13 @@ def run_vacask(config: BenchmarkConfig, output_dir: Path, benchmark_key: str) ->
 
     sim_dir = config.vacask_sim.parent
     raw_file = output_dir / f'{benchmark_key}_vacask.raw'
+    stamp_file = output_dir / f'{benchmark_key}_vacask.stamp'
+
+    # Check cache
+    config_hash = get_config_hash(config, 'vacask')
+    if check_cache(raw_file, stamp_file, config_hash):
+        logger.info(f"Using cached VACASK data: {raw_file}")
+        return raw_file
 
     # Create modified sim file with our t_stop
     with open(config.vacask_sim) as f:
@@ -144,6 +185,15 @@ def run_vacask(config: BenchmarkConfig, output_dir: Path, benchmark_key: str) ->
         f'\\g<1>{config.t_stop:.2e}',
         sim_content
     )
+
+    # Add current save directive if current_source is specified
+    if config.current_source:
+        # Insert save i(source) before the analysis line
+        modified = re.sub(
+            r'(analysis\s+)',
+            f'  save i({config.current_source})\n\\1',
+            modified
+        )
 
     temp_sim = sim_dir / 'plot_temp.sim'
     with open(temp_sim, 'w') as f:
@@ -164,6 +214,7 @@ def run_vacask(config: BenchmarkConfig, output_dir: Path, benchmark_key: str) ->
 
         if result_raw and result_raw.exists():
             shutil.copy(result_raw, raw_file)
+            write_stamp(stamp_file, config_hash)
             logger.info(f"VACASK completed in {elapsed:.1f}s -> {raw_file}")
             return raw_file
         else:
@@ -186,6 +237,13 @@ def run_ngspice(config: BenchmarkConfig, output_dir: Path, benchmark_key: str) -
 
     sim_dir = config.ngspice_sim.parent
     raw_file = output_dir / f'{benchmark_key}_ngspice.raw'
+    stamp_file = output_dir / f'{benchmark_key}_ngspice.stamp'
+
+    # Check cache
+    config_hash = get_config_hash(config, 'ngspice')
+    if check_cache(raw_file, stamp_file, config_hash):
+        logger.info(f"Using cached ngspice data: {raw_file}")
+        return raw_file
 
     # Read original sim file
     with open(config.ngspice_sim) as f:
@@ -239,6 +297,7 @@ def run_ngspice(config: BenchmarkConfig, output_dir: Path, benchmark_key: str) -
         if ng_raw.exists():
             import shutil
             shutil.move(ng_raw, raw_file)
+            write_stamp(stamp_file, config_hash)
             logger.info(f"ngspice completed in {elapsed:.1f}s -> {raw_file}")
             return raw_file
         else:
