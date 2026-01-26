@@ -2177,7 +2177,8 @@ class CircuitEngine:
                       use_while_loop: bool = True,
                       profile_config: Optional['ProfileConfig'] = None,
                       temperature: float = DEFAULT_TEMPERATURE_K,
-                      adaptive_config: Optional['AdaptiveConfig'] = None) -> TransientResult:
+                      adaptive_config: Optional['AdaptiveConfig'] = None,
+                      checkpoint_interval: Optional[int] = None) -> TransientResult:
         """Run transient analysis using full Modified Nodal Analysis.
 
         All computation is JIT-compiled. Automatically uses sparse matrices
@@ -2202,6 +2203,10 @@ class CircuitEngine:
             temperature: Simulation temperature in Kelvin (default: 300.15K = 27°C)
             adaptive_config: Configuration for adaptive timestep control. If None,
                              uses default AdaptiveConfig with LTE-based timestep adjustment.
+            checkpoint_interval: If set, use GPU memory checkpointing with this many
+                steps per buffer. Results are periodically copied to CPU to avoid
+                GPU OOM on large circuits. Recommended for circuits with many nodes
+                (>1000) and long simulations (>10000 steps). Example: 10000.
 
         Returns:
             TransientResult with times, voltages, and stats
@@ -2311,7 +2316,7 @@ class CircuitEngine:
             strategy = self._full_mna_strategy_cache[cache_key]
             logger.debug(f"Reusing cached FullMNAStrategy")
 
-        times_full, V_out, stats = strategy.run(t_stop, dt, max_steps)
+        times_full, V_out, stats = strategy.run(t_stop, dt, max_steps, checkpoint_interval)
 
         # Extract sliced numpy results for TransientResult
         times_np, voltages, currents = extract_results(times_full, V_out, stats)

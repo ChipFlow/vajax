@@ -48,6 +48,81 @@ from .base import TransientSetup, TransientStrategy
 
 DEFAULT_MAX_STEPS = 10000
 
+# Memory budget fraction - use 70% of GPU memory for output buffers
+# to leave headroom for state arrays, Jacobian, etc.
+GPU_MEMORY_BUDGET_FRACTION = 0.7
+
+
+def compute_checkpoint_interval(
+    n_external: int,
+    n_vsources: int,
+    max_steps: int,
+    dtype: Any = jnp.float64,
+    target_memory_gb: Optional[float] = None,
+) -> Optional[int]:
+    """Compute optimal checkpoint interval based on available GPU memory.
+
+    Args:
+        n_external: Number of external (user-visible) nodes
+        n_vsources: Number of voltage source branch currents
+        max_steps: Total number of steps requested
+        dtype: Data type for arrays (default: float64)
+        target_memory_gb: Override for target memory in GB (for testing).
+                         If None, auto-detect from GPU.
+
+    Returns:
+        Checkpoint interval, or None if checkpointing not needed (fits in memory)
+    """
+    # Bytes per element
+    bytes_per_elem = 8 if dtype == jnp.float64 else 4
+
+    # Memory per step: times (1) + V_out (n_external) + I_out (n_vsources)
+    mem_per_step = (1 + n_external + max(n_vsources, 1)) * bytes_per_elem
+
+    # Try to get GPU memory
+    if target_memory_gb is None:
+        try:
+            devices = jax.devices('gpu')
+            if devices:
+                # Get memory stats from first GPU
+                device = devices[0]
+                if hasattr(device, 'memory_stats'):
+                    stats = device.memory_stats()
+                    if stats and 'bytes_limit' in stats:
+                        target_memory_gb = stats['bytes_limit'] / (1024**3)
+        except (RuntimeError, TypeError):
+            pass  # No GPU available
+
+        # Conservative defaults if can't detect
+        if target_memory_gb is None:
+            # Check if we're on GPU backend
+            try:
+                if jax.default_backend() == 'gpu':
+                    target_memory_gb = 16.0  # Conservative estimate for typical GPU
+                else:
+                    return None  # CPU doesn't need checkpointing
+            except Exception:
+                return None
+
+    # Calculate budget for output arrays
+    budget_bytes = int(target_memory_gb * (1024**3) * GPU_MEMORY_BUDGET_FRACTION)
+
+    # Maximum steps that fit in budget
+    max_steps_in_budget = budget_bytes // mem_per_step
+
+    if max_steps_in_budget >= max_steps:
+        # Fits in memory without checkpointing
+        return None
+
+    # Round down to nice number for cache efficiency
+    # Use power of 2 or multiple of 1000
+    interval = max(1000, max_steps_in_budget)
+    # Round to nearest 1000
+    interval = (interval // 1000) * 1000
+    interval = max(1000, interval)  # Minimum 1000 steps per checkpoint
+
+    return interval
+
 
 def extract_results(
     times: jax.Array, V_out: jax.Array, stats: Dict
@@ -385,13 +460,18 @@ class FullMNAStrategy(TransientStrategy):
         return wall_time
 
     def run(self, t_stop: float, dt: float,
-            max_steps: int = DEFAULT_MAX_STEPS) -> Tuple[jax.Array, jax.Array, Dict]:
+            max_steps: int = DEFAULT_MAX_STEPS,
+            checkpoint_interval: Optional[int] = None) -> Tuple[jax.Array, jax.Array, Dict]:
         """Run adaptive transient analysis with full MNA.
 
         Args:
             t_stop: Simulation stop time in seconds
             dt: Initial time step in seconds
             max_steps: Maximum number of time steps
+            checkpoint_interval: If set, use GPU memory checkpointing with this
+                many steps per buffer. Results are periodically copied to CPU
+                to avoid GPU OOM on large circuits. Recommended for circuits
+                with many nodes (>1000) and long simulations (>10000 steps).
 
         Returns:
             Tuple of (times, V_out, stats) where:
@@ -459,6 +539,44 @@ class FullMNAStrategy(TransientStrategy):
         V_history = V_history.at[0].set(X0[:n_total])
         dt_history = jnp.full(max_history, dt, dtype=dtype)
 
+        # Determine if we should use checkpoint mode
+        # checkpoint_interval can be:
+        #   - None: auto-detect based on GPU memory
+        #   - int > 0: use specified interval
+        #   - int <= 0: disable checkpointing
+
+        effective_checkpoint_interval = checkpoint_interval
+
+        # Auto-detect checkpoint interval based on GPU memory
+        if checkpoint_interval is None:
+            effective_checkpoint_interval = compute_checkpoint_interval(
+                n_external, n_vsources, max_steps, dtype
+            )
+            if effective_checkpoint_interval is not None:
+                logger.info(
+                    f"{self.name}: Auto-enabled GPU checkpointing "
+                    f"(interval={effective_checkpoint_interval})"
+                )
+
+        use_checkpoints = (
+            effective_checkpoint_interval is not None
+            and effective_checkpoint_interval > 0
+            and max_steps > effective_checkpoint_interval
+        )
+
+        if use_checkpoints:
+            # Checkpoint mode: use smaller buffers and outer Python loop
+            return self._run_with_checkpoints(
+                setup=setup, nr_solve=nr_solve, jit_source_eval=jit_source_eval,
+                device_arrays=device_arrays, X0=X0, Q_init=Q_init, I_vsource_dc=I_vsource_dc,
+                V_history=V_history, dt_history=dt_history,
+                t_stop=t_stop, dt=dt, max_steps=max_steps,
+                checkpoint_interval=effective_checkpoint_interval,
+                n_total=n_total, n_unknowns=n_unknowns, n_external=n_external,
+                n_vsources=n_vsources, config=config, dtype=dtype,
+            )
+
+        # Standard mode: single while_loop with full output arrays
         # Output arrays
         times_out = jnp.zeros(max_steps, dtype=dtype)
         times_out = times_out.at[0].set(0.0)
@@ -576,6 +694,221 @@ class FullMNAStrategy(TransientStrategy):
             f"{int(final_state.rejected_steps)} rejected, "
             f"dt range [{float(final_state.min_dt_used):.2e}, "
             f"{float(final_state.max_dt_used):.2e}])"
+        )
+
+        return times, V_out, stats
+
+    def _run_with_checkpoints(
+        self, setup: TransientSetup, nr_solve: Callable, jit_source_eval: Callable,
+        device_arrays: Any, X0: jax.Array, Q_init: jax.Array, I_vsource_dc: jax.Array,
+        V_history: jax.Array, dt_history: jax.Array,
+        t_stop: float, dt: float, max_steps: int, checkpoint_interval: int,
+        n_total: int, n_unknowns: int, n_external: int, n_vsources: int,
+        config: AdaptiveConfig, dtype: Any,
+    ) -> Tuple[jax.Array, jax.Array, Dict]:
+        """Run simulation with periodic checkpoints to CPU memory.
+
+        Uses smaller GPU buffers and periodically transfers results to CPU,
+        enabling simulations that would otherwise exceed GPU memory.
+        """
+        # CPU accumulators for results (numpy arrays)
+        cpu_times: list = []
+        cpu_V: list = []
+        cpu_I: list = []
+
+        # Track total statistics across checkpoints
+        total_steps = 0
+        total_nr_iters = 0
+        total_rejected = 0
+        min_dt_global = dt
+        max_dt_global = dt
+
+        # Current simulation state (carried across checkpoints)
+        current_t = 0.0
+        current_dt = dt
+        current_X = X0
+        current_Q_prev = Q_init
+        current_dQdt_prev = jnp.zeros(n_unknowns, dtype=dtype)
+        current_Q_prev2 = jnp.zeros(n_unknowns, dtype=dtype)
+        current_V_history = V_history
+        current_dt_history = dt_history
+        current_history_count = 1
+        current_warmup_count = 0
+
+        # Get or create JIT-compiled while_loop for checkpoint_interval size
+        cache_key = (checkpoint_interval, n_total, n_unknowns, n_external, n_vsources, dtype)
+        if cache_key not in self._jit_run_while_cache:
+            MAX_JIT_CACHE_SIZE = 8
+            if len(self._jit_run_while_cache) >= MAX_JIT_CACHE_SIZE:
+                oldest_key = next(iter(self._jit_run_while_cache))
+                del self._jit_run_while_cache[oldest_key]
+
+            cond_fn, body_fn = _make_full_mna_while_loop_fns(
+                nr_solve, jit_source_eval, device_arrays, config,
+                n_total, n_unknowns, n_external, n_vsources,
+                checkpoint_interval, self._warmup_steps, dtype,
+            )
+
+            @jax.jit
+            def run_while(state):
+                return lax.while_loop(cond_fn, body_fn, state)
+
+            self._jit_run_while_cache[cache_key] = run_while
+
+        run_while = self._jit_run_while_cache[cache_key]
+
+        # Log checkpoint mode
+        n_checkpoints = (max_steps + checkpoint_interval - 1) // checkpoint_interval
+        buffer_mb = checkpoint_interval * n_external * 8 / (1024 * 1024)
+        logger.info(
+            f"{self.name}: Checkpoint mode - {checkpoint_interval} steps/buffer "
+            f"({buffer_mb:.1f}MB), up to {n_checkpoints} checkpoints"
+        )
+
+        t_start = time_module.perf_counter()
+        checkpoint_num = 0
+        first_checkpoint = True
+
+        while total_steps < max_steps and current_t < t_stop:
+            checkpoint_num += 1
+            steps_remaining = max_steps - total_steps
+
+            # Create output buffers for this checkpoint
+            buffer_size = min(checkpoint_interval, steps_remaining)
+            times_out = jnp.zeros(buffer_size, dtype=dtype)
+            V_out = jnp.zeros((buffer_size, n_external), dtype=dtype)
+            I_out = jnp.zeros((buffer_size, max(n_vsources, 1)), dtype=dtype)
+
+            # For first checkpoint, include initial conditions at index 0
+            if first_checkpoint:
+                times_out = times_out.at[0].set(current_t)
+                V_out = V_out.at[0].set(current_X[:n_external])
+                if n_vsources > 0:
+                    I_out = I_out.at[0].set(I_vsource_dc[:n_vsources])
+                start_idx = 1
+            else:
+                start_idx = 0
+
+            # Build state for this checkpoint
+            state = FullMNAState(
+                t=jnp.array(current_t, dtype=dtype),
+                dt=jnp.array(current_dt, dtype=dtype),
+                X=current_X,
+                Q_prev=current_Q_prev,
+                dQdt_prev=current_dQdt_prev,
+                Q_prev2=current_Q_prev2,
+                V_history=current_V_history,
+                dt_history=current_dt_history,
+                history_count=jnp.array(current_history_count, dtype=jnp.int32),
+                times_out=times_out,
+                V_out=V_out,
+                I_out=I_out,
+                step_idx=jnp.array(start_idx, dtype=jnp.int32),
+                warmup_count=jnp.array(current_warmup_count, dtype=jnp.int32),
+                t_stop=jnp.array(t_stop, dtype=dtype),
+                total_nr_iters=jnp.array(0, dtype=jnp.int32),
+                rejected_steps=jnp.array(0, dtype=jnp.int32),
+                min_dt_used=jnp.array(current_dt, dtype=dtype),
+                max_dt_used=jnp.array(current_dt, dtype=dtype),
+            )
+
+            # Run while_loop for this checkpoint
+            final_state = run_while(state)
+
+            # Block and extract results to CPU
+            final_state.step_idx.block_until_ready()
+            n_filled = int(final_state.step_idx)
+
+            # Copy valid results to CPU numpy arrays
+            if n_filled > 0:
+                cpu_times.append(np.array(final_state.times_out[:n_filled]))
+                cpu_V.append(np.array(final_state.V_out[:n_filled]))
+                cpu_I.append(np.array(final_state.I_out[:n_filled]))
+
+            # Update statistics
+            total_steps += n_filled
+            total_nr_iters += int(final_state.total_nr_iters)
+            total_rejected += int(final_state.rejected_steps)
+            min_dt_global = min(min_dt_global, float(final_state.min_dt_used))
+            max_dt_global = max(max_dt_global, float(final_state.max_dt_used))
+
+            # Carry forward simulation state for next checkpoint
+            current_t = float(final_state.t)
+            current_dt = float(final_state.dt)
+            current_X = final_state.X
+            current_Q_prev = final_state.Q_prev
+            current_dQdt_prev = final_state.dQdt_prev
+            current_Q_prev2 = final_state.Q_prev2
+            current_V_history = final_state.V_history
+            current_dt_history = final_state.dt_history
+            current_history_count = int(final_state.history_count)
+            current_warmup_count = int(final_state.warmup_count)
+
+            first_checkpoint = False
+
+            logger.debug(
+                f"{self.name}: Checkpoint {checkpoint_num} - {n_filled} steps, "
+                f"t={current_t:.2e}s, total={total_steps}"
+            )
+
+            # Check if simulation completed (reached t_stop before filling buffer)
+            if current_t >= t_stop:
+                break
+
+        wall_time = time_module.perf_counter() - t_start
+
+        # Concatenate all checkpoints into final arrays
+        if cpu_times:
+            times_np = np.concatenate(cpu_times)
+            V_np = np.concatenate(cpu_V, axis=0)
+            I_np = np.concatenate(cpu_I, axis=0)
+        else:
+            times_np = np.zeros(0, dtype=np.float64)
+            V_np = np.zeros((0, n_external), dtype=np.float64)
+            I_np = np.zeros((0, max(n_vsources, 1)), dtype=np.float64)
+
+        # Convert to JAX arrays for consistent return type
+        times = jnp.array(times_np)
+        V_out = jnp.array(V_np)
+        I_out = jnp.array(I_np)
+
+        # Build node/current name mappings
+        node_indices: Dict[str, int] = {}
+        for name, idx in self.runner.node_names.items():
+            if 0 < idx < n_external:
+                node_indices[name] = idx
+
+        current_indices: Dict[str, int] = {}
+        if setup.branch_data and n_vsources > 0:
+            current_indices = dict(setup.branch_data.name_to_idx)
+
+        n_steps = total_steps
+        stats = {
+            'n_steps': n_steps,
+            'total_timesteps': n_steps,
+            'accepted_steps': n_steps,
+            'rejected_steps': total_rejected,
+            'total_nr_iterations': total_nr_iters,
+            'avg_nr_iterations': total_nr_iters / max(n_steps, 1),
+            'wall_time': wall_time,
+            'time_per_step_ms': wall_time / n_steps * 1000 if n_steps > 0 else 0,
+            'min_dt_used': min_dt_global,
+            'max_dt_used': max_dt_global,
+            'convergence_rate': n_steps / max(n_steps + total_rejected, 1),
+            'strategy': 'adaptive_full_mna_checkpointed',
+            'solver': 'sparse' if self.use_sparse else 'dense',
+            'V_out': V_out,
+            'I_out': I_out,
+            'node_indices': node_indices,
+            'current_indices': current_indices,
+            'checkpoints': checkpoint_num,
+            'checkpoint_interval': checkpoint_interval,
+        }
+
+        logger.info(
+            f"{self.name}: Completed {n_steps} steps in {wall_time:.3f}s "
+            f"({stats['time_per_step_ms']:.2f}ms/step, {checkpoint_num} checkpoints, "
+            f"{total_rejected} rejected, dt range [{min_dt_global:.2e}, {max_dt_global:.2e}])"
         )
 
         return times, V_out, stats
