@@ -126,7 +126,7 @@ def read_spice_raw(filename: Path) -> Dict[str, np.ndarray]:
     return {name: data[:, i] for i, name in enumerate(variables)}
 
 
-def run_vacask(config: BenchmarkConfig, output_dir: Path) -> Optional[Path]:
+def run_vacask(config: BenchmarkConfig, output_dir: Path, benchmark_key: str) -> Optional[Path]:
     """Run VACASK simulator and return path to raw file."""
     vacask_bin = find_vacask_binary()
     if vacask_bin is None:
@@ -134,7 +134,7 @@ def run_vacask(config: BenchmarkConfig, output_dir: Path) -> Optional[Path]:
         return None
 
     sim_dir = config.vacask_sim.parent
-    raw_file = output_dir / f'{config.name.lower().replace(" ", "_")}_vacask.raw'
+    raw_file = output_dir / f'{benchmark_key}_vacask.raw'
 
     # Create modified sim file with our t_stop
     with open(config.vacask_sim) as f:
@@ -187,7 +187,7 @@ def run_vacask(config: BenchmarkConfig, output_dir: Path) -> Optional[Path]:
             temp_sim.unlink()
 
 
-def run_ngspice(config: BenchmarkConfig, output_dir: Path) -> Optional[Path]:
+def run_ngspice(config: BenchmarkConfig, output_dir: Path, benchmark_key: str) -> Optional[Path]:
     """Run ngspice and return path to raw file."""
     # Check if ngspice is available
     try:
@@ -197,7 +197,7 @@ def run_ngspice(config: BenchmarkConfig, output_dir: Path) -> Optional[Path]:
         return None
 
     sim_dir = config.ngspice_sim.parent
-    raw_file = output_dir / f'{config.name.lower().replace(" ", "_")}_ngspice.raw'
+    raw_file = output_dir / f'{benchmark_key}_ngspice.raw'
 
     # Read original sim file
     with open(config.ngspice_sim) as f:
@@ -420,20 +420,20 @@ def main():
 
     if not args.skip_build:
         # Run VACASK
-        vacask_raw = run_vacask(config, output_dir)
+        vacask_raw = run_vacask(config, output_dir, args.benchmark)
         if vacask_raw and vacask_raw.exists():
             vacask_data = read_spice_raw(vacask_raw)
             logger.info(f"VACASK data: {list(vacask_data.keys())[:10]}...")
 
         # Run ngspice
-        ngspice_raw = run_ngspice(config, output_dir)
+        ngspice_raw = run_ngspice(config, output_dir, args.benchmark)
         if ngspice_raw and ngspice_raw.exists():
             ngspice_data = read_spice_raw(ngspice_raw)
             logger.info(f"ngspice data: {list(ngspice_data.keys())[:10]}...")
     else:
         # Try to load existing data
-        vacask_raw = output_dir / f'{config.name.lower().replace(" ", "_")}_vacask.raw'
-        ngspice_raw = output_dir / f'{config.name.lower().replace(" ", "_")}_ngspice.raw'
+        vacask_raw = output_dir / f'{args.benchmark}_vacask.raw'
+        ngspice_raw = output_dir / f'{args.benchmark}_ngspice.raw'
         if vacask_raw.exists():
             vacask_data = read_spice_raw(vacask_raw)
         if ngspice_raw.exists():
