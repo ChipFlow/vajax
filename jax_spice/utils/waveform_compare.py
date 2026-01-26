@@ -9,6 +9,7 @@ and JAX-SPICE, including:
 
 import os
 import subprocess
+import sys
 import tempfile
 from dataclasses import dataclass
 from pathlib import Path
@@ -135,6 +136,15 @@ def run_vacask(
             env["PYTHONPATH"] = f"{vacask_python_dir}:{existing_pythonpath}"
         else:
             env["PYTHONPATH"] = str(vacask_python_dir)
+
+    # Set up venv PATH so VACASK's Python scripts can find numpy
+    # Get the Python prefix from the current environment
+    venv_path = Path(sys.prefix)
+    venv_bin = venv_path / "bin"
+    if venv_bin.exists():
+        env["VIRTUAL_ENV"] = str(venv_path)
+        env["PATH"] = f"{venv_bin}:{env.get('PATH', '')}"
+        env.pop("PYTHONHOME", None)
 
     try:
         result = subprocess.run(

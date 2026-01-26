@@ -21,19 +21,19 @@ import struct
 import subprocess
 import sys
 import time
-from pathlib import Path
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Dict, Optional, Tuple
 
 os.environ['JAX_PLATFORMS'] = 'cpu'
 
-import numpy as np
 import matplotlib.pyplot as plt
+import numpy as np
 
+from jax_spice._logging import enable_performance_logging, logger
 from jax_spice.analysis.engine import CircuitEngine
 from jax_spice.analysis.transient import AdaptiveConfig, FullMNAStrategy, extract_results
-from jax_spice._logging import logger, enable_performance_logging
-from scripts.benchmark_utils import find_vacask_binary
+from jax_spice.utils import run_vacask as run_vacask_util
 
 enable_performance_logging(with_memory=True, with_perf_counter=True)
 
@@ -70,9 +70,9 @@ BENCHMARKS = {
         name='C6288 16x16 Multiplier',
         vacask_sim=Path('vendor/VACASK/benchmark/c6288/vacask/runme.sim'),
         ngspice_sim=Path('vendor/VACASK/benchmark/c6288/ngspice/runme.sim'),
-        t_stop=2e-9,
-        dt=2e-12,
-        max_dt=10e-12,
+        t_stop=2e-12,
+        dt=2e-15,
+        max_dt=10e-14,
         plot_window=(0.0, 2e-9),
         voltage_nodes=['top.p0', 'top.p1'],  # Output bits
         current_source='vdd',
@@ -128,10 +128,8 @@ def read_spice_raw(filename: Path) -> Dict[str, np.ndarray]:
 
 def run_vacask(config: BenchmarkConfig, output_dir: Path, benchmark_key: str) -> Optional[Path]:
     """Run VACASK simulator and return path to raw file."""
-    vacask_bin = find_vacask_binary()
-    if vacask_bin is None:
-        logger.warning("VACASK binary not found - skipping")
-        return None
+    import shutil
+    import tempfile
 
     sim_dir = config.vacask_sim.parent
     raw_file = output_dir / f'{benchmark_key}_vacask.raw'
@@ -154,34 +152,24 @@ def run_vacask(config: BenchmarkConfig, output_dir: Path, benchmark_key: str) ->
     try:
         logger.info(f"Running VACASK ({config.name})...")
         start = time.perf_counter()
-        result = subprocess.run(
-            [str(vacask_bin), 'plot_temp.sim'],
-            cwd=sim_dir,
-            capture_output=True,
-            text=True,
-            timeout=600
-        )
+
+        # Use utility function which handles PYTHONPATH and venv PATH
+        temp_output = Path(tempfile.mkdtemp(prefix="vacask_"))
+        result_raw, error = run_vacask_util(temp_sim, output_dir=temp_output, timeout=600)
         elapsed = time.perf_counter() - start
 
-        if result.returncode != 0:
-            logger.error(f"VACASK failed: {result.stderr[:500]}")
+        if error:
+            logger.error(f"VACASK failed: {error}")
             return None
 
-        # Find the generated raw file
-        tran_raw = sim_dir / 'tran1.raw'
-        if tran_raw.exists():
-            # Copy to output location
-            import shutil
-            shutil.copy(tran_raw, raw_file)
+        if result_raw and result_raw.exists():
+            shutil.copy(result_raw, raw_file)
             logger.info(f"VACASK completed in {elapsed:.1f}s -> {raw_file}")
             return raw_file
         else:
-            logger.error("VACASK did not produce tran1.raw")
+            logger.error("VACASK did not produce output")
             return None
 
-    except subprocess.TimeoutExpired:
-        logger.error("VACASK timed out")
-        return None
     finally:
         if temp_sim.exists():
             temp_sim.unlink()
@@ -202,6 +190,18 @@ def run_ngspice(config: BenchmarkConfig, output_dir: Path, benchmark_key: str) -
     # Read original sim file
     with open(config.ngspice_sim) as f:
         sim_content = f.read()
+
+    # Copy OSDI files from vacask directory if needed
+    # Look for pre_osdi directives and copy the referenced files
+    import shutil
+    osdi_files = re.findall(r'pre_osdi\s+(\S+)', sim_content)
+    vacask_dir = config.vacask_sim.parent
+    for osdi_file in osdi_files:
+        osdi_src = vacask_dir / osdi_file
+        osdi_dst = sim_dir / osdi_file
+        if osdi_src.exists() and not osdi_dst.exists():
+            shutil.copy(osdi_src, osdi_dst)
+            logger.info(f"Copied {osdi_file} from vacask to ngspice directory")
 
     # Modify tran command to use our t_stop and write rawfile
     # ngspice tran format: tran tstep tstop [tstart [tmax]] [uic]
@@ -279,10 +279,10 @@ def run_jax_spice(config: BenchmarkConfig) -> Tuple[np.ndarray, Dict, Dict]:
     return t_mna, voltages_mna, currents_mna
 
 
-def compute_didt(t: np.ndarray, I: np.ndarray) -> Tuple[np.ndarray, np.ndarray]:
+def compute_didt(t: np.ndarray, current: np.ndarray) -> Tuple[np.ndarray, np.ndarray]:
     """Compute dI/dt from time and current arrays."""
     dt = np.diff(t)
-    dI = np.diff(I)
+    dI = np.diff(current)
     # Avoid division by zero
     dt = np.where(dt == 0, 1e-20, dt)
     dIdt = dI / dt
