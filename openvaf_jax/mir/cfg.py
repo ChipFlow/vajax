@@ -145,7 +145,8 @@ class CFGAnalyzer:
         idom = self.immediate_dominators
         dom: Dict[str, Set[str]] = {}
 
-        for block in self.reachable_blocks:
+        # Sorted iteration for deterministic dict key order
+        for block in sorted(self.reachable_blocks):
             # Walk up idom tree to collect all dominators
             dominators = {block}
             current = idom.get(block)
@@ -253,14 +254,16 @@ class CFGAnalyzer:
         The natural loop for this back-edge includes:
         - All blocks that can reach n without going through h
         - Plus h (the header)
+
+        IMPORTANT: Iterations are sorted for deterministic output.
         """
         loops = []
         reachable = self.reachable_blocks
         dom = self.dominators
 
-        # Find all back-edges
+        # Find all back-edges (sorted iteration for determinism)
         back_edges: List[Tuple[str, str]] = []
-        for block_name in reachable:
+        for block_name in sorted(reachable):
             block = self.blocks[block_name]
             for succ in block.successors:
                 if succ in dom.get(block_name, set()):
@@ -272,8 +275,9 @@ class CFGAnalyzer:
         for source, header in back_edges:
             header_to_edges[header].append((source, header))
 
-        # For each header, compute the loop body
-        for header, edges in header_to_edges.items():
+        # For each header, compute the loop body (sorted for determinism)
+        for header in sorted(header_to_edges.keys()):
+            edges = header_to_edges[header]
             body = self._compute_loop_body(header, edges)
             exits = self._compute_loop_exits(body)
             loops.append(LoopInfo(
@@ -317,7 +321,8 @@ class CFGAnalyzer:
     def _compute_loop_exits(self, body: Set[str]) -> List[str]:
         """Find blocks outside the loop reachable from loop blocks."""
         exits = []
-        for block_name in body:
+        # Sorted iteration for determinism
+        for block_name in sorted(body):
             if block_name in self.blocks:
                 for succ in self.blocks[block_name].successors:
                     if succ not in body and succ not in exits:
@@ -384,9 +389,10 @@ class CFGAnalyzer:
         for source, header in back_edges:
             header_to_edges[header].append((source, header))
 
-        # Build LoopInfo for each unique header
+        # Build LoopInfo for each unique header (sorted for determinism)
         loops = []
-        for header, edges in header_to_edges.items():
+        for header in sorted(header_to_edges.keys()):
+            edges = header_to_edges[header]
             body = self._compute_loop_body(header, edges)
             exits = self._compute_loop_exits(body)
             loops.append(LoopInfo(
@@ -403,6 +409,9 @@ class CFGAnalyzer:
 
         Uses Kahn's algorithm on a condensed graph where each loop
         is treated as a single node.
+
+        IMPORTANT: All set/dict iterations are sorted to ensure deterministic
+        output across Python process runs (hash randomization).
         """
         reachable = self.reachable_blocks
         if not reachable:
@@ -423,18 +432,25 @@ class CFGAnalyzer:
                 return block_to_loop[block]
             return block
 
+        # Helper for sorting mixed str/int nodes deterministically
+        def node_sort_key(n: Union[str, int]) -> Tuple[int, Union[str, int]]:
+            # Ints (loop indices) sort before strings
+            if isinstance(n, int):
+                return (0, n)
+            return (1, n)
+
         # Compute in-degree for each node
         in_degree: Dict[Union[str, int], int] = defaultdict(int)
         edges: Dict[Union[str, int], Set[Union[str, int]]] = defaultdict(set)
 
-        # Add all nodes
-        for block in reachable:
+        # Add all nodes (sorted for determinism)
+        for block in sorted(reachable):
             node = get_node(block)
             if node not in in_degree:
                 in_degree[node] = 0
 
-        # Add edges (skip intra-loop edges)
-        for block_name in reachable:
+        # Add edges (skip intra-loop edges) - sorted iteration for determinism
+        for block_name in sorted(reachable):
             if block_name not in self.blocks:
                 continue
             src_node = get_node(block_name)
@@ -464,13 +480,14 @@ class CFGAnalyzer:
             else:
                 result.append(node)
 
-            for succ in edges[node]:
+            # Sort successors for deterministic ordering
+            for succ in sorted(edges[node], key=node_sort_key):
                 in_degree[succ] -= 1
                 if in_degree[succ] == 0 and succ not in visited:
                     queue.append(succ)
 
-        # Add any remaining blocks not reached (shouldn't happen for valid CFG)
-        for node in in_degree:
+        # Add any remaining blocks not reached (sorted for determinism)
+        for node in sorted(in_degree.keys(), key=node_sort_key):
             if node not in visited:
                 if isinstance(node, int):
                     result.append(loops[node])
