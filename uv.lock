@@ -12,6 +12,7 @@ members = [
     "jax-spice",
     "openvaf-py",
     "osdi-py",
+    "umfpack-jax",
 ]
 
 [[package]]
@@ -470,6 +471,7 @@ dev = [
     { name = "pytest-cov" },
     { name = "ruff" },
     { name = "scikit-umfpack" },
+    { name = "umfpack-jax" },
 ]
 sax = [
     { name = "sax" },
@@ -482,6 +484,9 @@ test = [
 ]
 umfpack = [
     { name = "scikit-umfpack" },
+]
+umfpack-ffi = [
+    { name = "umfpack-jax" },
 ]
 
 [package.dev-dependencies]
@@ -514,8 +519,10 @@ requires-dist = [
     { name = "scipy", specifier = ">=1.11.0" },
     { name = "simpleeval", specifier = ">=1.0.0" },
     { name = "spineax", marker = "extra == 'cuda12'", git = "https://github.com/robtaylor/spineax.git" },
+    { name = "umfpack-jax", marker = "extra == 'dev'", editable = "jax_spice/sparse" },
+    { name = "umfpack-jax", marker = "extra == 'umfpack-ffi'", editable = "jax_spice/sparse" },
 ]
-provides-extras = ["cuda12", "umfpack", "sax", "test", "dev"]
+provides-extras = ["cuda12", "umfpack", "umfpack-ffi", "sax", "test", "dev"]
 
 [package.metadata.requires-dev]
 dev = [{ name = "radon", specifier = ">=6.0.1" }]
@@ -1954,6 +1961,21 @@ source = { registry = "https://pypi.org/simple" }
 sdist = { url = "https://files.pythonhosted.org/packages/95/32/1a225d6164441be760d75c2c42e2780dc0873fe382da3e98a2e1e48361e5/tzdata-2025.2.tar.gz", hash = "sha256:b60a638fcc0daffadf82fe0f57e53d06bdec2f36c4df66280ae79bce6bd6f2b9", size = 196380, upload-time = "2025-03-23T13:54:43.652Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/5c/23/c7abc0ca0a1526a0774eca151daeb8de62ec457e77262b66b359c3c7679e/tzdata-2025.2-py2.py3-none-any.whl", hash = "sha256:1a403fada01ff9221ca8044d701868fa132215d84beb92242d9acd2147f667a8", size = 347839, upload-time = "2025-03-23T13:54:41.845Z" },
+]
+
+[[package]]
+name = "umfpack-jax"
+version = "0.1.0"
+source = { editable = "jax_spice/sparse" }
+dependencies = [
+    { name = "jax" },
+    { name = "numpy" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "jax", specifier = ">=0.4.29" },
+    { name = "numpy", specifier = ">=1.24.0" },
 ]
 
 [[package]]
