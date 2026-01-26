@@ -52,6 +52,7 @@ test = [
     "osdi-py",  # For OSDI vs JAX comparison tests
 ]
 # Full dev dependencies - includes test + linting + CPU sparse solver
+# Note: umfpack-jax (FFI extension) requires separate build step - use --extra umfpack-ffi after building
 dev = [
     "pytest>=7.4.0",
     "pytest-cov",
@@ -59,7 +60,6 @@ dev = [
     "ruff",
     "pyright",
     "scikit-umfpack>=0.4.2",  # Requires libsuitesparse-dev + swig
-    "umfpack-jax",  # FFI version (requires libsuitesparse-dev)
     "osdi-py",  # For OSDI vs JAX comparison tests
 ]
 
