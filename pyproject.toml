@@ -16,11 +16,12 @@ dependencies = [
 ]
 
 [tool.uv.workspace]
-members = ["openvaf_jax/openvaf_py", "openvaf_jax/osdi_py"]
+members = ["openvaf_jax/openvaf_py", "openvaf_jax/osdi_py", "jax_spice/sparse"]
 
 [tool.uv.sources]
 openvaf-py = { workspace = true }
 osdi-py = { workspace = true }
+umfpack-jax = { workspace = true }
 
 [project.optional-dependencies]
 cuda12 = [
@@ -35,6 +36,10 @@ cuda12 = [
 # Falls back to klujax if not available
 umfpack = [
     "scikit-umfpack>=0.4.2",
+]
+# UMFPACK FFI extension - zero callback overhead (requires libsuitesparse-dev)
+umfpack-ffi = [
+    "umfpack-jax",
 ]
 sax = [
     "sax>=0.13.0",
@@ -54,6 +59,7 @@ dev = [
     "ruff",
     "pyright",
     "scikit-umfpack>=0.4.2",  # Requires libsuitesparse-dev + swig
+    "umfpack-jax",  # FFI version (requires libsuitesparse-dev)
     "osdi-py",  # For OSDI vs JAX comparison tests
 ]
 

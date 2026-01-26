@@ -91,7 +91,7 @@ jobs:
       - name: Install system dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y libsuitesparse-dev swig
+          sudo apt-get install -y libsuitesparse-dev swig cmake
 
       - name: Install uv
         uses: astral-sh/setup-uv@v4
@@ -107,6 +107,12 @@ jobs:
 
       - name: Install jax-spice with dev dependencies
         run: uv sync --extra dev
+
+      - name: Build UMFPACK FFI extension
+        working-directory: jax_spice/sparse
+        run: |
+          uv pip install scikit-build-core nanobind
+          uv pip install --no-build-isolation .
 
       - name: Run jax-spice tests (with jaxtyping runtime checks)
         env:
@@ -153,7 +159,7 @@ jobs:
       - name: Install system dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y libsuitesparse-dev swig ngspice
+          sudo apt-get install -y libsuitesparse-dev swig cmake ngspice
 
       - name: Install uv
         uses: astral-sh/setup-uv@v4
@@ -169,6 +175,12 @@ jobs:
 
       - name: Install jax-spice with dev dependencies
         run: uv sync --extra dev
+
+      - name: Build UMFPACK FFI extension
+        working-directory: jax_spice/sparse
+        run: |
+          uv pip install scikit-build-core nanobind
+          uv pip install --no-build-isolation .
 
       - name: Run ngspice regression tests
         id: ngspice-tests
@@ -231,7 +243,7 @@ jobs:
       - name: Install system dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y libsuitesparse-dev swig
+          sudo apt-get install -y libsuitesparse-dev swig cmake
 
       - name: Install uv
         uses: astral-sh/setup-uv@v4
@@ -247,6 +259,12 @@ jobs:
 
       - name: Install jax-spice with dev dependencies
         run: uv sync --extra dev
+
+      - name: Build UMFPACK FFI extension
+        working-directory: jax_spice/sparse
+        run: |
+          uv pip install scikit-build-core nanobind
+          uv pip install --no-build-isolation .
 
       - name: Run Xyce regression tests
         id: xyce-tests
