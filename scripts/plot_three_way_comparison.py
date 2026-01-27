@@ -74,11 +74,11 @@ BENCHMARKS = {
         name='C6288 16x16 Multiplier',
         vacask_sim=Path('vendor/VACASK/benchmark/c6288/vacask/runme.sim'),
         ngspice_sim=Path('vendor/VACASK/benchmark/c6288/ngspice/runme.sim'),
-        t_stop=2e-11,
-        dt=2e-15,
-        max_dt=10e-14,
-        plot_window=(0.0, 2e-11),
-        voltage_nodes=['top.p0', 'top.p1'],  # Output bits
+        t_stop=5e-14,
+        dt=1e-15,
+        max_dt=1e-10,
+        plot_window=(0.0, 5e-14),
+        voltage_nodes=[ f'top.p{n}' for n in range(32) ],
         current_source='vdd',
         use_sparse=True,
         icmode='uic',
@@ -420,13 +420,20 @@ def plot_comparison(config: BenchmarkConfig, vacask_data: Optional[Dict],
         # VACASK uses short names (p0), JAX uses full names (top.p0)
         vac_node = v_node.split('.')[-1]  # Get short name for VACASK
 
+        # Plot VACASK data
         if vacask_data and vac_node in vacask_data:
             ax.plot(t_vac[mask_vac] * time_scale, vacask_data[vac_node][mask_vac],
                     c_vac, lw=1.5, label=f'VACASK V({vac_node})', alpha=0.9)
 
+        # Plot JAX-SPICE data - try both full name and short name
+        jax_voltage = voltages_mna.get(v_node) or voltages_mna.get(vac_node)
+        if jax_voltage is not None:
+            ax.plot(t_mna[mask_mna] * time_scale, jax_voltage[mask_mna],
+                    'red', lw=1.5, label=f'JAX V({vac_node})', alpha=0.9, linestyle=':')
+
     ax.set_ylabel('Output Voltage [V]', fontsize=11)
-    ax.set_title('Output Bits (p0, p1)', fontsize=12)
-    ax.legend(loc='upper right', fontsize=9)
+    ax.set_title(f'Output Bits ({", ".join(config.voltage_nodes[:3])}...)', fontsize=12)
+    ax.legend(loc='upper right', fontsize=9, ncol=2)
     ax.grid(True, alpha=0.3)
     panel_idx += 1
 
