@@ -531,14 +531,15 @@ class FullMNAStrategy(TransientStrategy):
                 if 'vdd' in name_lower or 'vcc' in name_lower:
                     X0 = X0.at[idx].set(vdd_value)
 
-            # Compute initial charges consistent with initial voltages
-            # Call build_system with c0=0 (no dQ/dt contribution) to get Q at t=0
-            _, _, Q_init, _ = self._cached_build_system_jit(
+            # Compute initial charges and currents consistent with initial voltages
+            # Call build_system with c0=0 (no dQ/dt contribution) to get Q and I at t=0
+            _, _, Q_init, I_vsource_init = self._cached_build_system_jit(
                 X0, vsource_vals_init, isource_vals_init,
                 jnp.zeros(n_unknowns, dtype=dtype), 0.0, device_arrays,
                 1e-12, 0.0, 0.0, 0.0, None, 0.0, None
             )
-            logger.info(f"{self.name}: Computed initial charges (Q_init max={float(jnp.max(jnp.abs(Q_init))):.2e})")
+            I_vsource_dc = I_vsource_init
+            logger.info(f"{self.name}: Computed initial state (Q_max={float(jnp.max(jnp.abs(Q_init))):.2e}, I_vdd={float(I_vsource_dc[0]) if len(I_vsource_dc) > 0 else 0:.2e}A)")
 
             # Auto-enable gshunt for UIC mode to prevent singular matrix
             if config.gshunt_init == 0.0:
