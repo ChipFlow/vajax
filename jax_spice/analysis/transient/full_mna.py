@@ -517,8 +517,18 @@ class FullMNAStrategy(TransientStrategy):
         vsource_vals_init, isource_vals_init = self._build_source_arrays(source_fn(0.0))
 
         if setup.icmode == 'uic':
-            # Use Initial Conditions - skip DC solve, start from mid-rail
+            # Use Initial Conditions - skip DC solve, start from 0V (not mid-rail)
+            # This matches VACASK behavior where signal nodes start at 0V
             logger.info(f"{self.name}: icmode='uic' - skipping DC solve, using initial conditions")
+
+            # Re-initialize X0 with zeros for signal nodes (keep VDD/VSS)
+            vdd_value = self.runner._get_vdd_value()
+            X0 = X0.at[:n_total].set(0.0)  # Reset all nodes to 0V
+            # Set VDD/VCC nodes to supply voltage
+            for name, idx in self.runner.node_names.items():
+                name_lower = name.lower()
+                if 'vdd' in name_lower or 'vcc' in name_lower:
+                    X0 = X0.at[idx].set(vdd_value)
 
             # Auto-enable gshunt for UIC mode to prevent singular matrix
             if config.gshunt_init == 0.0:

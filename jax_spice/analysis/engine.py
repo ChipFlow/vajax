@@ -3423,34 +3423,24 @@ class CircuitEngine:
                 static_inputs_cache=static_inputs_cache,
             )
         else:
-            # icmode='uic' - use mid-rail initialization (better convergence than zeros)
-            # Similar to DC operating point init but without solving
+            # icmode='uic' - initialize all nodes to 0V to match VACASK behavior
+            # This avoids initial transients from mid-rail mismatch
             vdd_value = self._get_vdd_value()
-            mid_rail = vdd_value / 2.0
-            V0 = jnp.full(n_nodes, mid_rail, dtype=get_float_dtype())
-            V0 = V0.at[0].set(0.0)  # Ground is always 0
+            V0 = jnp.zeros(n_nodes, dtype=get_float_dtype())
 
-            # Set VDD/VCC nodes to supply voltage, GND/VSS to 0
+            # Set VDD/VCC nodes to supply voltage
             for name, idx in self.node_names.items():
                 name_lower = name.lower()
                 if 'vdd' in name_lower or 'vcc' in name_lower:
                     V0 = V0.at[idx].set(vdd_value)
-                elif name_lower in ('gnd', 'vss', '0'):
-                    V0 = V0.at[idx].set(0.0)
 
             # Initialize NOI and body internal nodes for PSP103 devices
+            # NOI nodes stay at 0V (already set), body nodes need bulk voltage
             if device_internal_nodes:
-                noi_nodes_initialized = 0
                 body_nodes_initialized = 0
                 device_external_nodes = {dev['name']: dev.get('nodes', []) for dev in self.devices}
 
                 for dev_name, internal_nodes in device_internal_nodes.items():
-                    # NOI nodes (node4) must be 0V
-                    if 'node4' in internal_nodes:
-                        noi_idx = internal_nodes['node4']
-                        V0 = V0.at[noi_idx].set(0.0)
-                        noi_nodes_initialized += 1
-
                     # Body internal nodes should match bulk voltage
                     ext_nodes = device_external_nodes.get(dev_name, [])
                     if len(ext_nodes) >= 4:
@@ -3463,12 +3453,10 @@ class CircuitEngine:
                                     V0 = V0.at[body_idx].set(b_voltage)
                                     body_nodes_initialized += 1
 
-                if noi_nodes_initialized > 0:
-                    logger.debug(f"  UIC: initialized {noi_nodes_initialized} NOI nodes to 0V")
                 if body_nodes_initialized > 0:
                     logger.debug(f"  UIC: initialized {body_nodes_initialized} body internal nodes")
 
-            logger.info(f"  UIC mode: ground=0V, VDD={vdd_value}V, others={mid_rail}V")
+            logger.info(f"  UIC mode: ground=0V, VDD={vdd_value}V, signal nodes=0V")
 
         # Get integration method from analysis_params and compute coefficients
         tran_method = self.analysis_params.get('tran_method', IntegrationMethod.BACKWARD_EULER)
