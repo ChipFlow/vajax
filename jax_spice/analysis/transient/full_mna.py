@@ -387,6 +387,7 @@ class FullMNAStrategy(TransientStrategy):
 
         self._cached_full_mna_solver = nr_solve
         self._cached_full_mna_key = cache_key
+        self._cached_build_system_jit = build_system_jit  # Store for Q_init computation
         logger.info(f"Created full MNA solver: V({n_nodes}) + I({n_vsources})")
 
         return nr_solve
@@ -529,6 +530,15 @@ class FullMNAStrategy(TransientStrategy):
                 name_lower = name.lower()
                 if 'vdd' in name_lower or 'vcc' in name_lower:
                     X0 = X0.at[idx].set(vdd_value)
+
+            # Compute initial charges consistent with initial voltages
+            # Call build_system with c0=0 (no dQ/dt contribution) to get Q at t=0
+            _, _, Q_init, _ = self._cached_build_system_jit(
+                X0, vsource_vals_init, isource_vals_init,
+                jnp.zeros(n_unknowns, dtype=dtype), 0.0, device_arrays,
+                1e-12, 0.0, 0.0, 0.0, None, 0.0, None
+            )
+            logger.info(f"{self.name}: Computed initial charges (Q_init max={float(jnp.max(jnp.abs(Q_init))):.2e})")
 
             # Auto-enable gshunt for UIC mode to prevent singular matrix
             if config.gshunt_init == 0.0:
