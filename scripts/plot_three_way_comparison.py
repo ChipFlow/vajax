@@ -389,14 +389,21 @@ def plot_comparison(config: BenchmarkConfig, vacask_data: Optional[Dict],
         # Plot each input bit with offset for visibility
         for i, node in enumerate(config.input_nodes_a):
             offset = i * 1.5  # Offset each bit for visibility
+            # Plot VACASK
             if vacask_data and node in vacask_data:
                 ax.plot(t_vac[mask_vac] * time_scale, vacask_data[node][mask_vac] + offset,
-                        lw=0.8, alpha=0.8, label=node if i < 4 else None)
+                        'b-', lw=0.8, alpha=0.8, label=f'VAC {node}' if i < 2 else None)
+            # Plot JAX-SPICE - try with and without prefix
+            jax_input = voltages_mna.get(node)
+            if jax_input is None:
+                jax_input = voltages_mna.get(f'top.{node}')
+            if jax_input is not None:
+                ax.plot(t_mna[mask_mna] * time_scale, jax_input[mask_mna] + offset,
+                        'r:', lw=0.8, alpha=0.8, label=f'JAX {node}' if i < 2 else None)
         ax.set_ylabel('Input A [V + offset]', fontsize=11)
         ax.set_title(f'{config.name}: Input Bus A (a0-a15)', fontsize=12, fontweight='bold')
         ax.grid(True, alpha=0.3)
-        if config.input_nodes_a[:4]:
-            ax.legend(loc='upper right', ncol=4, fontsize=8)
+        ax.legend(loc='upper right', ncol=4, fontsize=8)
         panel_idx += 1
 
     # Panel: Input B (if configured)
@@ -404,14 +411,21 @@ def plot_comparison(config: BenchmarkConfig, vacask_data: Optional[Dict],
         ax = axes[panel_idx]
         for i, node in enumerate(config.input_nodes_b):
             offset = i * 1.5
+            # Plot VACASK
             if vacask_data and node in vacask_data:
                 ax.plot(t_vac[mask_vac] * time_scale, vacask_data[node][mask_vac] + offset,
-                        lw=0.8, alpha=0.8, label=node if i < 4 else None)
+                        'b-', lw=0.8, alpha=0.8, label=f'VAC {node}' if i < 2 else None)
+            # Plot JAX-SPICE
+            jax_input = voltages_mna.get(node)
+            if jax_input is None:
+                jax_input = voltages_mna.get(f'top.{node}')
+            if jax_input is not None:
+                ax.plot(t_mna[mask_mna] * time_scale, jax_input[mask_mna] + offset,
+                        'r:', lw=0.8, alpha=0.8, label=f'JAX {node}' if i < 2 else None)
         ax.set_ylabel('Input B [V + offset]', fontsize=11)
         ax.set_title('Input Bus B (b0-b15)', fontsize=12)
         ax.grid(True, alpha=0.3)
-        if config.input_nodes_b[:4]:
-            ax.legend(loc='upper right', ncol=4, fontsize=8)
+        ax.legend(loc='upper right', ncol=4, fontsize=8)
         panel_idx += 1
 
     # Panel: Output Voltages
