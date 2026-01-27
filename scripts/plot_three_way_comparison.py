@@ -426,7 +426,9 @@ def plot_comparison(config: BenchmarkConfig, vacask_data: Optional[Dict],
                     c_vac, lw=1.5, label=f'VACASK V({vac_node})', alpha=0.9)
 
         # Plot JAX-SPICE data - try both full name and short name
-        jax_voltage = voltages_mna.get(v_node) or voltages_mna.get(vac_node)
+        jax_voltage = voltages_mna.get(v_node)
+        if jax_voltage is None:
+            jax_voltage = voltages_mna.get(vac_node)
         if jax_voltage is not None:
             ax.plot(t_mna[mask_mna] * time_scale, jax_voltage[mask_mna],
                     'red', lw=1.5, label=f'JAX V({vac_node})', alpha=0.9, linestyle=':')
