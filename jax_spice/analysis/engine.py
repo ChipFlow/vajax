@@ -4545,6 +4545,21 @@ class CircuitEngine:
 
             f_resist = f_resist - lim_rhs_resist
 
+            # =====================================================================
+            # Compute I_vsource from device residuals via KCL (before adding I_branch)
+            # This provides the correct initial current for UIC mode where I_branch=0
+            # =====================================================================
+            if n_vsources > 0 and 'vsource' in source_device_data:
+                # Extract device contribution at vsource positive nodes (0-indexed in MNA)
+                vsource_node_p_mna = vsource_node_p - 1
+                # Handle ground (index 0) - if positive terminal is ground, contribution is 0
+                valid_nodes = vsource_node_p > 0
+                f_device_at_p = jnp.where(valid_nodes, f_resist[vsource_node_p_mna], 0.0)
+                # Vsource current = -device_contribution (by KCL: sum of currents = 0)
+                I_vsource_kcl = -f_device_at_p
+            else:
+                I_vsource_kcl = jnp.zeros(0, dtype=get_float_dtype())
+
             _dQdt_prev = dQdt_prev if dQdt_prev is not None else jnp.zeros(n_unknowns, dtype=get_float_dtype())
             _Q_prev2 = Q_prev2 if Q_prev2 is not None else jnp.zeros(n_unknowns, dtype=get_float_dtype())
 
@@ -4690,8 +4705,9 @@ class CircuitEngine:
                 indices = jnp.stack([all_j_rows, all_j_cols], axis=1)
                 J = BCOO((all_j_vals, indices), shape=(n_augmented, n_augmented))
 
-            # Branch currents are directly available from solution
-            I_vsource = I_branch
+            # Use KCL-computed current (always correct) instead of I_branch from X
+            # This is critical for UIC mode where I_branch starts at 0
+            I_vsource = I_vsource_kcl
 
             return J, f_augmented, Q, I_vsource
 
