@@ -1,7 +1,27 @@
 # Transient Analysis Options
 
 JAX-SPICE supports VACASK-compatible options for controlling transient analysis behavior.
-Options can be specified in the netlist or passed programmatically via `AdaptiveConfig`.
+Options can be specified in the netlist and are automatically used as defaults.
+
+## Simplest Usage
+
+```python
+from jax_spice import CircuitEngine
+from jax_spice.analysis.transient import FullMNAStrategy
+
+engine = CircuitEngine('circuit.sim')
+engine.parse()
+
+strategy = FullMNAStrategy(engine)
+
+# Run with all defaults from netlist - no args needed!
+times, V, stats = strategy.run()
+```
+
+The `run()` method uses:
+- `stop` from netlist analysis line as `t_stop`
+- `step` from netlist analysis line as `dt`
+- `tran_lteratio`, `nr_convtol`, etc. from netlist options
 
 ## Quick Start
 
