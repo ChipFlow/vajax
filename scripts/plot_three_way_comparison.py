@@ -12,6 +12,12 @@ Usage:
 
     # Skip running simulators (use existing data)
     uv run scripts/plot_three_way_comparison.py --skip-build
+
+    # Skip ngspice (useful when it produces non-physical results)
+    uv run scripts/plot_three_way_comparison.py --benchmark c6288 --skip-ngspice
+
+    # Skip VACASK
+    uv run scripts/plot_three_way_comparison.py --skip-vacask
 """
 
 import argparse
@@ -75,10 +81,10 @@ BENCHMARKS = {
         name='C6288 16x16 Multiplier',
         vacask_sim=Path('vendor/VACASK/benchmark/c6288/vacask/runme.sim'),
         ngspice_sim=Path('vendor/VACASK/benchmark/c6288/ngspice/runme.sim'),
-        t_stop=5e-11,
-        dt=1e-13,
-        max_dt=5e-13,
-        plot_window=(0.0, 5e-12),
+        t_stop=3e-9,       # Match VACASK: stop=2n
+        dt=1e-10,          # Match VACASK: step=2p (critical for stiff startup!)
+        max_dt=50e-10,     # Allow adaptive growth up to 50ps
+        plot_window=(0.0, 5e-9),
         voltage_nodes=[ f'top.p{n}' for n in range(32) ],
         current_source='vdd',
         use_sparse=True,
@@ -273,6 +279,26 @@ def run_ngspice(config: BenchmarkConfig, output_dir: Path, benchmark_key: str) -
         sim_content
     )
 
+    # Add current save directive if current_source is specified
+    if config.current_source:
+        # Insert save i(source) after existing save lines
+        # Note: ngspice voltage source named 'vdd' has current saved as i(vdd)
+        if 'save ' in modified.lower():
+            # Find last save line and add after it
+            lines = modified.split('\n')
+            for i in range(len(lines) - 1, -1, -1):
+                if lines[i].strip().lower().startswith('save '):
+                    lines.insert(i + 1, f'  save i({config.current_source})')
+                    break
+            modified = '\n'.join(lines)
+        else:
+            # Add save before tran command
+            modified = re.sub(
+                r'(tran\s+)',
+                f'save i({config.current_source})\n  \\1',
+                modified
+            )
+
     # Write modified sim file to temp location
     temp_sim = sim_dir / 'plot_temp.sp'
     with open(temp_sim, 'w') as f:
@@ -312,7 +338,18 @@ def run_jax_spice(config: BenchmarkConfig) -> Tuple[np.ndarray, Dict, Dict]:
     runner = CircuitEngine(config.vacask_sim)
     runner.parse()
 
-    adaptive_config = AdaptiveConfig(max_dt=config.max_dt, min_dt=1e-15)
+    # Adaptive config
+    if config.use_sparse:
+        # c6288: Match VACASK settings for initial timestep scaling and LTE
+        # VACASK uses tran_fs=0.25 (initial dt scaling) and lte_ratio=1.5 (from netlist)
+        adaptive_config = AdaptiveConfig(
+            max_dt=config.max_dt,
+            min_dt=1e-15,
+            tran_fs=0.25,         # VACASK default: scale initial dt by 0.25
+            lte_ratio=1.5,        # From c6288 netlist: tran_lteratio=1.5
+        )
+    else:
+        adaptive_config = AdaptiveConfig(max_dt=config.max_dt, min_dt=1e-15)
     full_mna = FullMNAStrategy(runner, use_sparse=config.use_sparse, config=adaptive_config)
 
     logger.info("Warmup...")
@@ -371,6 +408,17 @@ def plot_comparison(config: BenchmarkConfig, vacask_data: Optional[Dict],
         t_ng = ngspice_data['time']
         mask_ng = (t_ng >= t_start) & (t_ng <= t_end)
 
+    # Helper to get ngspice voltage (handles v(node) naming convention)
+    def get_ngspice_voltage(data, node):
+        """Get voltage from ngspice data, trying both 'node' and 'v(node)' formats."""
+        if data is None:
+            return None
+        if node in data:
+            return data[node]
+        if f'v({node})' in data:
+            return data[f'v({node})']
+        return None
+
     # Panel: Input A (if configured)
     if config.input_nodes_a:
         ax = axes[panel_idx]
@@ -382,8 +430,9 @@ def plot_comparison(config: BenchmarkConfig, vacask_data: Optional[Dict],
                 ax.plot(t_vac[mask_vac] * time_scale, vacask_data[node][mask_vac] + offset,
                         'b-', lw=0.8, alpha=0.8, label=f'VAC {node}' if i < 2 else None)
             # Plot ngspice
-            if ngspice_data and node in ngspice_data:
-                ax.plot(t_ng[mask_ng] * time_scale, ngspice_data[node][mask_ng] + offset,
+            ng_voltage = get_ngspice_voltage(ngspice_data, node)
+            if ng_voltage is not None:
+                ax.plot(t_ng[mask_ng] * time_scale, ng_voltage[mask_ng] + offset,
                         'g--', lw=0.8, alpha=0.8, label=f'NG {node}' if i < 2 else None)
             # Plot JAX-SPICE - try with and without prefix
             jax_input = voltages_mna.get(node)
@@ -408,8 +457,9 @@ def plot_comparison(config: BenchmarkConfig, vacask_data: Optional[Dict],
                 ax.plot(t_vac[mask_vac] * time_scale, vacask_data[node][mask_vac] + offset,
                         'b-', lw=0.8, alpha=0.8, label=f'VAC {node}' if i < 2 else None)
             # Plot ngspice
-            if ngspice_data and node in ngspice_data:
-                ax.plot(t_ng[mask_ng] * time_scale, ngspice_data[node][mask_ng] + offset,
+            ng_voltage = get_ngspice_voltage(ngspice_data, node)
+            if ng_voltage is not None:
+                ax.plot(t_ng[mask_ng] * time_scale, ng_voltage[mask_ng] + offset,
                         'g--', lw=0.8, alpha=0.8, label=f'NG {node}' if i < 2 else None)
             # Plot JAX-SPICE
             jax_input = voltages_mna.get(node)
@@ -437,8 +487,9 @@ def plot_comparison(config: BenchmarkConfig, vacask_data: Optional[Dict],
                     c_vac, lw=0.8, alpha=0.8, label=f'VAC {vac_node}' if i < 2 else None)
 
         # Plot ngspice data
-        if ngspice_data and vac_node in ngspice_data:
-            ax.plot(t_ng[mask_ng] * time_scale, ngspice_data[vac_node][mask_ng] + offset,
+        ng_voltage = get_ngspice_voltage(ngspice_data, vac_node)
+        if ng_voltage is not None:
+            ax.plot(t_ng[mask_ng] * time_scale, ng_voltage[mask_ng] + offset,
                     'g--', lw=0.8, alpha=0.8, label=f'NG {vac_node}' if i < 2 else None)
 
         # Plot JAX-SPICE data - try both full name and short name
@@ -466,11 +517,10 @@ def plot_comparison(config: BenchmarkConfig, vacask_data: Optional[Dict],
 
     # ngspice current - try different naming conventions
     if ngspice_data:
+        # ngspice names current through voltage source vdd as i(vdd)
         I_ng = ngspice_data.get(f'i({config.current_source})')
         if I_ng is None:
             I_ng = ngspice_data.get(f'{config.current_source}#branch')
-        if I_ng is None:
-            I_ng = ngspice_data.get(f'v{config.current_source}#branch')
         if I_ng is not None:
             ax.plot(t_ng[mask_ng] * time_scale, I_ng[mask_ng] * 1e6, 'green', lw=1.5,
                     label='ngspice', alpha=0.9, linestyle='--')
@@ -496,6 +546,10 @@ def main():
                         help='Benchmark to run (default: ring)')
     parser.add_argument('--skip-build', action='store_true',
                         help='Skip running VACASK/ngspice, use existing data')
+    parser.add_argument('--skip-ngspice', action='store_true',
+                        help='Skip running ngspice (useful when ngspice produces bad results)')
+    parser.add_argument('--skip-vacask', action='store_true',
+                        help='Skip running VACASK')
     parser.add_argument('--output-dir', type=Path, default=Path('.'),
                         help='Output directory for plots and data')
     args = parser.parse_args()
@@ -509,23 +563,29 @@ def main():
 
     if not args.skip_build:
         # Run VACASK
-        vacask_raw = run_vacask(config, output_dir, args.benchmark)
-        if vacask_raw and vacask_raw.exists():
-            vacask_data = read_spice_raw(vacask_raw)
-            logger.info(f"VACASK data: {list(vacask_data.keys())[:10]}...")
+        if not args.skip_vacask:
+            vacask_raw = run_vacask(config, output_dir, args.benchmark)
+            if vacask_raw and vacask_raw.exists():
+                vacask_data = read_spice_raw(vacask_raw)
+                logger.info(f"VACASK data: {list(vacask_data.keys())[:10]}...")
+        else:
+            logger.info("Skipping VACASK (--skip-vacask)")
 
         # Run ngspice
-        ngspice_raw = run_ngspice(config, output_dir, args.benchmark)
-        if ngspice_raw and ngspice_raw.exists():
-            ngspice_data = read_spice_raw(ngspice_raw)
-            logger.info(f"ngspice data: {list(ngspice_data.keys())[:10]}...")
+        if not args.skip_ngspice:
+            ngspice_raw = run_ngspice(config, output_dir, args.benchmark)
+            if ngspice_raw and ngspice_raw.exists():
+                ngspice_data = read_spice_raw(ngspice_raw)
+                logger.info(f"ngspice data: {list(ngspice_data.keys())[:10]}...")
+        else:
+            logger.info("Skipping ngspice (--skip-ngspice)")
     else:
         # Try to load existing data
         vacask_raw = output_dir / f'{args.benchmark}_vacask.raw'
         ngspice_raw = output_dir / f'{args.benchmark}_ngspice.raw'
-        if vacask_raw.exists():
+        if vacask_raw.exists() and not args.skip_vacask:
             vacask_data = read_spice_raw(vacask_raw)
-        if ngspice_raw.exists():
+        if ngspice_raw.exists() and not args.skip_ngspice:
             ngspice_data = read_spice_raw(ngspice_raw)
 
     # Always run JAX-SPICE
