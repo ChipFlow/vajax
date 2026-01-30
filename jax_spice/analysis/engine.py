@@ -45,9 +45,9 @@ from jax_spice.analysis.solver_factories import (
     make_sparse_solver,
     make_spineax_solver,
     make_umfpack_solver,
-    get_nr_damping,
-    set_nr_damping,
+    set_nr_damping as _set_global_nr_damping,
 )
+from jax_spice.analysis.options import SimulationOptions
 from jax_spice.analysis.integration import IntegrationMethod, compute_coefficients, get_method_from_options
 from jax_spice.config import DEFAULT_TEMPERATURE_K
 from jax_spice.netlist.parser import VACASKParser
@@ -482,25 +482,17 @@ class CircuitEngine:
         # When True, generates calls to limit_funcs in device eval instead of passthrough
         self.use_device_limiting: bool = False
 
+        # Unified simulation options (replaces scattered analysis_params)
+        self.options = SimulationOptions()
+
     @property
     def nr_damping(self) -> float:
-        """Global Newton-Raphson damping factor.
-
-        Controls the step size scaling during NR iteration.
-        - 1.0 = no damping (full NR steps)
-        - 0.5 = half steps (more conservative, better convergence)
-        - Must be in (0, 1]
-
-        This is applied before pnjlim/fetlim limiting, so the order is:
-        1. Scale raw NR delta by nr_damping factor
-        2. Apply pnjlim logarithmic compression
-        3. Apply general step limiting
-        """
-        return get_nr_damping()
+        """Convenience property for options.nr_damping."""
+        return self.options.nr_damping
 
     @nr_damping.setter
     def nr_damping(self, value: float) -> None:
-        set_nr_damping(value)
+        self.options.nr_damping = value
 
     def clear_cache(self):
         """Clear all cached data to free memory.
@@ -1970,81 +1962,57 @@ class CircuitEngine:
 
         Uses the structured ControlBlock from Circuit if available,
         falls back to regex parsing for backwards compatibility.
+
+        Options from the netlist are loaded into self.options (SimulationOptions).
+        Analysis directive parameters (step, stop, etc.) are also stored in self.options.
+        The legacy self.analysis_params dict is kept for backwards compatibility.
         """
-        # Default values
-        # icmode='op' computes DC operating point before transient (VACASK default)
-        # icmode='uic' skips DC solve - only use when explicitly specified
+        # Reset options to defaults
+        self.options = SimulationOptions()
+
+        # Set VACASK default for tran_method
+        self.options.tran_method = IntegrationMethod.TRAPEZOIDAL
+
+        # Legacy analysis_params dict for backwards compatibility
         self.analysis_params = {
             'type': 'tran',
-            'step': 1e-6,
-            'stop': 1e-3,
-            'icmode': 'op',
-            'tran_method': IntegrationMethod.TRAPEZOIDAL,  # VACASK default
         }
 
         # Try to use the parsed control block first
         if self.circuit and self.circuit.control:
             control = self.circuit.control
 
-            # Extract options
+            # Extract options using unified SimulationOptions
             if control.options:
                 opts = control.options.params
 
-                # Integration method
-                self.analysis_params['tran_method'] = get_method_from_options(opts)
-                logger.debug(f"Integration method: {self.analysis_params['tran_method']}")
+                # Handle tran_method specially (needs get_method_from_options)
+                self.options.tran_method = get_method_from_options(opts)
 
-                # LTE control options
-                if 'tran_lteratio' in opts:
-                    self.analysis_params['tran_lteratio'] = float(opts['tran_lteratio'])
-                    logger.debug(f"tran_lteratio: {self.analysis_params['tran_lteratio']}")
-                if 'tran_redofactor' in opts:
-                    self.analysis_params['tran_redofactor'] = float(opts['tran_redofactor'])
-                    logger.debug(f"tran_redofactor: {self.analysis_params['tran_redofactor']}")
+                # Update all other options from netlist
+                self.options.update_from_netlist(opts, self.parse_spice_number)
 
-                # NR tolerance option
-                if 'nr_convtol' in opts:
-                    self.analysis_params['nr_convtol'] = float(opts['nr_convtol'])
-                    logger.debug(f"nr_convtol: {self.analysis_params['nr_convtol']}")
-
-                # Transient gshunt options
-                if 'tran_gshunt' in opts:
-                    self.analysis_params['tran_gshunt'] = float(opts['tran_gshunt'])
-                    logger.debug(f"tran_gshunt: {self.analysis_params['tran_gshunt']}")
-
-                # Tolerance options
-                if 'reltol' in opts:
-                    self.analysis_params['reltol'] = float(opts['reltol'])
-                    logger.debug(f"reltol: {self.analysis_params['reltol']}")
-                if 'abstol' in opts:
-                    self.analysis_params['abstol'] = float(opts['abstol'])
-                    logger.debug(f"abstol: {self.analysis_params['abstol']}")
-
-                # Timestep control options
-                if 'tran_fs' in opts:
-                    self.analysis_params['tran_fs'] = float(opts['tran_fs'])
-                    logger.debug(f"tran_fs: {self.analysis_params['tran_fs']}")
-                if 'tran_minpts' in opts:
-                    self.analysis_params['tran_minpts'] = int(opts['tran_minpts'])
-                    logger.debug(f"tran_minpts: {self.analysis_params['tran_minpts']}")
+                logger.debug(f"Loaded options: {self.options.to_dict()}")
 
             # Extract analysis parameters from first tran analysis
             for analysis in control.analyses:
                 if analysis.analysis_type == 'tran':
                     params = analysis.params
                     if 'step' in params:
-                        self.analysis_params['step'] = self.parse_spice_number(params['step'])
+                        self.options.step = self.parse_spice_number(params['step'])
                     if 'stop' in params:
-                        self.analysis_params['stop'] = self.parse_spice_number(params['stop'])
+                        self.options.stop = self.parse_spice_number(params['stop'])
                     if 'maxstep' in params:
-                        self.analysis_params['maxstep'] = self.parse_spice_number(params['maxstep'])
+                        self.options.maxstep = self.parse_spice_number(params['maxstep'])
                     if 'icmode' in params:
                         icmode = params['icmode']
                         if isinstance(icmode, str):
                             icmode = icmode.strip('"\'')
-                        self.analysis_params['icmode'] = icmode
+                        self.options.icmode = icmode
                     break  # Use first tran analysis found
 
+            # Populate legacy analysis_params for backwards compatibility
+            self._sync_options_to_analysis_params()
             logger.debug(f"Analysis (from control block): {self.analysis_params}")
             return
 
@@ -2062,23 +2030,53 @@ class CircuitEngine:
             icmode_match = re.search(r'icmode="(\w+)"', params_str)
 
             if step_match:
-                self.analysis_params['step'] = self.parse_spice_number(step_match.group(1))
+                self.options.step = self.parse_spice_number(step_match.group(1))
             if stop_match:
-                self.analysis_params['stop'] = self.parse_spice_number(stop_match.group(1))
+                self.options.stop = self.parse_spice_number(stop_match.group(1))
+            if maxstep_match:
+                self.options.maxstep = self.parse_spice_number(maxstep_match.group(1))
             if icmode_match:
-                self.analysis_params['icmode'] = icmode_match.group(1)
+                self.options.icmode = icmode_match.group(1)
 
         # Try to extract tran_method from options line
         tran_method_match = re.search(r'tran_method\s*=\s*"?(\w+)"?', text)
         if tran_method_match:
             try:
-                self.analysis_params['tran_method'] = IntegrationMethod.from_string(
+                self.options.tran_method = IntegrationMethod.from_string(
                     tran_method_match.group(1)
                 )
             except ValueError:
                 pass  # Keep default
 
+        # Populate legacy analysis_params for backwards compatibility
+        self._sync_options_to_analysis_params()
         logger.debug(f"Analysis (from regex): {self.analysis_params}")
+
+    def _sync_options_to_analysis_params(self):
+        """Sync SimulationOptions to legacy analysis_params dict for backwards compatibility."""
+        opts = self.options
+
+        # Always sync these
+        self.analysis_params['tran_method'] = opts.tran_method
+        self.analysis_params['icmode'] = opts.icmode
+
+        # Only sync if set (not None)
+        if opts.step is not None:
+            self.analysis_params['step'] = opts.step
+        if opts.stop is not None:
+            self.analysis_params['stop'] = opts.stop
+        if opts.maxstep is not None:
+            self.analysis_params['maxstep'] = opts.maxstep
+
+        # Sync tolerance/control options
+        self.analysis_params['tran_lteratio'] = opts.tran_lteratio
+        self.analysis_params['tran_redofactor'] = opts.tran_redofactor
+        self.analysis_params['nr_convtol'] = opts.nr_convtol
+        self.analysis_params['tran_gshunt'] = opts.tran_gshunt
+        self.analysis_params['reltol'] = opts.reltol
+        self.analysis_params['abstol'] = opts.abstol
+        self.analysis_params['tran_fs'] = opts.tran_fs
+        self.analysis_params['tran_minpts'] = opts.tran_minpts
 
     def _build_source_fn(self):
         """Build time-varying source function from device parameters."""
@@ -2295,6 +2293,9 @@ class CircuitEngine:
             self._transient_setup_cache = None
             self._transient_setup_key = None
             logger.info(f"Temperature changed to {temperature}K ({temperature - 273.15:.1f}°C)")
+
+        # Sync nr_damping from options to global (used by JIT-compiled solvers)
+        _set_global_nr_damping(self.options.nr_damping)
 
         # Emit deprecation warnings for ignored parameters
         if use_scan:
