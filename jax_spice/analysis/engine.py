@@ -45,6 +45,8 @@ from jax_spice.analysis.solver_factories import (
     make_sparse_solver,
     make_spineax_solver,
     make_umfpack_solver,
+    get_nr_damping,
+    set_nr_damping,
 )
 from jax_spice.analysis.integration import IntegrationMethod, compute_coefficients, get_method_from_options
 from jax_spice.config import DEFAULT_TEMPERATURE_K
@@ -479,6 +481,26 @@ class CircuitEngine:
         # Device-level voltage limiting (pnjlim/fetlim) - Phase 2 of damping implementation
         # When True, generates calls to limit_funcs in device eval instead of passthrough
         self.use_device_limiting: bool = False
+
+    @property
+    def nr_damping(self) -> float:
+        """Global Newton-Raphson damping factor.
+
+        Controls the step size scaling during NR iteration.
+        - 1.0 = no damping (full NR steps)
+        - 0.5 = half steps (more conservative, better convergence)
+        - Must be in (0, 1]
+
+        This is applied before pnjlim/fetlim limiting, so the order is:
+        1. Scale raw NR delta by nr_damping factor
+        2. Apply pnjlim logarithmic compression
+        3. Apply general step limiting
+        """
+        return get_nr_damping()
+
+    @nr_damping.setter
+    def nr_damping(self, value: float) -> None:
+        set_nr_damping(value)
 
     def clear_cache(self):
         """Clear all cached data to free memory.

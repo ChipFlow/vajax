@@ -31,7 +31,7 @@ import numpy as np
 from jax import Array, lax
 
 from jax_spice._logging import logger
-from jax_spice.analysis.limiting import apply_voltage_damping
+from jax_spice.analysis.limiting import apply_voltage_damping, DEFAULT_NR_DAMPING
 
 # Newton-Raphson solver constants
 MAX_NR_ITERATIONS = 100
@@ -41,6 +41,28 @@ DEFAULT_ABSTOL = 1e4  # Corresponds to ~10nV voltage accuracy with G=1e12
 # These values are based on SPICE3 pnjlim defaults
 DAMPING_VT = 0.026  # Thermal voltage at 300K
 DAMPING_VCRIT = 0.6  # Critical voltage for PN junctions
+
+# Global NR damping factor (1.0 = no damping, <1.0 = reduced step size)
+# This can be overridden by the engine via set_nr_damping()
+_NR_DAMPING = DEFAULT_NR_DAMPING
+
+
+def set_nr_damping(value: float) -> None:
+    """Set the global NR damping factor.
+
+    Args:
+        value: Damping factor (1.0 = no damping, 0.5 = half steps, etc.)
+               Must be > 0 and <= 1.0
+    """
+    global _NR_DAMPING
+    if value <= 0 or value > 1.0:
+        raise ValueError(f"nr_damping must be in (0, 1], got {value}")
+    _NR_DAMPING = value
+
+
+def get_nr_damping() -> float:
+    """Get the current global NR damping factor."""
+    return _NR_DAMPING
 
 
 def _compute_noi_masks(
@@ -244,7 +266,7 @@ def make_dense_full_mna_solver(
             # X has structure: [V_ground, V_1, ..., V_n, I_vs1, ..., I_vsm]
             # delta has structure: [delta_V_1, ..., delta_V_n, delta_I_vs1, ..., delta_I_vsm]
             V_candidate = X[1:n_total] + delta[:n_unknowns]
-            V_damped = apply_voltage_damping(V_candidate, X[1:n_total], DAMPING_VT, DAMPING_VCRIT)
+            V_damped = apply_voltage_damping(V_candidate, X[1:n_total], DAMPING_VT, DAMPING_VCRIT, nr_damping=_NR_DAMPING)
             X_new = X.at[1:n_total].set(V_damped)  # Update node voltages with damping
             X_new = X_new.at[n_total:].add(delta[n_unknowns:])  # Update branch currents
 
@@ -426,7 +448,7 @@ def make_sparse_full_mna_solver(
             # X has structure: [V_ground, V_1, ..., V_n, I_vs1, ..., I_vsm]
             # delta has structure: [delta_V_1, ..., delta_V_n, delta_I_vs1, ..., delta_I_vsm]
             V_candidate = X[1:n_total] + delta[:n_unknowns]
-            V_damped = apply_voltage_damping(V_candidate, X[1:n_total], DAMPING_VT, DAMPING_VCRIT)
+            V_damped = apply_voltage_damping(V_candidate, X[1:n_total], DAMPING_VT, DAMPING_VCRIT, nr_damping=_NR_DAMPING)
             X_new = X.at[1:n_total].set(V_damped)  # Update node voltages with damping
             X_new = X_new.at[n_total:].add(delta[n_unknowns:])  # Update branch currents
 
@@ -588,7 +610,7 @@ def make_umfpack_full_mna_solver(
 
             # Update X: node voltages and branch currents with damping
             V_candidate = X[1:n_total] + delta[:n_unknowns]
-            V_damped = apply_voltage_damping(V_candidate, X[1:n_total], DAMPING_VT, DAMPING_VCRIT)
+            V_damped = apply_voltage_damping(V_candidate, X[1:n_total], DAMPING_VT, DAMPING_VCRIT, nr_damping=_NR_DAMPING)
             X_new = X.at[1:n_total].set(V_damped)
             X_new = X_new.at[n_total:].add(delta[n_unknowns:])
 
@@ -708,7 +730,7 @@ def make_dense_solver(
 
             # Update V (ground stays fixed) with damping
             V_candidate = V[1:] + delta
-            V_damped = apply_voltage_damping(V_candidate, V[1:], DAMPING_VT, DAMPING_VCRIT)
+            V_damped = apply_voltage_damping(V_candidate, V[1:], DAMPING_VT, DAMPING_VCRIT, nr_damping=_NR_DAMPING)
             V_new = V.at[1:].set(V_damped)
 
             # Clamp NOI nodes to 0V
@@ -864,7 +886,7 @@ def make_sparse_solver(
 
             # Update V with damping
             V_candidate = V[1:] + delta
-            V_damped = apply_voltage_damping(V_candidate, V[1:], DAMPING_VT, DAMPING_VCRIT)
+            V_damped = apply_voltage_damping(V_candidate, V[1:], DAMPING_VT, DAMPING_VCRIT, nr_damping=_NR_DAMPING)
             V_new = V.at[1:].set(V_damped)
 
             if noi_indices is not None and len(noi_indices) > 0:
@@ -1014,7 +1036,7 @@ def make_spineax_solver(
 
             # Update V with damping
             V_candidate = V[1:] + delta
-            V_damped = apply_voltage_damping(V_candidate, V[1:], DAMPING_VT, DAMPING_VCRIT)
+            V_damped = apply_voltage_damping(V_candidate, V[1:], DAMPING_VT, DAMPING_VCRIT, nr_damping=_NR_DAMPING)
             V_new = V.at[1:].set(V_damped)
 
             if noi_indices is not None and len(noi_indices) > 0:
@@ -1158,7 +1180,7 @@ def make_umfpack_solver(
 
             # Update V with damping
             V_candidate = V[1:] + delta
-            V_damped = apply_voltage_damping(V_candidate, V[1:], DAMPING_VT, DAMPING_VCRIT)
+            V_damped = apply_voltage_damping(V_candidate, V[1:], DAMPING_VT, DAMPING_VCRIT, nr_damping=_NR_DAMPING)
             V_new = V.at[1:].set(V_damped)
 
             if noi_indices is not None and len(noi_indices) > 0:
@@ -1338,7 +1360,7 @@ def make_umfpack_ffi_full_mna_solver(
 
             # Update X with damping for node voltages
             V_candidate = X[1:n_total] + delta[:n_unknowns]
-            V_damped = apply_voltage_damping(V_candidate, X[1:n_total], DAMPING_VT, DAMPING_VCRIT)
+            V_damped = apply_voltage_damping(V_candidate, X[1:n_total], DAMPING_VT, DAMPING_VCRIT, nr_damping=_NR_DAMPING)
             X_new = X.at[1:n_total].set(V_damped)
             X_new = X_new.at[n_total:].add(delta[n_unknowns:])
 
@@ -1485,7 +1507,7 @@ def make_umfpack_ffi_solver(
 
             # Update V with damping
             V_candidate = V[1:] + delta
-            V_damped = apply_voltage_damping(V_candidate, V[1:], DAMPING_VT, DAMPING_VCRIT)
+            V_damped = apply_voltage_damping(V_candidate, V[1:], DAMPING_VT, DAMPING_VCRIT, nr_damping=_NR_DAMPING)
             V_new = V.at[1:].set(V_damped)
 
             if noi_indices is not None and len(noi_indices) > 0:

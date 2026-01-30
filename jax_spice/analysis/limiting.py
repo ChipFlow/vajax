@@ -97,24 +97,30 @@ def fetlim(vnew: Array, vold: Array, vto: float = 0.5) -> Array:
     return limited
 
 
+# Default NR damping factor (1.0 = no damping, 0.5 = half steps)
+DEFAULT_NR_DAMPING = 1.0
+
+
 def apply_voltage_damping(
     V_new: Array,
     V_old: Array,
     vt: float = 0.026,
     vcrit: float = 0.6,
-    max_step: float = 0.3
+    max_step: float = 0.3,
+    nr_damping: float = 1.0
 ) -> Array:
     """Apply voltage damping to all voltage updates.
 
-    This combines two damping strategies:
-    1. pnjlim-style logarithmic compression for PN junction regions
+    This combines three damping strategies:
+    1. Global NR damping: scale the step by nr_damping factor
+    2. pnjlim-style logarithmic compression for PN junction regions
        (where vnew > vcrit and vold > 0)
-    2. General step limiting for large voltage changes that don't
+    3. General step limiting for large voltage changes that don't
        trigger pnjlim (important for MOSFETs where Vgs may start at 0)
 
-    The general step limiter caps voltage changes at max_step volts,
-    which prevents the solver from making huge jumps that could cause
-    device evaluation at unrealistic operating points.
+    The global NR damping is applied first, then pnjlim, then general limiting.
+    This order ensures that even with nr_damping=1.0, the pnjlim and step
+    limiting still provide protection against large voltage jumps.
 
     Args:
         V_new: Proposed new voltage vector (from NR step, excluding ground)
@@ -122,11 +128,18 @@ def apply_voltage_damping(
         vt: Thermal voltage (kT/q ≈ 0.026V at 300K)
         vcrit: Critical voltage above which pnjlim is applied
         max_step: Maximum voltage step for general limiting (default 0.3V)
+        nr_damping: Global NR damping factor (default 1.0 = no damping).
+                    Values < 1.0 reduce step size (e.g., 0.5 = half steps).
 
     Returns:
         Damped voltage vector
     """
-    # First apply pnjlim for PN junction regions
+    # First apply global NR damping by scaling the step
+    if nr_damping != 1.0:
+        delta_raw = V_new - V_old
+        V_new = V_old + nr_damping * delta_raw
+
+    # Then apply pnjlim for PN junction regions
     result = pnjlim(V_new, V_old, vt, vcrit)
 
     # Then apply general step limiting for nodes where pnjlim didn't help
