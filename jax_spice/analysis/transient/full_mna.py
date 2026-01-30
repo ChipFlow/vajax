@@ -202,13 +202,65 @@ class FullMNAStrategy(TransientStrategy):
         super().__init__(runner, use_sparse=use_sparse, backend=backend)
         self._cached_full_mna_solver: Optional[Callable] = None
         self._cached_full_mna_key: Optional[Tuple] = None
-        self.config = config or AdaptiveConfig()
+        self.config = config or self._build_config_from_runner()
         # Note: warmup_steps is now in config, not hardcoded
         # Cache JIT-compiled while_loop keyed by circuit structure
         # Note: Using Any since JIT-compiled functions have complex types
         self._jit_run_while_cache: Dict[tuple, Any] = {}
         # Build reverse lookup for node names (index -> name)
         self._idx_to_name: Dict[int, str] = {}
+
+    def _build_config_from_runner(self) -> AdaptiveConfig:
+        """Build AdaptiveConfig from runner's analysis_params (netlist options).
+
+        Maps VACASK-style options to AdaptiveConfig fields:
+        - tran_lteratio -> lte_ratio
+        - tran_redofactor -> redo_factor
+        - nr_convtol -> nr_convtol
+        - tran_gshunt -> gshunt_init
+        - reltol -> reltol
+        - abstol -> abstol
+        - tran_fs -> tran_fs
+        - tran_minpts -> tran_minpts
+        - maxstep -> max_dt
+        - tran_method -> integration_method
+        """
+        params = getattr(self.runner, 'analysis_params', {})
+        kwargs = {}
+
+        # LTE options
+        if 'tran_lteratio' in params:
+            kwargs['lte_ratio'] = float(params['tran_lteratio'])
+        if 'tran_redofactor' in params:
+            kwargs['redo_factor'] = float(params['tran_redofactor'])
+
+        # NR options
+        if 'nr_convtol' in params:
+            kwargs['nr_convtol'] = float(params['nr_convtol'])
+
+        # GSHUNT options
+        if 'tran_gshunt' in params:
+            kwargs['gshunt_init'] = float(params['tran_gshunt'])
+
+        # Tolerance options
+        if 'reltol' in params:
+            kwargs['reltol'] = float(params['reltol'])
+        if 'abstol' in params:
+            kwargs['abstol'] = float(params['abstol'])
+
+        # Timestep control options
+        if 'tran_fs' in params:
+            kwargs['tran_fs'] = float(params['tran_fs'])
+        if 'tran_minpts' in params:
+            kwargs['tran_minpts'] = int(params['tran_minpts'])
+        if 'maxstep' in params:
+            kwargs['max_dt'] = float(params['maxstep'])
+
+        # Integration method
+        if 'tran_method' in params:
+            kwargs['integration_method'] = params['tran_method']
+
+        return AdaptiveConfig(**kwargs)
 
     def _get_node_name(self, idx: int) -> str:
         """Look up node name by index, with lazy initialization."""

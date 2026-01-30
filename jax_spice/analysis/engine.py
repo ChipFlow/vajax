@@ -1969,6 +1969,22 @@ class CircuitEngine:
                     self.analysis_params['tran_gshunt'] = float(opts['tran_gshunt'])
                     logger.debug(f"tran_gshunt: {self.analysis_params['tran_gshunt']}")
 
+                # Tolerance options
+                if 'reltol' in opts:
+                    self.analysis_params['reltol'] = float(opts['reltol'])
+                    logger.debug(f"reltol: {self.analysis_params['reltol']}")
+                if 'abstol' in opts:
+                    self.analysis_params['abstol'] = float(opts['abstol'])
+                    logger.debug(f"abstol: {self.analysis_params['abstol']}")
+
+                # Timestep control options
+                if 'tran_fs' in opts:
+                    self.analysis_params['tran_fs'] = float(opts['tran_fs'])
+                    logger.debug(f"tran_fs: {self.analysis_params['tran_fs']}")
+                if 'tran_minpts' in opts:
+                    self.analysis_params['tran_minpts'] = int(opts['tran_minpts'])
+                    logger.debug(f"tran_minpts: {self.analysis_params['tran_minpts']}")
+
             # Extract analysis parameters from first tran analysis
             for analysis in control.analyses:
                 if analysis.analysis_type == 'tran':
@@ -2303,6 +2319,20 @@ class CircuitEngine:
             if 'tran_gshunt' in self.analysis_params:
                 kwargs['gshunt_init'] = float(self.analysis_params['tran_gshunt'])
 
+            # Tolerance options
+            if 'reltol' in self.analysis_params:
+                kwargs['reltol'] = float(self.analysis_params['reltol'])
+            if 'abstol' in self.analysis_params:
+                kwargs['abstol'] = float(self.analysis_params['abstol'])
+
+            # Timestep control options
+            if 'tran_fs' in self.analysis_params:
+                kwargs['tran_fs'] = float(self.analysis_params['tran_fs'])
+            if 'tran_minpts' in self.analysis_params:
+                kwargs['tran_minpts'] = int(self.analysis_params['tran_minpts'])
+            if 'maxstep' in self.analysis_params:
+                kwargs['max_dt'] = float(self.analysis_params['maxstep'])
+
             # Integration method
             if 'tran_method' in self.analysis_params:
                 kwargs['integration_method'] = self.analysis_params['tran_method']
@@ -2317,7 +2347,8 @@ class CircuitEngine:
                      config.lte_ratio, config.redo_factor, config.reltol,
                      config.abstol, config.min_dt, config.max_dt,
                      config.nr_convtol, config.gshunt_init, config.gshunt_steps,
-                     config.gshunt_target, config.integration_method)
+                     config.gshunt_target, config.integration_method,
+                     config.tran_fs, config.tran_minpts)
 
         if not hasattr(self, '_full_mna_strategy_cache'):
             self._full_mna_strategy_cache = {}
