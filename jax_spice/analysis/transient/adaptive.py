@@ -44,8 +44,8 @@ class AdaptiveConfig:
         gshunt_target: Final gshunt value after ramping. Default 0.0.
         progress_interval: Report progress every N steps via jax.debug.callback. Default 100.
             Set to 0 to disable progress reporting.
-        tran_fs: Initial timestep scale factor (VACASK default 0.25). Applied to
-            user-specified dt to get actual initial timestep. Default 1.0 (no scaling).
+        tran_fs: Initial timestep scale factor. Applied to user-specified dt to get
+            actual initial timestep. Default 0.25 (VACASK default).
         integration_method: Integration method (be, trap, gear2). Default trap (VACASK default).
         tran_minpts: Minimum number of output points (VACASK default 50). Automatically
             caps max_dt to (t_stop - t_start) / tran_minpts. Set to 0 to disable.
@@ -67,7 +67,7 @@ class AdaptiveConfig:
     gshunt_target: float = 0.0
     progress_interval: int = 100  # Report progress every N steps (0 to disable)
     debug_lte: bool = False  # Print detailed LTE debug info (top contributors)
-    tran_fs: float = 1.0  # Initial timestep scale factor (VACASK uses 0.25)
+    tran_fs: float = 0.25  # Initial timestep scale factor (VACASK default)
     debug_steps: bool = False  # Print per-step info (time, dt, NR iters, LTE)
     integration_method: IntegrationMethod = IntegrationMethod.TRAPEZOIDAL  # Integration method (VACASK default: trap)
     max_consecutive_rejects: int = 5  # Force accept after this many consecutive LTE rejects

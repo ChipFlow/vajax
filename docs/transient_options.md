@@ -47,7 +47,7 @@ strategy = FullMNAStrategy(engine, use_sparse=True)
 | Netlist Option | AdaptiveConfig | Default | Description |
 |----------------|----------------|---------|-------------|
 | `tran_method` | `integration_method` | `trap` | Integration method: `be` (backward Euler), `trap` (trapezoidal), `gear2` (Gear order 2). |
-| `tran_fs` | `tran_fs` | 1.0 | Initial timestep scale factor. VACASK uses 0.25 to start with smaller steps. |
+| `tran_fs` | `tran_fs` | 0.25 | Initial timestep scale factor. Scales user-specified `step` to start smaller. |
 | `tran_minpts` | `tran_minpts` | 50 | Minimum output points. Automatically caps `max_dt` to `t_stop / tran_minpts`. |
 | `maxstep` | `max_dt` | inf | Maximum allowed timestep (from tran analysis line). |
 
@@ -102,7 +102,7 @@ from jax_spice.analysis.transient import AdaptiveConfig, FullMNAStrategy
 # Override specific options
 config = AdaptiveConfig(
     lte_ratio=2.0,      # Stricter than default 3.5
-    tran_fs=0.25,       # Match VACASK initial timestep scaling
+    tran_fs=0.1,        # Even smaller initial timesteps
     debug_steps=True,   # Enable per-step debugging
 )
 strategy = FullMNAStrategy(engine, config=config)
