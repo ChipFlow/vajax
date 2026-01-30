@@ -513,6 +513,15 @@ class FullMNAStrategy(TransientStrategy):
         source_fn = setup.source_fn
         config = self.config
 
+        # Compute effective hmax based on tran_minpts (VACASK default: 50)
+        # This ensures at least tran_minpts output points in the simulation
+        if config.tran_minpts > 0:
+            hmax_from_minpts = t_stop / config.tran_minpts
+            effective_max_dt = min(config.max_dt, hmax_from_minpts)
+            if effective_max_dt < config.max_dt:
+                logger.info(f"{self.name}: tran_minpts={config.tran_minpts} -> hmax={effective_max_dt:.2e}s")
+                config = dataclasses.replace(config, max_dt=effective_max_dt)
+
         # Apply initial timestep scaling (VACASK uses tran_fs=0.25 by default)
         # This helps with startup transients by using smaller initial steps
         if config.tran_fs != 1.0:

@@ -47,6 +47,8 @@ class AdaptiveConfig:
         tran_fs: Initial timestep scale factor (VACASK default 0.25). Applied to
             user-specified dt to get actual initial timestep. Default 1.0 (no scaling).
         integration_method: Integration method (be, trap, gear2). Default trap (VACASK default).
+        tran_minpts: Minimum number of output points (VACASK default 50). Automatically
+            caps max_dt to (t_stop - t_start) / tran_minpts. Set to 0 to disable.
     """
 
     lte_ratio: float = 3.5
@@ -54,7 +56,8 @@ class AdaptiveConfig:
     reltol: float = 1e-3
     abstol: float = 1e-12
     min_dt: float = 1e-18
-    max_dt: float = float("inf")
+    max_dt: float = float("inf")  # User-specified limit (overridden by tran_minpts if set)
+    tran_minpts: int = 50  # VACASK default: ensures at least 50 output points
     warmup_steps: int = 2
     max_order: int = 2
     grow_factor: float = 2.0
