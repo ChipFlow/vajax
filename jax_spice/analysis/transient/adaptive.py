@@ -191,6 +191,7 @@ def compute_lte_timestep_jax(
     error_coeff_integ: float = -0.5,
     debug_lte: bool = False,
     step_idx: int = 0,
+    V_max_historic: jax.Array | None = None,
 ) -> Tuple[jax.Array, jax.Array]:
     """Compute LTE-based new timestep (JAX-compatible).
 
@@ -206,6 +207,9 @@ def compute_lte_timestep_jax(
         error_coeff_integ: Integration method error coefficient (default -0.5 for BE)
         debug_lte: If True, print debug info about LTE
         step_idx: Current step index for debug output
+        V_max_historic: Historic max |V| per node (for VACASK-compatible tolerance).
+            If provided, uses this for relative tolerance scaling (relrefAlllocal mode).
+            If None, uses max(|V_new|, |V_pred|) at current step (relrefPointLocal mode).
 
     Returns:
         Tuple of (dt_new, lte_norm)
@@ -214,9 +218,13 @@ def compute_lte_timestep_jax(
     lte = (V_new - V_pred) * (error_coeff_integ / (error_coeff_integ - pred_err_coeff))
 
     # Compute normalized LTE for each node
-    # Use max(|V_new|, |V_pred|) to avoid tiny tolerance when V_new is small
-    # but V_pred was large (common during startup transients)
-    V_scale = jnp.maximum(jnp.abs(V_new), jnp.abs(V_pred))
+    # VACASK default (relrefAlllocal): use historic max |V| per node
+    # This gives more forgiving tolerance for nodes that have seen high voltages
+    if V_max_historic is not None:
+        V_scale = V_max_historic
+    else:
+        # Fallback: use max(|V_new|, |V_pred|) at current step
+        V_scale = jnp.maximum(jnp.abs(V_new), jnp.abs(V_pred))
     tol = config.reltol * V_scale + config.abstol
     lte_normalized = jnp.abs(lte) / tol
     lte_norm = jnp.max(lte_normalized)

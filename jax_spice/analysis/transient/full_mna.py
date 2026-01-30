@@ -198,17 +198,33 @@ class FullMNAStrategy(TransientStrategy):
         return "full_mna"
 
     def __init__(self, runner, use_sparse: bool = False, backend: str = "cpu",
-                 config: Optional[AdaptiveConfig] = None):
+                 config: Optional[AdaptiveConfig] = None,
+                 max_steps: int = DEFAULT_MAX_STEPS):
+        """Initialize FullMNAStrategy.
+
+        Args:
+            runner: CircuitEngine instance with parsed netlist
+            use_sparse: Use sparse solver (for large circuits)
+            backend: Compute backend ('cpu', 'gpu')
+            config: Adaptive timestep configuration
+            max_steps: Maximum steps for simulation. This value is fixed after
+                initialization to ensure JIT cache hits. Changing it would cause
+                expensive recompilation (~30s).
+        """
         super().__init__(runner, use_sparse=use_sparse, backend=backend)
         self._cached_full_mna_solver: Optional[Callable] = None
         self._cached_full_mna_key: Optional[Tuple] = None
         self.config = config or self._build_config_from_runner()
-        # Note: warmup_steps is now in config, not hardcoded
+        # max_steps is fixed at init to avoid JIT recompilation
+        self.max_steps = max_steps
         # Cache JIT-compiled while_loop keyed by circuit structure
         # Note: Using Any since JIT-compiled functions have complex types
         self._jit_run_while_cache: Dict[tuple, Any] = {}
         # Build reverse lookup for node names (index -> name)
         self._idx_to_name: Dict[int, str] = {}
+        # Cache for _init_mid_rail result (expensive for large circuits)
+        self._cached_init_V0: Optional[jax.Array] = None
+        self._cached_init_V0_n_total: Optional[int] = None
 
     def _build_config_from_runner(self) -> AdaptiveConfig:
         """Build AdaptiveConfig from runner's analysis_params (netlist options).
@@ -459,6 +475,7 @@ class FullMNAStrategy(TransientStrategy):
         """Initialize voltage vector with mid-rail values.
 
         Provides a good starting point for DC convergence.
+        Results are cached since circuit topology doesn't change between runs.
 
         Args:
             setup: TransientSetup with device info
@@ -467,6 +484,11 @@ class FullMNAStrategy(TransientStrategy):
         Returns:
             V0: Initial voltage vector
         """
+        # Check cache - circuit topology doesn't change between runs
+        if (self._cached_init_V0 is not None and
+                self._cached_init_V0_n_total == n_total):
+            return self._cached_init_V0
+
         vdd_value = self.runner._get_vdd_value()
         mid_rail = vdd_value / 2.0
         V = jnp.full(n_total, mid_rail, dtype=jnp.float64)
@@ -497,17 +519,20 @@ class FullMNAStrategy(TransientStrategy):
                     noi_idx = internal_nodes['node4']
                     V = V.at[noi_idx].set(0.0)
 
+        # Cache result
+        self._cached_init_V0 = V
+        self._cached_init_V0_n_total = n_total
+
         return V
 
-    def warmup(self, dt: Optional[float] = None, max_steps: int = DEFAULT_MAX_STEPS) -> float:
+    def warmup(self, dt: Optional[float] = None) -> float:
         """Pre-compile the JIT function by running a minimal simulation.
 
         This triggers JIT compilation so subsequent run() calls are fast.
+        Uses self.max_steps set at initialization.
 
         Args:
             dt: Timestep to use. If None, uses 'step' from netlist.
-            max_steps: Max steps to compile for (default: DEFAULT_MAX_STEPS).
-                       Use the same value in subsequent run() calls for cache hits.
 
         Returns:
             Wall time for warmup (compilation + execution)
@@ -517,20 +542,17 @@ class FullMNAStrategy(TransientStrategy):
             params = getattr(self.runner, 'analysis_params', {})
             dt = params.get('step', 1e-12)
 
-        self.max_steps = max_steps
-
-        logger.info(f"{self.name}: Starting warmup")
+        logger.info(f"{self.name}: Starting warmup (max_steps={self.max_steps})")
 
         t_start = time_module.perf_counter()
         # Run tiny simulation - just enough to trigger compilation
-        self.run(t_stop=dt, dt=dt, max_steps=max_steps)
+        self.run(t_stop=dt, dt=dt)
         wall_time = time_module.perf_counter() - t_start
 
-        logger.info(f"{self.name}: Warmup complete in {wall_time:.2f}s (max_steps={max_steps})")
+        logger.info(f"{self.name}: Warmup complete in {wall_time:.2f}s")
         return wall_time
 
     def run(self, t_stop: Optional[float] = None, dt: Optional[float] = None,
-            max_steps: int = DEFAULT_MAX_STEPS,
             checkpoint_interval: Optional[int] = None) -> Tuple[jax.Array, jax.Array, Dict]:
         """Run adaptive transient analysis with full MNA.
 
@@ -539,11 +561,14 @@ class FullMNAStrategy(TransientStrategy):
                 netlist analysis line.
             dt: Initial time step in seconds. If None, uses 'step' from netlist
                 analysis line.
-            max_steps: Maximum number of time steps
             checkpoint_interval: If set, use GPU memory checkpointing with this
                 many steps per buffer. Results are periodically copied to CPU
                 to avoid GPU OOM on large circuits. Recommended for circuits
                 with many nodes (>1000) and long simulations (>10000 steps).
+
+        Note:
+            max_steps is set at strategy initialization to avoid JIT recompilation.
+            To change it, create a new strategy instance.
 
         Returns:
             Tuple of (times, V_out, stats) where:
@@ -567,6 +592,9 @@ class FullMNAStrategy(TransientStrategy):
             # Get voltage at node 'out': V_out[:n, stats['node_indices']['out']]
             # Or use helper: extract_voltages(times, V_out, stats)
         """
+        # Use fixed max_steps from initialization (avoids JIT recompilation)
+        max_steps = self.max_steps
+
         # Use netlist analysis params as defaults
         params = getattr(self.runner, 'analysis_params', {})
         if t_stop is None:
@@ -705,6 +733,8 @@ class FullMNAStrategy(TransientStrategy):
             I_out = I_out.at[0].set(I_vsource_dc[:n_vsources])
 
         # Initial state
+        # Initialize historic max with DC solution voltages
+        V_max_historic_init = jnp.abs(X0[:n_total])
         init_state = FullMNAState(
             t=jnp.array(0.0, dtype=dtype),
             dt=jnp.array(dt, dtype=dtype),
@@ -721,14 +751,16 @@ class FullMNAStrategy(TransientStrategy):
             step_idx=jnp.array(1, dtype=jnp.int32),  # Start at 1 (0 is initial)
             warmup_count=jnp.array(0, dtype=jnp.int32),
             t_stop=jnp.array(t_stop, dtype=dtype),
+            max_dt=jnp.array(config.max_dt, dtype=dtype),
             total_nr_iters=jnp.array(0, dtype=jnp.int32),
             rejected_steps=jnp.array(0, dtype=jnp.int32),
             min_dt_used=jnp.array(dt, dtype=dtype),
             max_dt_used=jnp.array(dt, dtype=dtype),
             consecutive_rejects=jnp.array(0, dtype=jnp.int32),
+            V_max_historic=V_max_historic_init,
         )
 
-        # Cache key does NOT include t_stop since it's passed dynamically via state
+        # Cache key does NOT include t_stop or max_dt since they're passed dynamically via state
         cache_key = (max_steps, n_total, n_unknowns, n_external, n_vsources, dtype)
 
         if cache_key not in self._jit_run_while_cache:
@@ -853,6 +885,7 @@ class FullMNAStrategy(TransientStrategy):
         current_dt_history = dt_history
         current_history_count = 1
         current_warmup_count = 0
+        current_V_max_historic = jnp.abs(X0[:n_total])
 
         # Get or create JIT-compiled while_loop for checkpoint_interval size
         cache_key = (checkpoint_interval, n_total, n_unknowns, n_external, n_vsources, dtype)
@@ -925,11 +958,13 @@ class FullMNAStrategy(TransientStrategy):
                 step_idx=jnp.array(start_idx, dtype=jnp.int32),
                 warmup_count=jnp.array(current_warmup_count, dtype=jnp.int32),
                 t_stop=jnp.array(t_stop, dtype=dtype),
+                max_dt=jnp.array(config.max_dt, dtype=dtype),
                 total_nr_iters=jnp.array(0, dtype=jnp.int32),
                 rejected_steps=jnp.array(0, dtype=jnp.int32),
                 min_dt_used=jnp.array(current_dt, dtype=dtype),
                 max_dt_used=jnp.array(current_dt, dtype=dtype),
                 consecutive_rejects=jnp.array(0, dtype=jnp.int32),
+                V_max_historic=current_V_max_historic,
             )
 
             # Run while_loop for this checkpoint
@@ -963,6 +998,7 @@ class FullMNAStrategy(TransientStrategy):
             current_dt_history = final_state.dt_history
             current_history_count = int(final_state.history_count)
             current_warmup_count = int(final_state.warmup_count)
+            current_V_max_historic = final_state.V_max_historic
 
             first_checkpoint = False
 
@@ -1105,11 +1141,13 @@ class FullMNAState(NamedTuple):
     step_idx: jax.Array             # Current output step index
     warmup_count: jax.Array         # Warmup steps completed
     t_stop: jax.Array               # Target stop time (passed through)
+    max_dt: jax.Array               # Maximum timestep (passed through, from tran_minpts)
     total_nr_iters: jax.Array       # Total NR iterations
     rejected_steps: jax.Array       # Number of rejected steps
     min_dt_used: jax.Array          # Minimum dt actually used
     max_dt_used: jax.Array          # Maximum dt actually used
     consecutive_rejects: jax.Array  # Consecutive LTE rejections (reset on accept)
+    V_max_historic: jax.Array       # Historic max |V| per node (for LTE tolerance)
 
 
 def _make_full_mna_while_loop_fns(
@@ -1233,7 +1271,8 @@ def _make_full_mna_while_loop_fns(
         V_new = X_new[:n_total]
         dt_lte, lte_norm = compute_lte_timestep_jax(
             V_new, V_pred, pred_err_coeff, dt_cur, state.history_count, config, error_coeff_integ,
-            debug_lte=config.debug_lte, step_idx=state.step_idx
+            debug_lte=config.debug_lte, step_idx=state.step_idx,
+            V_max_historic=state.V_max_historic,  # Use historic max for tolerance (VACASK relrefAlllocal)
         )
 
         # Accept/reject decision
@@ -1281,7 +1320,8 @@ def _make_full_mna_while_loop_fns(
         # Only use dt_lte once we have enough history for meaningful LTE estimates
         dt_from_lte = jnp.where(can_predict, dt_lte, dt_cur)
         new_dt = jnp.where(nr_failed, jnp.maximum(dt_cur / 2, config.min_dt), dt_from_lte)
-        new_dt = jnp.clip(new_dt, config.min_dt, config.max_dt)
+        # Use state.max_dt (dynamic) instead of config.max_dt (static) for hmax
+        new_dt = jnp.clip(new_dt, config.min_dt, state.max_dt)
         new_dt = jnp.minimum(new_dt, state.t_stop - t_next)
 
         # Update state
@@ -1308,6 +1348,14 @@ def _make_full_mna_while_loop_fns(
             state.history_count
         )
         new_warmup_count = jnp.where(accept_step, state.warmup_count + 1, state.warmup_count)
+
+        # Update historic max voltage per node (for VACASK-compatible LTE tolerance)
+        # This implements relrefAlllocal: tolerance based on max |V| seen across all time
+        new_V_max_historic = jnp.where(
+            accept_step,
+            jnp.maximum(state.V_max_historic, jnp.abs(V_new)),
+            state.V_max_historic
+        )
 
         # Update outputs
         new_times_out = jnp.where(
@@ -1364,11 +1412,13 @@ def _make_full_mna_while_loop_fns(
             step_idx=new_step_idx,
             warmup_count=new_warmup_count,
             t_stop=state.t_stop,
+            max_dt=state.max_dt,
             total_nr_iters=new_total_nr_iters,
             rejected_steps=new_rejected,
             min_dt_used=new_min_dt,
             max_dt_used=new_max_dt,
             consecutive_rejects=new_consecutive_rejects,
+            V_max_historic=new_V_max_historic,
         )
 
     return cond_fn, body_fn
