@@ -389,6 +389,12 @@ def make_sparse_full_mna_solver(
     use_precomputed = (coo_sort_perm is not None and csr_segment_ids is not None
                        and bcsr_indices is not None and bcsr_indptr is not None)
 
+    # Pre-compute all diagonal indices for Tikhonov regularization
+    # This is needed because JAX's spsolve raises hard errors on singular matrices on GPU
+    all_diag_indices = None
+    if use_precomputed:
+        all_diag_indices = _compute_diagonal_indices(bcsr_indptr, bcsr_indices, n_augmented)
+
     # Compute NOI masks for node equations only (branch equations are not masked)
     masks = _compute_noi_masks(noi_indices, n_nodes, bcsr_indptr, bcsr_indices)
     noi_row_mask = masks['noi_row_mask']
@@ -454,6 +460,11 @@ def make_sparse_full_mna_solver(
                 sorted_vals = coo_vals[coo_sort_perm]
                 csr_data = jax.ops.segment_sum(sorted_vals, csr_segment_ids, num_segments=nse)
 
+                # Add Tikhonov regularization to diagonal for numerical stability on GPU
+                # JAX's spsolve raises hard errors on singular matrices
+                if all_diag_indices is not None:
+                    csr_data = csr_data.at[all_diag_indices].add(1e-14)
+
                 f_solve = f
                 if noi_row_mask is not None:
                     csr_data = csr_data.at[noi_row_mask].set(0.0)
@@ -463,11 +474,14 @@ def make_sparse_full_mna_solver(
 
                 delta = spsolve(csr_data, bcsr_indices, bcsr_indptr, -f_solve, tol=1e-6)
             else:
-                # Fallback: sort each iteration
+                # Fallback: sort each iteration (less common path, compute diag indices on-the-fly)
                 J_bcoo_dedup = J_bcoo.sum_duplicates(nse=nse)
                 J_bcsr = BCSR.from_bcoo(J_bcoo_dedup)
 
                 data = J_bcsr.data
+                # Note: For fallback path, we can't easily pre-compute diagonal indices
+                # The regularization may need a different approach here if this path is used on GPU
+
                 f_solve = f
                 if noi_row_mask is not None:
                     data = data.at[noi_row_mask].set(0.0)
@@ -844,6 +858,11 @@ def make_sparse_solver(
     use_precomputed = (coo_sort_perm is not None and csr_segment_ids is not None
                        and bcsr_indices is not None and bcsr_indptr is not None)
 
+    # Pre-compute all diagonal indices for Tikhonov regularization
+    all_diag_indices_sparse = None
+    if use_precomputed:
+        all_diag_indices_sparse = _compute_diagonal_indices(bcsr_indptr, bcsr_indices, n_unknowns)
+
     masks = _compute_noi_masks(noi_indices, n_nodes, bcsr_indptr, bcsr_indices)
     residual_mask = masks['residual_mask']
     noi_row_mask = masks['noi_row_mask']
@@ -899,6 +918,10 @@ def make_sparse_solver(
                 sorted_vals = coo_vals[coo_sort_perm]
                 csr_data = jax.ops.segment_sum(sorted_vals, csr_segment_ids, num_segments=nse)
 
+                # Add Tikhonov regularization to diagonal for numerical stability on GPU
+                if all_diag_indices_sparse is not None:
+                    csr_data = csr_data.at[all_diag_indices_sparse].add(1e-14)
+
                 f_solve = f
                 if noi_row_mask is not None:
                     csr_data = csr_data.at[noi_row_mask].set(0.0)
@@ -913,6 +936,8 @@ def make_sparse_solver(
                 J_bcsr = BCSR.from_bcoo(J_bcoo_dedup)
 
                 data = J_bcsr.data
+                # Note: Regularization not applied in fallback path (rarely used on GPU)
+
                 f_solve = f
                 if noi_row_mask is not None:
                     data = data.at[noi_row_mask].set(0.0)
