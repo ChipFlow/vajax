@@ -921,15 +921,17 @@ class EvalFunctionBuilder(FunctionBuilder):
 
     def _emit_cache_mapping(self, body: List[ast.stmt],
                              ctx: CodeGenContext,
-                             cache_idx_mapping: Dict[int, Tuple[str, int]],
-                             use_cache_split: bool):
-        """Emit cache value mapping."""
+                             cache_idx_mapping: Dict[int, Tuple[str, int]]):
+        """Emit cache value mapping from split cache arrays.
+
+        Always uses split cache format (shared_cache, device_cache) for uniform interface.
+        """
         for cache_idx, mapping in enumerate(self.cache_mapping):
             eval_param_idx = mapping['eval_param']
             eval_val = self.param_idx_to_val.get(eval_param_idx, f"cached_{eval_param_idx}")
             var_name = f"{ctx.var_prefix}{eval_val}"
 
-            if use_cache_split and cache_idx in cache_idx_mapping:
+            if cache_idx in cache_idx_mapping:
                 source, new_idx = cache_idx_mapping[cache_idx]
                 if source == 'shared_cache':
                     body.append(assign(var_name,
@@ -938,8 +940,9 @@ class EvalFunctionBuilder(FunctionBuilder):
                     body.append(assign(var_name,
                         subscript(ast_name('device_cache'), ast_const(new_idx))))
             else:
-                body.append(assign(var_name,
-                    subscript(ast_name('cache'), ast_const(cache_idx))))
+                # Cache index not in mapping - this shouldn't happen with proper setup
+                # but fall back to zero for safety
+                body.append(assign(var_name, ctx.zero()))
 
             ctx.defined_vars.add(var_name)
 

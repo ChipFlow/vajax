@@ -797,10 +797,13 @@ class OpenVAFToJAX:
                     print(f"  - {w}")
 
         # Parse cache_split
-        shared_cache_indices = None
-        varying_cache_indices = None
+        # When no cache_split provided, all cache entries are varying (per-device)
         if cache_split is not None:
             shared_cache_indices, varying_cache_indices = cache_split
+        else:
+            # Default: all cache indices are varying (per-device)
+            shared_cache_indices = []
+            varying_cache_indices = list(range(len(self.cache_mapping)))
 
         # Build SCCP known values for constant propagation
         # This maps MIR value IDs to their constant values for shared params
@@ -827,9 +830,8 @@ class OpenVAFToJAX:
 
         # Generate code
         t0 = time.perf_counter()
-        use_cache_split = shared_cache_indices is not None
         has_sccp = effective_sccp_values is not None and len(effective_sccp_values) > 0
-        logger.info(f"    translate_eval: generating code (cache_split={use_cache_split}, sccp={has_sccp})...")
+        logger.info(f"    translate_eval: generating code (sccp={has_sccp})...")
 
         builder = EvalFunctionBuilder(
             self.eval_mir,
@@ -943,7 +945,6 @@ class OpenVAFToJAX:
             'num_internal': self.dae_data['num_internal'],
             'temperature': temperature,
             'mfactor': mfactor,
-            'use_cache_split': use_cache_split,
             'simparams_layout': simparams_layout,
             # Simparam metadata for building simparams array
             'simparams_used': simparam_meta.get('simparams_used', ['$analysis_type']),
@@ -1047,7 +1048,10 @@ class OpenVAFToJAX:
             # Uniform interface: always pass limit_state_in (zeros when not using limits)
             limit_state_in = jnp.zeros(1)  # Minimal dummy array
             limit_funcs = {}  # Empty dict - limit functions not used
-            result = eval_fn(shared_params, varying_params, cache, simparams, limit_state_in, limit_funcs)
+            # Cache split: shared_cache is empty, all cache in device_cache
+            shared_cache = jnp.array([])
+            device_cache = cache
+            result = eval_fn(shared_params, varying_params, shared_cache, device_cache, simparams, limit_state_in, limit_funcs)
             res_resist, res_react, jac_resist, jac_react = result[:4]
 
             # Convert to dicts (NumPy for performance)
@@ -1256,10 +1260,8 @@ class OpenVAFToJAX:
         assert self.eval_mir is not None, "eval_mir released, call before release_mir_data()"
         assert self.dae_data is not None, "dae_data released, call before release_mir_data()"
 
-        use_cache_split = shared_cache_indices is not None and varying_cache_indices is not None
-
         t0 = time.perf_counter()
-        logger.info(f"    translate_eval_array_with_cache_split: generating code (cache_split={use_cache_split}, limit_funcs={use_limit_functions})...")
+        logger.info(f"    translate_eval_array_with_cache_split: generating code (limit_funcs={use_limit_functions})...")
 
         # Build the eval function
         builder = EvalFunctionBuilder(
@@ -1314,9 +1316,8 @@ class OpenVAFToJAX:
             'analysis_type_map': self.analysis_type_map,
             'shared_indices': shared_indices,
             'varying_indices': varying_indices,
-            'use_cache_split': use_cache_split,
-            'shared_cache_indices': shared_cache_indices if use_cache_split else None,
-            'varying_cache_indices': varying_cache_indices if use_cache_split else None,
+            'shared_cache_indices': shared_cache_indices,
+            'varying_cache_indices': varying_cache_indices,
             'use_limit_functions': use_limit_functions,
             'limit_metadata': builder.limit_metadata if use_limit_functions else None,
         }

@@ -339,10 +339,6 @@ class SplitParamContext(CodeGenContext):
     device_params_array: str = 'device_params'
     shared_cache_array: str = 'shared_cache'
     device_cache_array: str = 'device_cache'
-    cache_array: str = 'cache'
-
-    # Whether cache is split
-    use_cache_split: bool = False
 
     def get_param(self, orig_index: int) -> ast.expr:
         """Get AST expression for parameter by original index."""
@@ -356,14 +352,15 @@ class SplitParamContext(CodeGenContext):
         return subscript(ast_name(self.device_params_array), ast_const(orig_index))
 
     def get_cache(self, cache_index: int) -> ast.expr:
-        """Get AST expression for cache value by index."""
-        if self.use_cache_split and cache_index in self.cache_mapping:
+        """Get AST expression for cache value by index (always uses split cache format)."""
+        if cache_index in self.cache_mapping:
             source, new_idx = self.cache_mapping[cache_index]
             if source == 'shared_cache':
                 return subscript(ast_name(self.shared_cache_array), ast_const(new_idx))
             else:
                 return subscript(ast_name(self.device_cache_array), ast_const(new_idx))
-        return subscript(ast_name(self.cache_array), ast_const(cache_index))
+        # Cache index not in mapping - return zero as fallback
+        return ast_const(0.0)
 
 
 def build_context_from_mir(mir_func, var_prefix: str = '') -> CodeGenContext:
