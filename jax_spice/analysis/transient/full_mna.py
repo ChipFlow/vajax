@@ -657,19 +657,23 @@ class FullMNAStrategy(TransientStrategy):
 
             # Compute initial charges consistent with initial voltages
             # Note: The state may not be at DC equilibrium - this is expected for UIC
+            # Use gmin from netlist options (default 1e-12)
+            dc_gmin = getattr(self.runner.options, 'gmin', 1e-12)
             _, _, Q_init, I_vsource_dc = self._cached_build_system_jit(
                 X0, vsource_vals_init, isource_vals_init,
                 jnp.zeros(n_unknowns, dtype=dtype), 0.0, device_arrays,
-                1e-12, 0.0, 0.0, 0.0, None, 0.0, None
+                dc_gmin, 0.0, 0.0, 0.0, None, 0.0, None
             )
             logger.info(f"{self.name}: Initial state - Q_max={float(jnp.max(jnp.abs(Q_init))):.2e}, "
                        f"I_vdd={float(I_vsource_dc[0]) if len(I_vsource_dc) > 0 else 0:.2e}A")
         else:
             # Compute DC operating point
+            # Use gmin from netlist options (default 1e-12)
+            dc_gmin = getattr(self.runner.options, 'gmin', 1e-12)
             X_dc, _, dc_converged, dc_residual, Q_dc, _, I_vsource_dc = nr_solve(
                 X0, vsource_vals_init, isource_vals_init,
                 jnp.zeros(n_unknowns, dtype=dtype), 0.0, device_arrays,
-                1e-12, 0.0, 0.0, 0.0, None, 0.0, None
+                dc_gmin, 0.0, 0.0, 0.0, None, 0.0, None
             )
 
             if dc_converged:
