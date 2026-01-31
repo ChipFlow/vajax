@@ -1516,12 +1516,9 @@ class CircuitEngine:
                         f"{n_shared_cache}/{n_cache_cols} shared, {n_varying_cache} varying"
                     )
 
-                    # Only use cache split if there are shared columns (worthwhile optimization)
-                    use_cache_split = n_shared_cache > 0
                 else:
                     shared_cache_indices = []
                     varying_cache_indices = list(range(n_cache_cols))
-                    use_cache_split = False
             else:
                 # Fallback for models without init function
                 logger.debug("Model has no init function")
@@ -1529,13 +1526,12 @@ class CircuitEngine:
                 collapse_decisions = jnp.empty((n_devices, 0), dtype=jnp.float32)
                 shared_cache_indices = []
                 varying_cache_indices = []
-                use_cache_split = False
 
-            # Generate eval function with param split and optional cache split
+            # Generate eval function with param split and cache split
             # When use_device_limiting is True, generate calls to pnjlim/fetlim
             use_device_limiting = getattr(self, "use_device_limiting", False)
             logger.info(
-                f"{model_type}: generating split eval function (cache_split={use_cache_split}, limit_funcs={use_device_limiting})..."
+                f"{model_type}: generating split eval function (limit_funcs={use_device_limiting})..."
             )
 
             # Import limit functions - always bound for uniform interface
@@ -1545,34 +1541,23 @@ class CircuitEngine:
 
             limit_funcs = {"pnjlim": pnjlim, "fetlim": fetlim}
 
-            if use_cache_split:
-                split_fn, split_meta = translator.translate_eval_array_with_cache_split(
-                    shared_indices,
-                    varying_indices_list,
-                    shared_cache_indices,
-                    varying_cache_indices,
-                    use_limit_functions=use_device_limiting,
-                )
-                # Bind limit_funcs for uniform call signature:
-                # (shared, device, shared_cache, device_cache, simparams, limit_state_in)
-                split_fn = partial(split_fn, limit_funcs=limit_funcs)
-                # in_axes: (None, 0, None, 0, None, 0) - limit_state_in varies per device
-                vmapped_split_fn = jax.jit(jax.vmap(split_fn, in_axes=(None, 0, None, 0, None, 0)))
+            # Always use cache split for uniform function signature
+            split_fn, split_meta = translator.translate_eval_array_with_cache_split(
+                shared_indices,
+                varying_indices_list,
+                shared_cache_indices,
+                varying_cache_indices,
+                use_limit_functions=use_device_limiting,
+            )
+            # Bind limit_funcs for uniform call signature:
+            # (shared, device, shared_cache, device_cache, simparams, limit_state_in)
+            split_fn = partial(split_fn, limit_funcs=limit_funcs)
+            # in_axes: (None, 0, None, 0, None, 0) - limit_state_in varies per device
+            vmapped_split_fn = jax.jit(jax.vmap(split_fn, in_axes=(None, 0, None, 0, None, 0)))
 
-                # Split cache arrays
-                shared_cache = cache[0, shared_cache_indices]  # (n_shared_cache,)
-                device_cache = cache[:, varying_cache_indices]  # (n_devices, n_varying_cache)
-            else:
-                split_fn, split_meta = translator.translate_eval_array_with_cache_split(
-                    shared_indices, varying_indices_list, use_limit_functions=use_device_limiting
-                )
-                # Bind limit_funcs for uniform call signature:
-                # (shared, device, cache, simparams, limit_state_in)
-                split_fn = partial(split_fn, limit_funcs=limit_funcs)
-                # in_axes: (None, 0, 0, None, 0) - limit_state_in varies per device
-                vmapped_split_fn = jax.jit(jax.vmap(split_fn, in_axes=(None, 0, 0, None, 0)))
-                shared_cache = None
-                device_cache = cache
+            # Split cache arrays (indexing with empty list gives empty array)
+            shared_cache = cache[0, shared_cache_indices]  # (n_shared_cache,) or empty
+            device_cache = cache[:, varying_cache_indices]  # (n_devices, n_varying_cache)
 
             # Build default simparams array
             # simparams[0] = analysis_type (0=DC, 1=AC, 2=transient, 3=noise)
@@ -1599,8 +1584,6 @@ class CircuitEngine:
             compiled["shared_params"] = shared_params
             compiled["device_params"] = device_params
             compiled["voltage_positions_in_varying"] = voltage_positions
-            compiled["use_split_eval"] = True
-            compiled["use_cache_split"] = use_cache_split
             compiled["shared_cache"] = shared_cache
             compiled["device_cache"] = device_cache
             compiled["shared_cache_indices"] = shared_cache_indices
@@ -1615,11 +1598,12 @@ class CircuitEngine:
                 compiled["limit_metadata"] = None
                 compiled["num_limit_states"] = 0
 
-            split_mem_mb = shared_params.nbytes / 1024 / 1024 + device_params.nbytes / 1024 / 1024
-            if shared_cache is not None:
-                split_mem_mb += shared_cache.nbytes / 1024 / 1024
-            if device_cache is not None:
-                split_mem_mb += device_cache.nbytes / 1024 / 1024
+            split_mem_mb = (
+                shared_params.nbytes / 1024 / 1024 +
+                device_params.nbytes / 1024 / 1024 +
+                shared_cache.nbytes / 1024 / 1024 +
+                device_cache.nbytes / 1024 / 1024
+            )
             # Compare to theoretical full array size (never allocated)
             theoretical_full_mb = n_devices * n_params_total * 8 / 1024 / 1024
             logger.info(
@@ -1633,9 +1617,10 @@ class CircuitEngine:
             # shared/varying splits and need to regenerate split functions. MIR data is
             # small (~MB) compared to circuit data.
         else:
-            compiled["use_split_eval"] = False
-            cache = jnp.empty((n_devices, 0), dtype=get_float_dtype())
-            collapse_decisions = jnp.empty((n_devices, 0), dtype=jnp.float32)
+            # This branch should never be reached - all OpenVAF models have devices and parameters
+            raise AssertionError(
+                f"Cannot prepare inputs for {model_type}: n_devices={n_devices}, n_params={n_params_total}"
+            )
 
         return voltage_indices, device_contexts, cache, collapse_decisions
 
@@ -1657,9 +1642,6 @@ class CircuitEngine:
         import time
 
         for model_type, compiled in self._compiled_models.items():
-            if not compiled.get("use_split_eval", False):
-                continue
-
             if model_type not in static_inputs_cache:
                 continue
 
@@ -1670,17 +1652,10 @@ class CircuitEngine:
             vmapped_split_eval = compiled["vmapped_split_eval"]
             shared_params = compiled["shared_params"]
             device_params = compiled["device_params"]
-            use_cache_split = compiled.get("use_cache_split", False)
-            shared_cache = compiled.get("shared_cache")
-            device_cache = compiled.get("device_cache")
+            shared_cache = compiled["shared_cache"]
+            device_cache = compiled["device_cache"]
             default_simparams = compiled.get("default_simparams", jnp.array([0.0, 1.0, 1e-12]))
             num_limit_states = compiled.get("num_limit_states", 0)
-
-            # Get cache from static_inputs if device_cache is None
-            if device_cache is None:
-                logger.info(f"No device cache for {model_type}, creating")
-                _, _, _, _, cache, _ = static_inputs_cache[model_type]
-                device_cache = cache
 
             # Prepare limit_state_in (always needed for uniform interface)
             # Use shape (n_devices, max(1, num_limit_states)) to satisfy vmap
@@ -1689,26 +1664,16 @@ class CircuitEngine:
             limit_state_in = jnp.zeros((n_devices, n_lim), dtype=get_float_dtype())
 
             # Call the function with actual inputs to trigger XLA compilation
-            # This will trace the function and compile it for the given shapes
-            # Uniform interface: always pass limit_state_in, always get 9 return values
+            # Uniform interface: always pass shared_cache, device_cache, limit_state_in
             try:
-                if use_cache_split:
-                    _ = vmapped_split_eval(
-                        shared_params,
-                        device_params,
-                        shared_cache,
-                        device_cache,
-                        default_simparams,
-                        limit_state_in,
-                    )
-                else:
-                    _ = vmapped_split_eval(
-                        shared_params,
-                        device_params,
-                        device_cache,
-                        default_simparams,
-                        limit_state_in,
-                    )
+                _ = vmapped_split_eval(
+                    shared_params,
+                    device_params,
+                    shared_cache,
+                    device_cache,
+                    default_simparams,
+                    limit_state_in,
+                )
 
                 # Block until compilation completes
                 jax.block_until_ready(_)
@@ -3475,26 +3440,23 @@ class CircuitEngine:
             )
 
             compiled = self._compiled_models.get(model_type, {})
-            if compiled.get("use_split_eval", False):
-                use_cache_split = compiled.get("use_cache_split", False)
-                n_devices = compiled["device_params"].shape[0]
-                num_limit_states = compiled.get("num_limit_states", 0)
-                split_eval_info[model_type] = {
-                    "vmapped_split_eval": compiled["vmapped_split_eval"],
-                    "shared_params": compiled["shared_params"],
-                    "device_params": compiled["device_params"],
-                    "voltage_positions": compiled["voltage_positions_in_varying"],
-                    "use_cache_split": use_cache_split,
-                    "shared_cache": compiled.get("shared_cache"),
-                    "default_simparams": compiled.get(
-                        "default_simparams", jnp.array([0.0, 1.0, 1e-12])
-                    ),
-                    # Device-level limiting info
-                    "use_device_limiting": compiled.get("use_device_limiting", False),
-                    "num_limit_states": num_limit_states,
-                    "n_devices": n_devices,
-                }
-            device_arrays[model_type] = compiled.get("device_cache", cache)
+            n_devices = compiled["device_params"].shape[0]
+            num_limit_states = compiled.get("num_limit_states", 0)
+            split_eval_info[model_type] = {
+                "vmapped_split_eval": compiled["vmapped_split_eval"],
+                "shared_params": compiled["shared_params"],
+                "device_params": compiled["device_params"],
+                "voltage_positions": compiled["voltage_positions_in_varying"],
+                "shared_cache": compiled["shared_cache"],
+                "default_simparams": compiled.get(
+                    "default_simparams", jnp.array([0.0, 1.0, 1e-12])
+                ),
+                # Device-level limiting info
+                "use_device_limiting": compiled.get("use_device_limiting", False),
+                "num_limit_states": num_limit_states,
+                "n_devices": n_devices,
+            }
+            device_arrays[model_type] = compiled["device_cache"]
 
         # Pre-compute vsource node indices as JAX arrays (captured in closure)
         if n_vsources > 0:
@@ -3615,7 +3577,6 @@ class CircuitEngine:
                 shared_params = split_info["shared_params"]
                 device_params = split_info["device_params"]
                 voltage_positions = split_info["voltage_positions"]
-                use_cache_split = split_info["use_cache_split"]
                 shared_cache = split_info["shared_cache"]
 
                 device_params_updated = device_params.at[:, voltage_positions].set(voltage_updates)
@@ -3654,40 +3615,25 @@ class CircuitEngine:
                     # Use zeros - model has no limits or no valid input
                     model_limit_state_in = jnp.zeros((n_dev, n_lim), dtype=get_float_dtype())
 
-                # Uniform interface: always pass limit_state_in, always get 9 return values
-                if use_cache_split:
-                    (
-                        batch_res_resist,
-                        batch_res_react,
-                        batch_jac_resist,
-                        batch_jac_react,
-                        batch_lim_rhs_resist,
-                        batch_lim_rhs_react,
-                        _,
-                        _,
-                        batch_limit_state_out,
-                    ) = vmapped_split_eval(
-                        shared_params,
-                        device_params_updated,
-                        shared_cache,
-                        cache,
-                        simparams,
-                        model_limit_state_in,
-                    )
-                else:
-                    (
-                        batch_res_resist,
-                        batch_res_react,
-                        batch_jac_resist,
-                        batch_jac_react,
-                        batch_lim_rhs_resist,
-                        batch_lim_rhs_react,
-                        _,
-                        _,
-                        batch_limit_state_out,
-                    ) = vmapped_split_eval(
-                        shared_params, device_params_updated, cache, simparams, model_limit_state_in
-                    )
+                # Uniform interface: always pass shared_cache, device_cache, limit_state_in
+                (
+                    batch_res_resist,
+                    batch_res_react,
+                    batch_jac_resist,
+                    batch_jac_react,
+                    batch_lim_rhs_resist,
+                    batch_lim_rhs_react,
+                    _,
+                    _,
+                    batch_limit_state_out,
+                ) = vmapped_split_eval(
+                    shared_params,
+                    device_params_updated,
+                    shared_cache,
+                    cache,
+                    simparams,
+                    model_limit_state_in,
+                )
 
                 # Store limit_state_out at pre-computed offset (static slice assignment)
                 if use_device_limiting and model_type in limit_state_offsets:
@@ -4297,17 +4243,16 @@ class CircuitEngine:
             # Compute device voltages
             voltage_updates = V[voltage_node1] - V[voltage_node2]
 
-            # All OpenVAF models use split eval
+            # All OpenVAF models use split eval with uniform interface
             compiled = self._compiled_models[model_type]
             uses_analysis = compiled.get("uses_analysis", False)
             uses_simparam_gmin = compiled.get("uses_simparam_gmin", False)
-            use_cache_split = compiled.get("use_cache_split", False)
 
             shared_params = compiled["shared_params"]
             device_params = compiled["device_params"]
             voltage_positions = compiled["voltage_positions_in_varying"]
             vmapped_split_eval = compiled["vmapped_split_eval"]
-            shared_cache = compiled.get("shared_cache")
+            shared_cache = compiled["shared_cache"]
             default_simparams = compiled.get("default_simparams", jnp.array([0.0, 1.0, 1e-12]))
 
             # Update voltage columns in device_params
@@ -4329,21 +4274,15 @@ class CircuitEngine:
             n_lim = max(1, num_limit_states)
             model_limit_state_in = jnp.zeros((n_devices, n_lim), dtype=get_float_dtype())
 
-            # cache here is device_cache (or full cache if not split)
-            # Uniform interface: always pass limit_state_in, always get 9 return values
-            if use_cache_split:
-                _, _, batch_jac_resist, batch_jac_react, _, _, _, _, _ = vmapped_split_eval(
-                    shared_params,
-                    device_params_updated,
-                    shared_cache,
-                    cache,
-                    simparams,
-                    model_limit_state_in,
-                )
-            else:
-                _, _, batch_jac_resist, batch_jac_react, _, _, _, _, _ = vmapped_split_eval(
-                    shared_params, device_params_updated, cache, simparams, model_limit_state_in
-                )
+            # Uniform interface: always pass shared_cache, device_cache (cache), limit_state_in
+            _, _, batch_jac_resist, batch_jac_react, _, _, _, _, _ = vmapped_split_eval(
+                shared_params,
+                device_params_updated,
+                shared_cache,
+                cache,
+                simparams,
+                model_limit_state_in,
+            )
 
             # Extract Jacobian entries
             jac_row_idx = stamp_indices["jac_row_indices"]
