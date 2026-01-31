@@ -19,15 +19,15 @@ jobs:
       - name: Set up Python
         run: uv python install 3.11
 
-      - name: Install dependencies
-        run: uv sync --extra dev
+      - name: Install lint tools
+        run: uv pip install ruff pyright
 
       - name: Run ruff check
-        run: uv run ruff check jax_spice/ tests/ scripts/ benchmarks/
+        run: ruff check jax_spice/ tests/ scripts/ benchmarks/
 
       - name: Run ruff format check
-        run: uv run ruff format --check jax_spice/ tests/ scripts/ benchmarks/
+        run: ruff format --check jax_spice/ tests/ scripts/ benchmarks/
 
       - name: Run pyright
-        run: uv run pyright jax_spice/
+        run: pyright jax_spice/
         continue-on-error: true  # Type errors are informational for now
