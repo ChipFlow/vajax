@@ -100,7 +100,8 @@ select = ["E", "F", "I", "N", "W"]
 # N803: argument name should be lowercase (V_history, V_pred, etc.)
 # N806: variable in function should be lowercase (V_pred, Q_prev, etc.)
 # N815: variable in class scope should not be mixedCase (dQdt_prev)
-ignore = ["N803", "N806", "N815"]
+# E501: Line too long
+ignore = ["N803", "N806", "N815", "E501"]
 
 [tool.pyright]
 pythonVersion = "3.11"
