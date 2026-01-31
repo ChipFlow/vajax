@@ -626,13 +626,15 @@ class TestVACASKResultComparison:
         if MAX_STEPS_ENV > 0:
             max_t_stop = dt * MAX_STEPS_ENV
             if t_stop > max_t_stop:
-                logger.info(f"Limiting steps from {int(t_stop/dt):,} to {MAX_STEPS_ENV:,} (JAX_SPICE_MAX_STEPS)")
+                logger.info(
+                    f"Limiting steps from {int(t_stop / dt):,} to {MAX_STEPS_ENV:,} (JAX_SPICE_MAX_STEPS)"
+                )
                 t_stop = max_t_stop
 
-        logger.info(f"\n{'='*60}")
+        logger.info(f"\n{'=' * 60}")
         logger.info(f"TEST START: {benchmark_name}")
-        logger.info(f"  t_stop={t_stop}, dt={dt}, steps={int(t_stop/dt):,}")
-        logger.info(f"{'='*60}")
+        logger.info(f"  t_stop={t_stop}, dt={dt}, steps={int(t_stop / dt):,}")
+        logger.info(f"{'=' * 60}")
 
         if spec.xfail:
             pytest.xfail(spec.xfail_reason)
@@ -640,9 +642,11 @@ class TestVACASKResultComparison:
             pytest.skip(f"Benchmark {benchmark_name} not found")
 
         # Run VACASK with dt/t_stop (possibly limited for CI)
-        logger.info(f"[{time.perf_counter()-test_start:.1f}s] Running VACASK simulation...")
+        logger.info(f"[{time.perf_counter() - test_start:.1f}s] Running VACASK simulation...")
         vacask_results = run_vacask_simulation(vacask_bin, info, t_stop, dt)
-        logger.info(f"[{time.perf_counter()-test_start:.1f}s] VACASK done, {len(vacask_results['time'])} points")
+        logger.info(
+            f"[{time.perf_counter() - test_start:.1f}s] VACASK done, {len(vacask_results['time'])} points"
+        )
 
         # Try to get cached results, or run fresh if not available
         results_to_compare = []
@@ -650,24 +654,32 @@ class TestVACASKResultComparison:
         for solver_type in ["dense", "sparse"]:
             cached = get_cached_result(benchmark_name, solver_type)
             if cached is not None:
-                logger.info(f"[{time.perf_counter()-test_start:.1f}s] Using cached {solver_type} result")
+                logger.info(
+                    f"[{time.perf_counter() - test_start:.1f}s] Using cached {solver_type} result"
+                )
                 results_to_compare.append((solver_type, cached))
             else:
                 # Run fresh simulation
-                logger.info(f"[{time.perf_counter()-test_start:.1f}s] Running fresh {solver_type} simulation...")
+                logger.info(
+                    f"[{time.perf_counter() - test_start:.1f}s] Running fresh {solver_type} simulation..."
+                )
                 engine = CircuitEngine(info.sim_path)
                 engine.parse()
 
                 # Skip large benchmarks for dense solver
                 if solver_type == "dense" and info.is_large:
-                    logger.info(f"[{time.perf_counter()-test_start:.1f}s] Skipping dense (too large)")
+                    logger.info(
+                        f"[{time.perf_counter() - test_start:.1f}s] Skipping dense (too large)"
+                    )
                     continue
 
                 use_sparse = solver_type == "sparse"
                 sim_start = time.perf_counter()
                 result = engine.run_transient(t_stop=t_stop, dt=dt, use_sparse=use_sparse)
                 sim_time = time.perf_counter() - sim_start
-                logger.info(f"[{time.perf_counter()-test_start:.1f}s] {solver_type} done: {result.num_steps} steps in {sim_time:.1f}s")
+                logger.info(
+                    f"[{time.perf_counter() - test_start:.1f}s] {solver_type} done: {result.num_steps} steps in {sim_time:.1f}s"
+                )
                 cache_result(benchmark_name, solver_type, result)
                 results_to_compare.append((solver_type, result))
 
