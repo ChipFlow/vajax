@@ -157,6 +157,7 @@ jobs:
       # These tests compare simulation waveforms between JAX-SPICE and VACASK
       # Tests marked with xfail are expected to fail and won't break CI
       - name: Run VACASK result comparison tests
+        timeout-minutes: 15
         env:
           JAX_PLATFORMS: cpu
           JAX_ENABLE_X64: "1"
