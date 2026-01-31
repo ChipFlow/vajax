@@ -7,6 +7,11 @@ on:
       - main
   pull_request:
 
+# Limit concurrent GPU jobs and cancel outdated runs
+concurrency:
+  group: gpu-tests-${{ github.ref }}
+  cancel-in-progress: true
+
 env:
   GCP_PROJECT: jax-spice-cuda-test
   GCP_REGION: us-central1
