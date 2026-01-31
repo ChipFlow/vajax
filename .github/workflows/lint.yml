@@ -20,7 +20,7 @@ jobs:
         run: uv python install 3.11
 
       - name: Install lint tools
-        run: uv pip install ruff pyright
+        run: uv pip install --system ruff pyright
 
       - name: Run ruff check
         run: ruff check jax_spice/ tests/ scripts/ benchmarks/
