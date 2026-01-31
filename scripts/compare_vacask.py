@@ -181,8 +181,7 @@ VACASK_REFERENCE_TIMES = {
 }
 
 
-# find_vacask_binary is imported from scripts.benchmark_utils
-from scripts.benchmark_utils import find_vacask_binary
+from jax_spice.utils import find_vacask_binary
 
 
 def run_vacask(config: BenchmarkInfo, num_steps: int) -> Optional[Tuple[float, float]]:
