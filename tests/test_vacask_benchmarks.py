@@ -10,6 +10,7 @@ Tests include:
 """
 
 import gc
+import os
 import re
 import subprocess
 from dataclasses import dataclass
@@ -19,6 +20,10 @@ from typing import Callable, Dict, Optional, Tuple
 import jax
 import numpy as np
 import pytest
+
+# Maximum steps for CI tests (override with JAX_SPICE_MAX_STEPS env var)
+# Default: 0 (no limit). CI should set to e.g. 10000 for faster tests.
+MAX_STEPS_ENV = int(os.environ.get("JAX_SPICE_MAX_STEPS", "0"))
 
 from jax_spice._logging import enable_performance_logging, logger
 from jax_spice.analysis import CircuitEngine
@@ -615,9 +620,18 @@ class TestVACASKResultComparison:
         spec = COMPARISON_SPECS[benchmark_name]
         info = get_benchmark(benchmark_name)
 
+        # Apply MAX_STEPS limit for CI if set
+        t_stop = info.t_stop
+        dt = info.dt
+        if MAX_STEPS_ENV > 0:
+            max_t_stop = dt * MAX_STEPS_ENV
+            if t_stop > max_t_stop:
+                logger.info(f"Limiting steps from {int(t_stop/dt):,} to {MAX_STEPS_ENV:,} (JAX_SPICE_MAX_STEPS)")
+                t_stop = max_t_stop
+
         logger.info(f"\n{'='*60}")
         logger.info(f"TEST START: {benchmark_name}")
-        logger.info(f"  t_stop={info.t_stop}, dt={info.dt}, steps={int(info.t_stop/info.dt):,}")
+        logger.info(f"  t_stop={t_stop}, dt={dt}, steps={int(t_stop/dt):,}")
         logger.info(f"{'='*60}")
 
         if spec.xfail:
@@ -625,9 +639,9 @@ class TestVACASKResultComparison:
         if info is None or not info.sim_path.exists():
             pytest.skip(f"Benchmark {benchmark_name} not found")
 
-        # Run VACASK with dt/t_stop from BenchmarkInfo
+        # Run VACASK with dt/t_stop (possibly limited for CI)
         logger.info(f"[{time.perf_counter()-test_start:.1f}s] Running VACASK simulation...")
-        vacask_results = run_vacask_simulation(vacask_bin, info, info.t_stop, info.dt)
+        vacask_results = run_vacask_simulation(vacask_bin, info, t_stop, dt)
         logger.info(f"[{time.perf_counter()-test_start:.1f}s] VACASK done, {len(vacask_results['time'])} points")
 
         # Try to get cached results, or run fresh if not available
@@ -651,7 +665,7 @@ class TestVACASKResultComparison:
 
                 use_sparse = solver_type == "sparse"
                 sim_start = time.perf_counter()
-                result = engine.run_transient(t_stop=info.t_stop, dt=info.dt, use_sparse=use_sparse)
+                result = engine.run_transient(t_stop=t_stop, dt=dt, use_sparse=use_sparse)
                 sim_time = time.perf_counter() - sim_start
                 logger.info(f"[{time.perf_counter()-test_start:.1f}s] {solver_type} done: {result.num_steps} steps in {sim_time:.1f}s")
                 cache_result(benchmark_name, solver_type, result)

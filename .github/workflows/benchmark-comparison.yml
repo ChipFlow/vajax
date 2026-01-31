@@ -162,11 +162,14 @@ jobs:
           JAX_PLATFORMS: cpu
           JAX_ENABLE_X64: "1"
           VACASK_BIN: ${{ github.workspace }}/vendor/VACASK/build/simulator/vacask
+          # Limit steps in CI to avoid timeout (full 1M steps takes too long)
+          JAX_SPICE_MAX_STEPS: "10000"
         run: |
           echo "Running automated VACASK result comparison tests..."
+          echo "Note: Limiting to 10k steps per benchmark for CI (full run uses up to 1M)"
           # Run pytest with the VACASK comparison tests
           # Tests marked xfail won't cause failure, but unexpected failures will
-          # Using --tb=long for full tracebacks and --log-cli-level=INFO for timing
+          # Using --tb=long for full tracebacks, --log-cli-level=INFO for timing
           uv run pytest tests/test_vacask_benchmarks.py -v \
             -k "TestVACASKResultComparison" \
             --tb=long --log-cli-level=INFO 2>&1 | tee /tmp/vacask-result-tests.log
