@@ -121,7 +121,7 @@ jobs:
         timeout-minutes: 20
         env:
           JAX_PLATFORMS: cpu
-        run: uv run pytest tests/test_vacask_suite.py tests/test_vacask_jax.py tests/test_vacask_benchmarks.py -v --tb=short
+        run: uv run pytest tests/test_vacask_suite.py tests/test_vacask_jax.py tests/test_vacask_benchmarks.py tests/test_ac_analysis.py tests/test_hb_analysis.py tests/test_noise_analysis.py tests/test_xfer_analysis.py -v --tb=short
 
       - name: Run benchmark tests
         env:
