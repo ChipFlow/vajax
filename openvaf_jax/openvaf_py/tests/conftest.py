@@ -221,7 +221,10 @@ class CompiledModel:
         # Uniform interface: always pass limit_state_in (zeros when not using limits)
         limit_state_in = jnp.zeros(1)  # Minimal dummy array
         limit_funcs = {}  # Empty dict - limit functions not used
-        result = eval_fn(shared_params, varying_params, cache, simparams, limit_state_in, limit_funcs)
+        # Cache split: shared_cache is empty, all cache in device_cache
+        shared_cache = jnp.array([])
+        device_cache = cache
+        result = eval_fn(shared_params, varying_params, shared_cache, device_cache, simparams, limit_state_in, limit_funcs)
         res_resist, res_react, jac_resist, jac_react = result[:4]
 
         # Convert JAX arrays to NumPy first (single device-to-host transfer)
