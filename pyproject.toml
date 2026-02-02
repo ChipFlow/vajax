@@ -5,15 +5,15 @@ description = "JAX-based analog circuit simulator with Verilog-A support"
 authors = [{name = "ChipFlow"}]
 requires-python = ">=3.11,<3.14"
 dependencies = [
-    "jax>=0.8.0,<0.9.0",
+    "jax>=0.9.0",
     "jaxtyping>=0.2.0",
     "numpy>=1.24.0",
     "scipy>=1.11.0",
     "matplotlib>=3.7.0",
     "openvaf-py",
-    "klujax>=0.4.3",
     "simpleeval>=1.0.0",
-    "jaxlib>=0.8.0,<0.9.0",
+    "jaxlib>=0.9.0",
+    "umfpack-jax",
 ]
 
 [tool.uv.workspace]
@@ -26,8 +26,8 @@ umfpack-jax = { workspace = true }
 
 [project.optional-dependencies]
 cuda12 = [
-    # JAX 0.8+ uses jax-cuda12-plugin for CUDA support
-    "jax-cuda12-plugin>=0.8.0; sys_platform != 'darwin'",
+    # JAX 0.9+ uses jax-cuda12-plugin for CUDA support
+    "jax-cuda12-plugin>=0.9.0; sys_platform != 'darwin'",
     # Spineax: cuDSS sparse solver with cached symbolic factorization
     # Using ChipFlow fork with jaxlib compatibility fix
     # Note: Only works on Linux with CUDA
