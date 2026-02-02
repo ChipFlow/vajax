@@ -1557,14 +1557,17 @@ def _make_full_mna_while_loop_fns(
         )
 
         # Progress reporting (every progress_interval steps)
-        should_report = (progress_interval > 0) & (new_step_idx % progress_interval == 0)
-        jax.lax.cond(
-            should_report,
-            lambda: jax.debug.callback(
-                _progress_callback, new_step_idx, new_t, state.t_stop, new_dt, new_rejected
-            ),
-            lambda: None,
-        )
+        # NOTE: Use static Python if check to avoid tracing the callback when disabled.
+        # jax.lax.cond would still trace the callback, preventing XLA cache.
+        if progress_interval > 0:
+            should_report = new_step_idx % progress_interval == 0
+            jax.lax.cond(
+                should_report,
+                lambda: jax.debug.callback(
+                    _progress_callback, new_step_idx, new_t, state.t_stop, new_dt, new_rejected
+                ),
+                lambda: None,
+            )
 
         # Update limit_state: use new state when we accept the step, keep old state on rejection
         new_limit_state = (

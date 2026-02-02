@@ -129,11 +129,13 @@ jobs:
         timeout-minutes: 20
         env:
           JAX_PLATFORMS: cpu
+          JAX_SPICE_NO_PROGRESS: "1"
         run: uv run pytest tests/test_vacask_suite.py tests/test_vacask_jax.py tests/test_vacask_benchmarks.py tests/test_ac_analysis.py tests/test_hb_analysis.py tests/test_noise_analysis.py tests/test_xfer_analysis.py -v --tb=short
 
       - name: Run benchmark tests
         env:
           JAX_PLATFORMS: cpu
+          JAX_SPICE_NO_PROGRESS: "1"
         run: uv run pytest benchmarks/test_benchmarks.py -v --tb=short
 
       - name: Run type checker
@@ -207,6 +209,7 @@ jobs:
         id: ngspice-tests
         env:
           JAX_PLATFORMS: cpu
+          JAX_SPICE_NO_PROGRESS: "1"
         run: |
           uv run pytest tests/test_ngspice_regression.py -v --tb=short --junitxml=ngspice-results.xml 2>&1 | tee ngspice-output.txt
           echo "exit_code=${PIPESTATUS[0]}" >> $GITHUB_OUTPUT
@@ -300,6 +303,7 @@ jobs:
         id: xyce-tests
         env:
           JAX_PLATFORMS: cpu
+          JAX_SPICE_NO_PROGRESS: "1"
         run: |
           uv run pytest tests/test_xyce_regression.py -v --tb=short --junitxml=xyce-results.xml 2>&1 | tee xyce-output.txt
           echo "exit_code=${PIPESTATUS[0]}" >> $GITHUB_OUTPUT

@@ -167,13 +167,15 @@ jobs:
       # These tests compare simulation waveforms between JAX-SPICE and VACASK
       # Tests marked with xfail are expected to fail and won't break CI
       - name: Run VACASK result comparison tests
-        timeout-minutes: 15
+        timeout-minutes: 20
         env:
           JAX_PLATFORMS: cpu
           JAX_ENABLE_X64: "1"
           VACASK_BIN: ${{ github.workspace }}/vendor/VACASK/build/simulator/vacask
           # Limit steps in CI to avoid timeout (full 1M steps takes too long)
           JAX_SPICE_MAX_STEPS: "10000"
+          # Disable progress callbacks to allow XLA compilation caching
+          JAX_SPICE_NO_PROGRESS: "1"
           # Enable JAX compilation tracing to debug CI slowdowns
           JAX_LOG_COMPILES: "1"
           JAX_EXPLAIN_CACHE_MISSES: "1"
@@ -237,6 +239,7 @@ jobs:
         env:
           JAX_PLATFORMS: cpu
           JAX_ENABLE_X64: "1"
+          JAX_SPICE_NO_PROGRESS: "1"
         timeout-minutes: 30
         run: |
           echo "Running JAX-SPICE vs VACASK comparison..."

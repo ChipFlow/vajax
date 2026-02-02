@@ -12,13 +12,26 @@ FullMNAStrategy. The algorithm:
 Reference: VACASK coretran.cpp lines 1070-1220
 """
 
-from dataclasses import dataclass
+import os
+from dataclasses import dataclass, field
 from typing import Tuple
 
 import jax
 import jax.numpy as jnp
 
 from jax_spice.analysis.integration import IntegrationMethod
+
+
+def _default_progress_interval() -> int:
+    """Get default progress_interval, respecting JAX_SPICE_NO_PROGRESS env var.
+
+    When JAX_SPICE_NO_PROGRESS=1 is set, progress reporting is disabled.
+    This allows XLA to cache the compiled simulation loop, significantly
+    speeding up repeated runs (e.g., in CI/CD pipelines).
+    """
+    if os.environ.get("JAX_SPICE_NO_PROGRESS", "").lower() in ("1", "true", "yes"):
+        return 0
+    return 100
 
 
 @dataclass
@@ -65,7 +78,9 @@ class AdaptiveConfig:
     gshunt_init: float = 0.0
     gshunt_steps: int = 5
     gshunt_target: float = 0.0
-    progress_interval: int = 100  # Report progress every N steps (0 to disable)
+    progress_interval: int = field(
+        default_factory=_default_progress_interval
+    )  # Report progress every N steps (0 to disable, or set JAX_SPICE_NO_PROGRESS=1)
     debug_lte: bool = False  # Print detailed LTE debug info (top contributors)
     tran_fs: float = 0.25  # Initial timestep scale factor (VACASK default)
     debug_steps: bool = False  # Print per-step info (time, dt, NR iters, LTE)
