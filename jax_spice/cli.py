@@ -304,7 +304,7 @@ Examples:
         """,
     )
 
-    parser.add_argument("--version", action="version", version="%(prog)s 0.1.0")
+    parser.add_argument("--version", "-V", action="version", version="%(prog)s 0.1.0")
     parser.add_argument(
         "-v", "--verbose", action="count", default=0, help="Increase verbosity (use -vv for debug)"
     )
