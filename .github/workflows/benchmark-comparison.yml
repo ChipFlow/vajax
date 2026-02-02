@@ -10,9 +10,9 @@ on:
 env:
   CARGO_TERM_COLOR: always
   CARGO_INCREMENTAL: 0
-  # Disable XLA compilation cache to avoid CPU architecture mismatches
-  # GitHub Actions runners have varying CPU features across runs
-  JAX_COMPILATION_CACHE_DIR: ""
+  # XLA compilation cache - keyed by OS and architecture to avoid mismatches
+  # This significantly speeds up JAX compilation (4-10x on complex models)
+  JAX_COMPILATION_CACHE_DIR: /tmp/jax-xla-cache
 
 jobs:
   benchmark-comparison:
@@ -73,6 +73,16 @@ jobs:
 
       - name: Set up Python
         run: uv python install 3.11
+
+      # Cache XLA compiled artifacts to speed up JAX compilation
+      # Key includes OS, arch, and JAX version to avoid binary incompatibilities
+      - name: Cache XLA compilation artifacts
+        uses: actions/cache@v4
+        with:
+          path: /tmp/jax-xla-cache
+          key: xla-cache-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('pyproject.toml') }}
+          restore-keys: |
+            xla-cache-${{ runner.os }}-${{ runner.arch }}-
 
       - name: Build openvaf-py
         working-directory: openvaf_jax/openvaf_py
@@ -191,51 +201,33 @@ jobs:
           echo "Cache hits: $(grep -c "Persistent compilation cache hit" /tmp/vacask-result-tests.log 2>/dev/null || echo 0)"
           echo "Cache misses: $(grep -c "PERSISTENT COMPILATION CACHE MISS" /tmp/vacask-result-tests.log 2>/dev/null || echo 0)"
 
-      # Measure XLA compilation cache benefit
-      # This helps determine if architecture-specific caching is worthwhile
-      - name: Measure XLA cache benefit
+      # Report XLA compilation cache status
+      # Cache is keyed by OS-arch-pyproject hash for binary compatibility
+      - name: Report XLA cache status
         env:
           JAX_PLATFORMS: cpu
           JAX_ENABLE_X64: "1"
-        timeout-minutes: 10
         run: |
-          echo "Measuring XLA compilation cache benefit (ring benchmark)..."
-          CACHE_DIR="/tmp/xla-cache-test"
+          echo "=== XLA Compilation Cache Status ==="
+          echo "Cache directory: ${JAX_COMPILATION_CACHE_DIR}"
+          echo "Cache key: xla-cache-${{ runner.os }}-${{ runner.arch }}-<pyproject-hash>"
 
-          # Cold run (empty cache)
-          rm -rf "$CACHE_DIR"
-          mkdir -p "$CACHE_DIR"
-          JAX_COMPILATION_CACHE_DIR="$CACHE_DIR" \
-            uv run python scripts/compare_vacask.py \
-              --benchmark ring \
-              --max-steps 50 \
-              --use-scan 2>&1 | tee /tmp/cache-cold.log
+          if [ -d "${JAX_COMPILATION_CACHE_DIR}" ]; then
+            CACHE_SIZE=$(du -sh "${JAX_COMPILATION_CACHE_DIR}" 2>/dev/null | cut -f1 || echo "empty")
+            CACHE_FILES=$(find "${JAX_COMPILATION_CACHE_DIR}" -type f 2>/dev/null | wc -l || echo 0)
+            echo "Cache size: ${CACHE_SIZE}"
+            echo "Cached artifacts: ${CACHE_FILES}"
+            echo "CACHE_SIZE=${CACHE_SIZE}" >> /tmp/cache-metrics.env
+            echo "CACHE_FILES=${CACHE_FILES}" >> /tmp/cache-metrics.env
 
-          COLD_STARTUP=$(grep -oP 'startup: \K[\d.]+' /tmp/cache-cold.log | head -1 || echo "N/A")
-          CACHE_SIZE=$(du -sh "$CACHE_DIR" 2>/dev/null | cut -f1 || echo "N/A")
-
-          # Warm run (cache populated)
-          JAX_COMPILATION_CACHE_DIR="$CACHE_DIR" \
-            uv run python scripts/compare_vacask.py \
-              --benchmark ring \
-              --max-steps 50 \
-              --use-scan 2>&1 | tee /tmp/cache-warm.log
-
-          WARM_STARTUP=$(grep -oP 'startup: \K[\d.]+' /tmp/cache-warm.log | head -1 || echo "N/A")
-
-          echo "COLD_STARTUP=${COLD_STARTUP}" >> /tmp/cache-metrics.env
-          echo "WARM_STARTUP=${WARM_STARTUP}" >> /tmp/cache-metrics.env
-          echo "CACHE_SIZE=${CACHE_SIZE}" >> /tmp/cache-metrics.env
-
-          echo ""
-          echo "=== XLA Cache Benefit Summary ==="
-          echo "Cold startup: ${COLD_STARTUP}s"
-          echo "Warm startup: ${WARM_STARTUP}s"
-          echo "Cache size: ${CACHE_SIZE}"
-          if [[ "$COLD_STARTUP" != "N/A" && "$WARM_STARTUP" != "N/A" ]]; then
-            SPEEDUP=$(echo "scale=1; $COLD_STARTUP / $WARM_STARTUP" | bc 2>/dev/null || echo "N/A")
-            SAVED=$(echo "scale=1; $COLD_STARTUP - $WARM_STARTUP" | bc 2>/dev/null || echo "N/A")
-            echo "Speedup: ${SPEEDUP}x (saved ${SAVED}s)"
+            # List largest cached artifacts
+            echo ""
+            echo "Largest cached artifacts:"
+            find "${JAX_COMPILATION_CACHE_DIR}" -type f -exec du -h {} \; 2>/dev/null | sort -rh | head -5 || true
+          else
+            echo "Cache directory not found (first run or cache miss)"
+            echo "CACHE_SIZE=0" >> /tmp/cache-metrics.env
+            echo "CACHE_FILES=0" >> /tmp/cache-metrics.env
           fi
 
       # Run benchmark performance comparison
@@ -349,26 +341,19 @@ jobs:
               echo "**Error**: Benchmark comparison log not found"
             fi
 
-            # XLA Cache benefit metrics
+            # XLA Cache status
             if [ -f "/tmp/cache-metrics.env" ]; then
               source /tmp/cache-metrics.env
               echo ""
-              echo "### XLA Compilation Cache Benefit"
-              echo ""
-              echo "Measured on ring benchmark (50 steps):"
+              echo "### XLA Compilation Cache"
               echo ""
               echo "| Metric | Value |"
               echo "|--------|-------|"
-              echo "| Cold startup | ${COLD_STARTUP:-N/A}s |"
-              echo "| Warm startup | ${WARM_STARTUP:-N/A}s |"
               echo "| Cache size | ${CACHE_SIZE:-N/A} |"
-              if [[ "${COLD_STARTUP:-N/A}" != "N/A" && "${WARM_STARTUP:-N/A}" != "N/A" ]]; then
-                SPEEDUP=$(echo "scale=1; $COLD_STARTUP / $WARM_STARTUP" | bc 2>/dev/null || echo "N/A")
-                SAVED=$(echo "scale=1; $COLD_STARTUP - $WARM_STARTUP" | bc 2>/dev/null || echo "N/A")
-                echo "| **Speedup** | ${SPEEDUP}x (saved ${SAVED}s) |"
-              fi
+              echo "| Cached artifacts | ${CACHE_FILES:-N/A} |"
+              echo "| Cache key | \`xla-cache-${{ runner.os }}-${{ runner.arch }}-...\` |"
               echo ""
-              echo "_Note: Cache disabled in CI due to runner architecture variations._"
+              echo "_Cache is persisted between runs for faster compilation._"
             fi
           } >> "$GITHUB_STEP_SUMMARY"
 

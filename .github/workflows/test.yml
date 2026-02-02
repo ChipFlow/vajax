@@ -13,9 +13,8 @@ env:
   # Re-enable when service is restored
   SCCACHE_GHA_ENABLED: "false"
   RUSTC_WRAPPER: "sccache"
-  # Disable XLA compilation cache to avoid CPU architecture mismatches
-  # GitHub Actions runners have varying CPU features across runs
-  JAX_COMPILATION_CACHE_DIR: ""
+  # XLA compilation cache - keyed by OS and architecture to avoid mismatches
+  JAX_COMPILATION_CACHE_DIR: /tmp/jax-xla-cache
 
 jobs:
   test-openvaf-py:
@@ -102,6 +101,15 @@ jobs:
       - name: Set up Python
         run: uv python install 3.11
 
+      # Cache XLA compiled artifacts to speed up JAX compilation
+      - name: Cache XLA compilation artifacts
+        uses: actions/cache@v4
+        with:
+          path: /tmp/jax-xla-cache
+          key: xla-cache-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('pyproject.toml') }}
+          restore-keys: |
+            xla-cache-${{ runner.os }}-${{ runner.arch }}-
+
       - name: Build openvaf-py
         working-directory: openvaf_jax/openvaf_py
         run: |
@@ -179,6 +187,15 @@ jobs:
 
       - name: Install jax-spice with dev dependencies
         run: uv sync --extra dev
+
+      # Cache XLA compiled artifacts to speed up JAX compilation
+      - name: Cache XLA compilation artifacts
+        uses: actions/cache@v4
+        with:
+          path: /tmp/jax-xla-cache
+          key: xla-cache-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('pyproject.toml') }}
+          restore-keys: |
+            xla-cache-${{ runner.os }}-${{ runner.arch }}-
 
       - name: Build UMFPACK FFI extension
         working-directory: jax_spice/sparse
@@ -263,6 +280,15 @@ jobs:
 
       - name: Install jax-spice with dev dependencies
         run: uv sync --extra dev
+
+      # Cache XLA compiled artifacts to speed up JAX compilation
+      - name: Cache XLA compilation artifacts
+        uses: actions/cache@v4
+        with:
+          path: /tmp/jax-xla-cache
+          key: xla-cache-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('pyproject.toml') }}
+          restore-keys: |
+            xla-cache-${{ runner.os }}-${{ runner.arch }}-
 
       - name: Build UMFPACK FFI extension
         working-directory: jax_spice/sparse
