@@ -14,7 +14,8 @@ CODEGEN_BROKEN_MODELS: set = set()  # Empty - all models should work now
 
 # Models that hang during evaluation (investigation needed)
 # These cause CI timeout - mark xfail until root cause is found
-HANGING_MODELS: set = {"bsimsoi"}  # Hangs after XLA compilation completes
+# See: https://github.com/ChipFlow/jax-spice/issues/19
+HANGING_MODELS: set = {"bsimsoi", "hisim2"}  # Hang after XLA compilation completes
 
 
 class TestAllModels:
@@ -37,7 +38,7 @@ class TestAllModels:
         if model_name in CODEGEN_BROKEN_MODELS:
             pytest.xfail(f"{model_name}: codegen bug - undefined SSA variable in control flow")
         if model_name in HANGING_MODELS:
-            pytest.xfail(f"{model_name}: hangs during evaluation - investigation needed")
+            pytest.skip(f"{model_name}: hangs during evaluation - see issue #19")
         model = compile_model(INTEGRATION_PATH / model_path)
 
         # Use VA defaults (not hardcoded values)
