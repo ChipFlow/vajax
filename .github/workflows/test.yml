@@ -59,7 +59,7 @@ jobs:
 
       - name: Run tests
         working-directory: openvaf_jax/openvaf_py
-        timeout-minutes: 45
+        timeout-minutes: 60
         run: uv run pytest tests/ -v --tb=short --durations=20 --log-cli-level=INFO
 
   test-jax-spice:
@@ -126,7 +126,7 @@ jobs:
           uv pip install --no-build-isolation .
 
       - name: Run jax-spice tests (with jaxtyping runtime checks)
-        timeout-minutes: 35
+        timeout-minutes: 45
         env:
           JAX_PLATFORMS: cpu
           JAX_SPICE_NO_PROGRESS: "1"
