@@ -203,6 +203,144 @@ def make_dense_full_mna_solver(
     else:
         residual_mask = None
 
+    # Define cond_fn and body_fn at factory level to enable JAX tracing cache.
+    # These are created once per solver instance, not per solve call.
+    # The varying parameters are passed through the state tuple.
+    def cond_fn(state):
+        # State: (X, iteration, converged, max_f, max_delta, Q, limit_state, <solver_params...>)
+        (
+            _,
+            iteration,
+            converged,
+            _,
+            _,
+            _,
+            _,
+            _,
+            _,
+            _,
+            _,
+            _,
+            _,
+            _,
+            _,
+            _,
+            _,
+            _,
+            _,
+        ) = state
+        return jnp.logical_and(~converged, iteration < max_iterations)
+
+    def body_fn(state):
+        # Unpack state - includes both iteration state and solver parameters
+        (
+            X,
+            iteration,
+            _,
+            _,
+            _,
+            _,
+            limit_state,
+            vsource_vals,
+            isource_vals,
+            Q_prev,
+            integ_c0,
+            device_arrays_arg,
+            gmin,
+            gshunt,
+            integ_c1,
+            integ_d1,
+            _dQdt_prev,
+            integ_c2,
+            _Q_prev2,
+        ) = state
+
+        J, f, Q, _, limit_state_out = build_system_jit(
+            X,
+            vsource_vals,
+            isource_vals,
+            Q_prev,
+            integ_c0,
+            device_arrays_arg,
+            gmin,
+            gshunt,
+            integ_c1,
+            integ_d1,
+            _dQdt_prev,
+            integ_c2,
+            _Q_prev2,
+            limit_state,
+        )
+
+        # Check residual convergence (mask NOI nodes)
+        if residual_mask is not None:
+            f_masked = jnp.where(residual_mask, f, 0.0)
+            max_f = jnp.max(jnp.abs(f_masked))
+        else:
+            max_f = jnp.max(jnp.abs(f))
+        residual_converged = max_f < effective_abstol
+
+        # Enforce NOI constraints on node equations only
+        if noi_res_idx is not None:
+            # Zero out NOI rows and columns in the node block
+            J = J.at[noi_res_idx, :].set(0.0)
+            J = J.at[:, noi_res_idx].set(0.0)
+            J = J.at[noi_res_idx, noi_res_idx].set(1.0)
+            f = f.at[noi_res_idx].set(0.0)
+
+        # Add Tikhonov regularization for numerical stability on GPU
+        # JAX's scipy.linalg.solve raises hard errors on singular matrices
+        reg = 1e-14 * jnp.eye(J.shape[0], dtype=J.dtype)
+        J_reg = J + reg
+
+        # Solve linear system J @ delta = -f
+        delta = jax.scipy.linalg.solve(J_reg, -f)
+
+        # Step limiting
+        max_delta = jnp.max(jnp.abs(delta))
+        scale = jnp.where(max_delta > max_step, max_step / max_delta, 1.0)
+        delta = delta * scale
+
+        # Update X: skip ground (index 0), update node voltages and branch currents
+        # X has structure: [V_ground, V_1, ..., V_n, I_vs1, ..., I_vsm]
+        # delta has structure: [delta_V_1, ..., delta_V_n, delta_I_vs1, ..., delta_I_vsm]
+        V_candidate = X[1:n_total] + delta[:n_unknowns]
+        V_damped = apply_voltage_damping(
+            V_candidate, X[1:n_total], DAMPING_VT, DAMPING_VCRIT, nr_damping=_NR_DAMPING
+        )
+        X_new = X.at[1:n_total].set(V_damped)  # Update node voltages with damping
+        X_new = X_new.at[n_total:].add(delta[n_unknowns:])  # Update branch currents
+
+        # Clamp NOI nodes to 0V
+        if noi_indices is not None and len(noi_indices) > 0:
+            X_new = X_new.at[noi_indices].set(0.0)
+
+        delta_converged = max_delta < 1e-12
+        converged = jnp.logical_or(residual_converged, delta_converged)
+
+        # Return updated state with same solver params (unchanged)
+        return (
+            X_new,
+            iteration + 1,
+            converged,
+            max_f,
+            max_delta,
+            Q,
+            limit_state_out,
+            vsource_vals,
+            isource_vals,
+            Q_prev,
+            integ_c0,
+            device_arrays_arg,
+            gmin,
+            gshunt,
+            integ_c1,
+            integ_d1,
+            _dQdt_prev,
+            integ_c2,
+            _Q_prev2,
+        )
+
     def nr_solve(
         X_init: Array,
         vsource_vals: Array,
@@ -233,7 +371,17 @@ def make_dense_full_mna_solver(
             else jnp.zeros(total_limit_states, dtype=jnp.float64)
         )
 
+        # Convert scalar parameters to JAX arrays to avoid weak_type retracing
+        # Python floats have weak_type=True, explicit arrays have weak_type=False
+        _integ_c0 = jnp.asarray(integ_c0, dtype=jnp.float64)
+        _gmin = jnp.asarray(gmin, dtype=jnp.float64)
+        _gshunt = jnp.asarray(gshunt, dtype=jnp.float64)
+        _integ_c1 = jnp.asarray(integ_c1, dtype=jnp.float64)
+        _integ_d1 = jnp.asarray(integ_d1, dtype=jnp.float64)
+        _integ_c2 = jnp.asarray(integ_c2, dtype=jnp.float64)
+
         init_Q = jnp.zeros(n_unknowns, dtype=jnp.float64)
+        # State includes both iteration state and solver parameters
         init_state = (
             X_init,
             jnp.array(0, dtype=jnp.int32),
@@ -241,84 +389,43 @@ def make_dense_full_mna_solver(
             jnp.array(jnp.inf),
             jnp.array(jnp.inf),
             init_Q,
-            _limit_state,  # Track limit states in solver state (flat array)
+            _limit_state,
+            vsource_vals,
+            isource_vals,
+            Q_prev,
+            _integ_c0,
+            device_arrays_arg,
+            _gmin,
+            _gshunt,
+            _integ_c1,
+            _integ_d1,
+            _dQdt_prev,
+            _integ_c2,
+            _Q_prev2,
         )
 
-        def cond_fn(state):
-            X, iteration, converged, max_f, max_delta, Q, limit_state = state
-            return jnp.logical_and(~converged, iteration < max_iterations)
-
-        def body_fn(state):
-            X, iteration, _, _, _, _, limit_state = state
-
-            J, f, Q, _, limit_state_out = build_system_jit(
-                X,
-                vsource_vals,
-                isource_vals,
-                Q_prev,
-                integ_c0,
-                device_arrays_arg,
-                gmin,
-                gshunt,
-                integ_c1,
-                integ_d1,
-                _dQdt_prev,
-                integ_c2,
-                _Q_prev2,
-                limit_state,
-            )
-
-            # Check residual convergence (mask NOI nodes)
-            if residual_mask is not None:
-                f_masked = jnp.where(residual_mask, f, 0.0)
-                max_f = jnp.max(jnp.abs(f_masked))
-            else:
-                max_f = jnp.max(jnp.abs(f))
-            residual_converged = max_f < effective_abstol
-
-            # Enforce NOI constraints on node equations only
-            if noi_res_idx is not None:
-                # Zero out NOI rows and columns in the node block
-                J = J.at[noi_res_idx, :].set(0.0)
-                J = J.at[:, noi_res_idx].set(0.0)
-                J = J.at[noi_res_idx, noi_res_idx].set(1.0)
-                f = f.at[noi_res_idx].set(0.0)
-
-            # Add Tikhonov regularization for numerical stability on GPU
-            # JAX's scipy.linalg.solve raises hard errors on singular matrices
-            reg = 1e-14 * jnp.eye(J.shape[0], dtype=J.dtype)
-            J_reg = J + reg
-
-            # Solve linear system J @ delta = -f
-            delta = jax.scipy.linalg.solve(J_reg, -f)
-
-            # Step limiting
-            max_delta = jnp.max(jnp.abs(delta))
-            scale = jnp.where(max_delta > max_step, max_step / max_delta, 1.0)
-            delta = delta * scale
-
-            # Update X: skip ground (index 0), update node voltages and branch currents
-            # X has structure: [V_ground, V_1, ..., V_n, I_vs1, ..., I_vsm]
-            # delta has structure: [delta_V_1, ..., delta_V_n, delta_I_vs1, ..., delta_I_vsm]
-            V_candidate = X[1:n_total] + delta[:n_unknowns]
-            V_damped = apply_voltage_damping(
-                V_candidate, X[1:n_total], DAMPING_VT, DAMPING_VCRIT, nr_damping=_NR_DAMPING
-            )
-            X_new = X.at[1:n_total].set(V_damped)  # Update node voltages with damping
-            X_new = X_new.at[n_total:].add(delta[n_unknowns:])  # Update branch currents
-
-            # Clamp NOI nodes to 0V
-            if noi_indices is not None and len(noi_indices) > 0:
-                X_new = X_new.at[noi_indices].set(0.0)
-
-            delta_converged = max_delta < 1e-12
-            converged = jnp.logical_or(residual_converged, delta_converged)
-
-            return (X_new, iteration + 1, converged, max_f, max_delta, Q, limit_state_out)
-
-        X_final, iterations, converged, max_f, max_delta, _, limit_state_final = lax.while_loop(
-            cond_fn, body_fn, init_state
-        )
+        result_state = lax.while_loop(cond_fn, body_fn, init_state)
+        (
+            X_final,
+            iterations,
+            converged,
+            max_f,
+            _,
+            _,
+            limit_state_final,
+            _,
+            _,
+            _,
+            _,
+            _,
+            _,
+            _,
+            _,
+            _,
+            _,
+            _,
+            _,
+        ) = result_state
 
         # Recompute Q and I_vsource from converged solution
         _, _, Q_final, I_vsource, _ = build_system_jit(
@@ -326,21 +433,21 @@ def make_dense_full_mna_solver(
             vsource_vals,
             isource_vals,
             Q_prev,
-            integ_c0,
+            _integ_c0,
             device_arrays_arg,
-            gmin,
-            gshunt,
-            integ_c1,
-            integ_d1,
+            _gmin,
+            _gshunt,
+            _integ_c1,
+            _integ_d1,
             _dQdt_prev,
-            integ_c2,
+            _integ_c2,
             _Q_prev2,
             limit_state_final,
         )
 
         # Compute dQdt for next timestep (needed for trapezoidal and Gear2 methods)
         dQdt_final = (
-            integ_c0 * Q_final + integ_c1 * Q_prev + integ_d1 * _dQdt_prev + integ_c2 * _Q_prev2
+            _integ_c0 * Q_final + _integ_c1 * Q_prev + _integ_d1 * _dQdt_prev + _integ_c2 * _Q_prev2
         )
 
         return (
@@ -435,6 +542,147 @@ def make_sparse_full_mna_solver(
     else:
         residual_mask = None
 
+    # Define cond_fn and body_fn at factory level to enable JAX tracing cache.
+    def cond_fn(state):
+        # State: (X, iteration, converged, max_f, max_delta, Q, <solver_params...>)
+        (
+            _,
+            iteration,
+            converged,
+            _,
+            _,
+            _,
+            _,
+            _,
+            _,
+            _,
+            _,
+            _,
+            _,
+            _,
+            _,
+            _,
+            _,
+        ) = state
+        return jnp.logical_and(~converged, iteration < max_iterations)
+
+    def body_fn(state):
+        # Unpack state - includes both iteration state and solver parameters
+        (
+            X,
+            iteration,
+            _,
+            _,
+            _,
+            _,
+            vsource_vals,
+            isource_vals,
+            Q_prev,
+            integ_c0,
+            device_arrays_arg,
+            gmin,
+            gshunt,
+            integ_c1,
+            integ_d1,
+            _dQdt_prev,
+            _Q_prev2,
+        ) = state
+
+        J_bcoo, f, Q, _, _ = build_system_jit(
+            X,
+            vsource_vals,
+            isource_vals,
+            Q_prev,
+            integ_c0,
+            device_arrays_arg,
+            gmin,
+            gshunt,
+            integ_c1,
+            integ_d1,
+            _dQdt_prev,
+            jnp.asarray(0.0, dtype=jnp.float64),  # integ_c2 (not used in sparse)
+            _Q_prev2,
+            None,
+        )
+
+        # Check residual convergence
+        if residual_mask is not None:
+            f_masked = jnp.where(residual_mask, f, 0.0)
+            max_f = jnp.max(jnp.abs(f_masked))
+        else:
+            max_f = jnp.max(jnp.abs(f))
+        residual_converged = max_f < effective_abstol
+
+        if use_precomputed:
+            # Fast path: pre-computed COO→CSR
+            coo_vals = J_bcoo.data
+            sorted_vals = coo_vals[coo_sort_perm]
+            csr_data = jax.ops.segment_sum(sorted_vals, csr_segment_ids, num_segments=nse)
+
+            f_solve = f
+            if noi_row_mask is not None:
+                csr_data = csr_data.at[noi_row_mask].set(0.0)
+                csr_data = csr_data.at[noi_col_mask].set(0.0)
+                csr_data = csr_data.at[noi_diag_indices].set(1.0)
+                f_solve = f.at[noi_res_indices_arr].set(0.0)
+
+            delta = spsolve(csr_data, bcsr_indices, bcsr_indptr, -f_solve, tol=1e-6)
+        else:
+            # Fallback: sort each iteration
+            J_bcoo_dedup = J_bcoo.sum_duplicates(nse=nse)
+            J_bcsr = BCSR.from_bcoo(J_bcoo_dedup)
+
+            data = J_bcsr.data
+            f_solve = f
+            if noi_row_mask is not None:
+                data = data.at[noi_row_mask].set(0.0)
+                data = data.at[noi_col_mask].set(0.0)
+                data = data.at[noi_diag_indices].set(1.0)
+                f_solve = f.at[noi_res_indices_arr].set(0.0)
+
+            delta = spsolve(data, J_bcsr.indices, J_bcsr.indptr, -f_solve, tol=1e-6)
+
+        # Step limiting
+        max_delta = jnp.max(jnp.abs(delta))
+        scale = jnp.where(max_delta > max_step, max_step / max_delta, 1.0)
+        delta = delta * scale
+
+        # Update X: skip ground (index 0), update node voltages and branch currents
+        V_candidate = X[1:n_total] + delta[:n_unknowns]
+        V_damped = apply_voltage_damping(
+            V_candidate, X[1:n_total], DAMPING_VT, DAMPING_VCRIT, nr_damping=_NR_DAMPING
+        )
+        X_new = X.at[1:n_total].set(V_damped)
+        X_new = X_new.at[n_total:].add(delta[n_unknowns:])
+
+        # Clamp NOI nodes to 0V
+        if noi_indices is not None and len(noi_indices) > 0:
+            X_new = X_new.at[noi_indices].set(0.0)
+
+        delta_converged = max_delta < 1e-12
+        converged = jnp.logical_or(residual_converged, delta_converged)
+
+        # Return updated state with same solver params (unchanged)
+        return (
+            X_new,
+            iteration + 1,
+            converged,
+            max_f,
+            max_delta,
+            Q,
+            vsource_vals,
+            isource_vals,
+            Q_prev,
+            integ_c0,
+            device_arrays_arg,
+            gmin,
+            gshunt,
+            integ_c1,
+            integ_d1,
+            _dQdt_prev,
+            _Q_prev2,
+        )
+
     def nr_solve(
         X_init: Array,
         vsource_vals: Array,
@@ -450,13 +698,22 @@ def make_sparse_full_mna_solver(
         integ_c2: float | Array = 0.0,
         Q_prev2: Array | None = None,
     ):
-        # Ensure dQdt_prev is a proper array for JIT tracing
+        # Ensure arrays are proper for JIT tracing
         _dQdt_prev = (
             dQdt_prev if dQdt_prev is not None else jnp.zeros(n_unknowns, dtype=jnp.float64)
         )
         _Q_prev2 = Q_prev2 if Q_prev2 is not None else jnp.zeros(n_unknowns, dtype=jnp.float64)
 
+        # Convert scalar parameters to JAX arrays to avoid weak_type retracing
+        _integ_c0 = jnp.asarray(integ_c0, dtype=jnp.float64)
+        _gmin = jnp.asarray(gmin, dtype=jnp.float64)
+        _gshunt = jnp.asarray(gshunt, dtype=jnp.float64)
+        _integ_c1 = jnp.asarray(integ_c1, dtype=jnp.float64)
+        _integ_d1 = jnp.asarray(integ_d1, dtype=jnp.float64)
+        _integ_c2 = jnp.asarray(integ_c2, dtype=jnp.float64)
+
         init_Q = jnp.zeros(n_unknowns, dtype=jnp.float64)
+        # State includes both iteration state and solver parameters
         init_state = (
             X_init,
             jnp.array(0, dtype=jnp.int32),
@@ -464,96 +721,39 @@ def make_sparse_full_mna_solver(
             jnp.array(jnp.inf),
             jnp.array(jnp.inf),
             init_Q,
+            vsource_vals,
+            isource_vals,
+            Q_prev,
+            _integ_c0,
+            device_arrays_arg,
+            _gmin,
+            _gshunt,
+            _integ_c1,
+            _integ_d1,
+            _dQdt_prev,
+            _Q_prev2,
         )
 
-        def cond_fn(state):
-            X, iteration, converged, max_f, max_delta, Q = state
-            return jnp.logical_and(~converged, iteration < max_iterations)
-
-        def body_fn(state):
-            X, iteration, _, _, _, _ = state
-
-            J_bcoo, f, Q, _, _ = build_system_jit(
-                X,
-                vsource_vals,
-                isource_vals,
-                Q_prev,
-                integ_c0,
-                device_arrays_arg,
-                gmin,
-                gshunt,
-                integ_c1,
-                integ_d1,
-                _dQdt_prev,
-                integ_c2,
-                _Q_prev2,
-                None,
-            )
-
-            # Check residual convergence
-            if residual_mask is not None:
-                f_masked = jnp.where(residual_mask, f, 0.0)
-                max_f = jnp.max(jnp.abs(f_masked))
-            else:
-                max_f = jnp.max(jnp.abs(f))
-            residual_converged = max_f < effective_abstol
-
-            if use_precomputed:
-                # Fast path: pre-computed COO→CSR
-                coo_vals = J_bcoo.data
-                sorted_vals = coo_vals[coo_sort_perm]
-                csr_data = jax.ops.segment_sum(sorted_vals, csr_segment_ids, num_segments=nse)
-
-                f_solve = f
-                if noi_row_mask is not None:
-                    csr_data = csr_data.at[noi_row_mask].set(0.0)
-                    csr_data = csr_data.at[noi_col_mask].set(0.0)
-                    csr_data = csr_data.at[noi_diag_indices].set(1.0)
-                    f_solve = f.at[noi_res_indices_arr].set(0.0)
-
-                delta = spsolve(csr_data, bcsr_indices, bcsr_indptr, -f_solve, tol=1e-6)
-            else:
-                # Fallback: sort each iteration
-                J_bcoo_dedup = J_bcoo.sum_duplicates(nse=nse)
-                J_bcsr = BCSR.from_bcoo(J_bcoo_dedup)
-
-                data = J_bcsr.data
-                f_solve = f
-                if noi_row_mask is not None:
-                    data = data.at[noi_row_mask].set(0.0)
-                    data = data.at[noi_col_mask].set(0.0)
-                    data = data.at[noi_diag_indices].set(1.0)
-                    f_solve = f.at[noi_res_indices_arr].set(0.0)
-
-                delta = spsolve(data, J_bcsr.indices, J_bcsr.indptr, -f_solve, tol=1e-6)
-
-            # Step limiting
-            max_delta = jnp.max(jnp.abs(delta))
-            scale = jnp.where(max_delta > max_step, max_step / max_delta, 1.0)
-            delta = delta * scale
-
-            # Update X: skip ground (index 0), update node voltages and branch currents
-            # X has structure: [V_ground, V_1, ..., V_n, I_vs1, ..., I_vsm]
-            # delta has structure: [delta_V_1, ..., delta_V_n, delta_I_vs1, ..., delta_I_vsm]
-            V_candidate = X[1:n_total] + delta[:n_unknowns]
-            V_damped = apply_voltage_damping(
-                V_candidate, X[1:n_total], DAMPING_VT, DAMPING_VCRIT, nr_damping=_NR_DAMPING
-            )
-            X_new = X.at[1:n_total].set(V_damped)  # Update node voltages with damping
-            X_new = X_new.at[n_total:].add(delta[n_unknowns:])  # Update branch currents
-
-            # Clamp NOI nodes to 0V
-            if noi_indices is not None and len(noi_indices) > 0:
-                X_new = X_new.at[noi_indices].set(0.0)
-
-            delta_converged = max_delta < 1e-12
-            converged = jnp.logical_or(residual_converged, delta_converged)
-
-            return (X_new, iteration + 1, converged, max_f, max_delta, Q)
-
-        X_final, iterations, converged, max_f, max_delta, _ = lax.while_loop(
-            cond_fn, body_fn, init_state
-        )
+        result_state = lax.while_loop(cond_fn, body_fn, init_state)
+        (
+            X_final,
+            iterations,
+            converged,
+            max_f,
+            _,
+            _,
+            _,
+            _,
+            _,
+            _,
+            _,
+            _,
+            _,
+            _,
+            _,
+            _,
+            _,
+        ) = result_state
 
         # Recompute Q and I_vsource from converged solution
         _, _, Q_final, I_vsource, limit_state_final = build_system_jit(
@@ -561,21 +761,21 @@ def make_sparse_full_mna_solver(
             vsource_vals,
             isource_vals,
             Q_prev,
-            integ_c0,
+            _integ_c0,
             device_arrays_arg,
-            gmin,
-            gshunt,
-            integ_c1,
-            integ_d1,
+            _gmin,
+            _gshunt,
+            _integ_c1,
+            _integ_d1,
             _dQdt_prev,
-            integ_c2,
+            _integ_c2,
             _Q_prev2,
             None,
         )
 
         # Compute dQdt for next timestep
         dQdt_final = (
-            integ_c0 * Q_final + integ_c1 * Q_prev + integ_d1 * _dQdt_prev + integ_c2 * _Q_prev2
+            _integ_c0 * Q_final + _integ_c1 * Q_prev + _integ_d1 * _dQdt_prev + _integ_c2 * _Q_prev2
         )
 
         return (
@@ -660,6 +860,132 @@ def make_umfpack_full_mna_solver(
     umfpack_solver = UMFPACKSolver(bcsr_indptr, bcsr_indices)
     logger.info("Created UMFPACK full MNA solver with cached symbolic factorization")
 
+    # Define cond_fn and body_fn at factory level to enable JAX tracing cache.
+    def cond_fn(state):
+        (
+            _,
+            iteration,
+            converged,
+            _,
+            _,
+            _,
+            _,
+            _,
+            _,
+            _,
+            _,
+            _,
+            _,
+            _,
+            _,
+            _,
+            _,
+        ) = state
+        return jnp.logical_and(~converged, iteration < max_iterations)
+
+    def body_fn(state):
+        (
+            X,
+            iteration,
+            _,
+            _,
+            _,
+            _,
+            vsource_vals,
+            isource_vals,
+            Q_prev,
+            integ_c0,
+            device_arrays_arg,
+            gmin,
+            gshunt,
+            integ_c1,
+            integ_d1,
+            _dQdt_prev,
+            _Q_prev2,
+        ) = state
+
+        J_bcoo, f, Q, _, _ = build_system_jit(
+            X,
+            vsource_vals,
+            isource_vals,
+            Q_prev,
+            integ_c0,
+            device_arrays_arg,
+            gmin,
+            gshunt,
+            integ_c1,
+            integ_d1,
+            _dQdt_prev,
+            jnp.asarray(0.0, dtype=jnp.float64),  # integ_c2
+            _Q_prev2,
+            None,
+        )
+
+        # Check residual convergence
+        if residual_mask is not None:
+            f_masked = jnp.where(residual_mask, f, 0.0)
+            max_f = jnp.max(jnp.abs(f_masked))
+        else:
+            max_f = jnp.max(jnp.abs(f))
+        residual_converged = max_f < abstol
+
+        if use_precomputed:
+            coo_vals = J_bcoo.data
+            sorted_vals = coo_vals[coo_sort_perm]
+            csr_data = jax.ops.segment_sum(sorted_vals, csr_segment_ids, num_segments=nse)
+        else:
+            J_bcoo_dedup = J_bcoo.sum_duplicates(nse=nse)
+            J_bcsr = BCSR.from_bcoo(J_bcoo_dedup)
+            csr_data = J_bcsr.data
+
+        f_solve = f
+        if noi_row_mask is not None:
+            csr_data = csr_data.at[noi_row_mask].set(0.0)
+            csr_data = csr_data.at[noi_col_mask].set(0.0)
+            csr_data = csr_data.at[noi_diag_indices].set(1.0)
+            f_solve = f.at[noi_res_indices_arr].set(0.0)
+
+        delta, _info = umfpack_solver(-f_solve, csr_data)
+
+        # Step limiting
+        max_delta = jnp.max(jnp.abs(delta))
+        scale = jnp.where(max_delta > max_step, max_step / max_delta, 1.0)
+        delta = delta * scale
+
+        # Update X: node voltages and branch currents with damping
+        V_candidate = X[1:n_total] + delta[:n_unknowns]
+        V_damped = apply_voltage_damping(
+            V_candidate, X[1:n_total], DAMPING_VT, DAMPING_VCRIT, nr_damping=_NR_DAMPING
+        )
+        X_new = X.at[1:n_total].set(V_damped)
+        X_new = X_new.at[n_total:].add(delta[n_unknowns:])
+
+        if noi_indices is not None and len(noi_indices) > 0:
+            X_new = X_new.at[noi_indices].set(0.0)
+
+        delta_converged = max_delta < 1e-12
+        converged = jnp.logical_or(residual_converged, delta_converged)
+
+        return (
+            X_new,
+            iteration + 1,
+            converged,
+            max_f,
+            max_delta,
+            Q,
+            vsource_vals,
+            isource_vals,
+            Q_prev,
+            integ_c0,
+            device_arrays_arg,
+            gmin,
+            gshunt,
+            integ_c1,
+            integ_d1,
+            _dQdt_prev,
+            _Q_prev2,
+        )
+
     def nr_solve(
         X_init: Array,
         vsource_vals: Array,
@@ -680,6 +1006,14 @@ def make_umfpack_full_mna_solver(
         )
         _Q_prev2 = Q_prev2 if Q_prev2 is not None else jnp.zeros(n_unknowns, dtype=jnp.float64)
 
+        # Convert scalar parameters to JAX arrays to avoid weak_type retracing
+        _integ_c0 = jnp.asarray(integ_c0, dtype=jnp.float64)
+        _gmin = jnp.asarray(gmin, dtype=jnp.float64)
+        _gshunt = jnp.asarray(gshunt, dtype=jnp.float64)
+        _integ_c1 = jnp.asarray(integ_c1, dtype=jnp.float64)
+        _integ_d1 = jnp.asarray(integ_d1, dtype=jnp.float64)
+        _integ_c2 = jnp.asarray(integ_c2, dtype=jnp.float64)
+
         init_Q = jnp.zeros(n_unknowns, dtype=jnp.float64)
         init_state = (
             X_init,
@@ -688,102 +1022,59 @@ def make_umfpack_full_mna_solver(
             jnp.array(jnp.inf),
             jnp.array(jnp.inf),
             init_Q,
+            vsource_vals,
+            isource_vals,
+            Q_prev,
+            _integ_c0,
+            device_arrays_arg,
+            _gmin,
+            _gshunt,
+            _integ_c1,
+            _integ_d1,
+            _dQdt_prev,
+            _Q_prev2,
         )
 
-        def cond_fn(state):
-            X, iteration, converged, max_f, max_delta, Q = state
-            return jnp.logical_and(~converged, iteration < max_iterations)
-
-        def body_fn(state):
-            X, iteration, _, _, _, _ = state
-
-            J_bcoo, f, Q, _, _ = build_system_jit(
-                X,
-                vsource_vals,
-                isource_vals,
-                Q_prev,
-                integ_c0,
-                device_arrays_arg,
-                gmin,
-                gshunt,
-                integ_c1,
-                integ_d1,
-                _dQdt_prev,
-                integ_c2,
-                _Q_prev2,
-                None,
-            )
-
-            # Check residual convergence
-            if residual_mask is not None:
-                f_masked = jnp.where(residual_mask, f, 0.0)
-                max_f = jnp.max(jnp.abs(f_masked))
-            else:
-                max_f = jnp.max(jnp.abs(f))
-            residual_converged = max_f < abstol
-
-            if use_precomputed:
-                coo_vals = J_bcoo.data
-                sorted_vals = coo_vals[coo_sort_perm]
-                csr_data = jax.ops.segment_sum(sorted_vals, csr_segment_ids, num_segments=nse)
-            else:
-                J_bcoo_dedup = J_bcoo.sum_duplicates(nse=nse)
-                J_bcsr = BCSR.from_bcoo(J_bcoo_dedup)
-                csr_data = J_bcsr.data
-
-            f_solve = f
-            if noi_row_mask is not None:
-                csr_data = csr_data.at[noi_row_mask].set(0.0)
-                csr_data = csr_data.at[noi_col_mask].set(0.0)
-                csr_data = csr_data.at[noi_diag_indices].set(1.0)
-                f_solve = f.at[noi_res_indices_arr].set(0.0)
-
-            delta, _info = umfpack_solver(-f_solve, csr_data)
-
-            # Step limiting
-            max_delta = jnp.max(jnp.abs(delta))
-            scale = jnp.where(max_delta > max_step, max_step / max_delta, 1.0)
-            delta = delta * scale
-
-            # Update X: node voltages and branch currents with damping
-            V_candidate = X[1:n_total] + delta[:n_unknowns]
-            V_damped = apply_voltage_damping(
-                V_candidate, X[1:n_total], DAMPING_VT, DAMPING_VCRIT, nr_damping=_NR_DAMPING
-            )
-            X_new = X.at[1:n_total].set(V_damped)
-            X_new = X_new.at[n_total:].add(delta[n_unknowns:])
-
-            if noi_indices is not None and len(noi_indices) > 0:
-                X_new = X_new.at[noi_indices].set(0.0)
-
-            delta_converged = max_delta < 1e-12
-            converged = jnp.logical_or(residual_converged, delta_converged)
-
-            return (X_new, iteration + 1, converged, max_f, max_delta, Q)
-
-        X_final, iterations, converged, max_f, max_delta, _ = lax.while_loop(
-            cond_fn, body_fn, init_state
-        )
+        result_state = lax.while_loop(cond_fn, body_fn, init_state)
+        (
+            X_final,
+            iterations,
+            converged,
+            max_f,
+            _,
+            _,
+            _,
+            _,
+            _,
+            _,
+            _,
+            _,
+            _,
+            _,
+            _,
+            _,
+            _,
+        ) = result_state
 
         _, _, Q_final, I_vsource, limit_state_final = build_system_jit(
             X_final,
             vsource_vals,
             isource_vals,
             Q_prev,
-            integ_c0,
+            _integ_c0,
             device_arrays_arg,
-            gmin,
-            gshunt,
-            integ_c1,
-            integ_d1,
+            _gmin,
+            _gshunt,
+            _integ_c1,
+            _integ_d1,
             _dQdt_prev,
-            integ_c2,
+            _integ_c2,
             _Q_prev2,
             None,
         )
 
         dQdt_final = (
-            integ_c0 * Q_final + integ_c1 * Q_prev + integ_d1 * _dQdt_prev + integ_c2 * _Q_prev2
+            _integ_c0 * Q_final + _integ_c1 * Q_prev + _integ_d1 * _dQdt_prev + _integ_c2 * _Q_prev2
         )
 
         return (
@@ -869,6 +1160,133 @@ def make_spineax_full_mna_solver(
     )
     logger.info("Created Spineax full MNA solver with cached symbolic factorization")
 
+    # Define cond_fn and body_fn at factory level to enable JAX tracing cache.
+    def cond_fn(state):
+        (
+            _,
+            iteration,
+            converged,
+            _,
+            _,
+            _,
+            _,
+            _,
+            _,
+            _,
+            _,
+            _,
+            _,
+            _,
+            _,
+            _,
+            _,
+            _,
+        ) = state
+        return jnp.logical_and(~converged, iteration < max_iterations)
+
+    def body_fn(state):
+        (
+            X,
+            iteration,
+            _,
+            _,
+            _,
+            _,
+            vsource_vals,
+            isource_vals,
+            Q_prev,
+            integ_c0,
+            device_arrays_arg,
+            gmin,
+            gshunt,
+            integ_c1,
+            integ_d1,
+            _dQdt_prev,
+            integ_c2,
+            _Q_prev2,
+        ) = state
+
+        J_bcoo, f, Q, _, _ = build_system_jit(
+            X,
+            vsource_vals,
+            isource_vals,
+            Q_prev,
+            integ_c0,
+            device_arrays_arg,
+            gmin,
+            gshunt,
+            integ_c1,
+            integ_d1,
+            _dQdt_prev,
+            integ_c2,
+            _Q_prev2,
+            None,  # limit_state_in
+        )
+
+        if residual_mask is not None:
+            f_masked = jnp.where(residual_mask, f, 0.0)
+            max_f = jnp.max(jnp.abs(f_masked))
+        else:
+            max_f = jnp.max(jnp.abs(f))
+        residual_converged = max_f < abstol
+
+        if use_precomputed:
+            coo_vals = J_bcoo.data
+            sorted_vals = coo_vals[coo_sort_perm]
+            csr_data = jax.ops.segment_sum(sorted_vals, csr_segment_ids, num_segments=nse)
+        else:
+            J_bcoo_dedup = J_bcoo.sum_duplicates(nse=nse)
+            J_bcsr = BCSR.from_bcoo(J_bcoo_dedup)
+            csr_data = J_bcsr.data
+
+        f_solve = f
+        if noi_row_mask is not None:
+            csr_data = csr_data.at[noi_row_mask].set(0.0)
+            csr_data = csr_data.at[noi_col_mask].set(0.0)
+            csr_data = csr_data.at[noi_diag_indices].set(1.0)
+            f_solve = f.at[noi_res_indices_arr].set(0.0)
+
+        delta, _info = spineax_solver(-f_solve, csr_data)
+
+        max_delta = jnp.max(jnp.abs(delta))
+        scale = jnp.where(max_delta > max_step, max_step / max_delta, 1.0)
+        delta = delta * scale
+
+        # Update X with damping for node voltages, direct update for branch currents
+        V_candidate = X[1:n_total] + delta[:n_unknowns]
+        V_damped = apply_voltage_damping(
+            V_candidate, X[1:n_total], DAMPING_VT, DAMPING_VCRIT, nr_damping=_NR_DAMPING
+        )
+        X_new = X.at[1:n_total].set(V_damped)
+        X_new = X_new.at[n_total:].add(delta[n_unknowns:])
+
+        if noi_indices is not None and len(noi_indices) > 0:
+            X_new = X_new.at[noi_indices].set(0.0)
+
+        delta_converged = max_delta < 1e-12
+        converged = jnp.logical_or(residual_converged, delta_converged)
+
+        return (
+            X_new,
+            iteration + 1,
+            converged,
+            max_f,
+            max_delta,
+            Q,
+            vsource_vals,
+            isource_vals,
+            Q_prev,
+            integ_c0,
+            device_arrays_arg,
+            gmin,
+            gshunt,
+            integ_c1,
+            integ_d1,
+            _dQdt_prev,
+            integ_c2,
+            _Q_prev2,
+        )
+
     def nr_solve(
         X_init: Array,
         vsource_vals: Array,
@@ -890,6 +1308,14 @@ def make_spineax_full_mna_solver(
         )
         _Q_prev2 = Q_prev2 if Q_prev2 is not None else jnp.zeros(n_unknowns, dtype=jnp.float64)
 
+        # Convert scalar parameters to JAX arrays to avoid weak_type retracing
+        _integ_c0 = jnp.asarray(integ_c0, dtype=jnp.float64)
+        _gmin = jnp.asarray(gmin, dtype=jnp.float64)
+        _gshunt = jnp.asarray(gshunt, dtype=jnp.float64)
+        _integ_c1 = jnp.asarray(integ_c1, dtype=jnp.float64)
+        _integ_d1 = jnp.asarray(integ_d1, dtype=jnp.float64)
+        _integ_c2 = jnp.asarray(integ_c2, dtype=jnp.float64)
+
         init_Q = jnp.zeros(n_unknowns, dtype=jnp.float64)
         init_state = (
             X_init,
@@ -898,101 +1324,62 @@ def make_spineax_full_mna_solver(
             jnp.array(jnp.inf),
             jnp.array(jnp.inf),
             init_Q,
+            vsource_vals,
+            isource_vals,
+            Q_prev,
+            _integ_c0,
+            device_arrays_arg,
+            _gmin,
+            _gshunt,
+            _integ_c1,
+            _integ_d1,
+            _dQdt_prev,
+            _integ_c2,
+            _Q_prev2,
         )
 
-        def cond_fn(state):
-            X, iteration, converged, max_f, max_delta, Q = state
-            return jnp.logical_and(~converged, iteration < max_iterations)
-
-        def body_fn(state):
-            X, iteration, _, _, _, _ = state
-
-            J_bcoo, f, Q, _, _ = build_system_jit(
-                X,
-                vsource_vals,
-                isource_vals,
-                Q_prev,
-                integ_c0,
-                device_arrays_arg,
-                gmin,
-                gshunt,
-                integ_c1,
-                integ_d1,
-                _dQdt_prev,
-                integ_c2,
-                _Q_prev2,
-                limit_state_in,
-            )
-
-            if residual_mask is not None:
-                f_masked = jnp.where(residual_mask, f, 0.0)
-                max_f = jnp.max(jnp.abs(f_masked))
-            else:
-                max_f = jnp.max(jnp.abs(f))
-            residual_converged = max_f < abstol
-
-            if use_precomputed:
-                coo_vals = J_bcoo.data
-                sorted_vals = coo_vals[coo_sort_perm]
-                csr_data = jax.ops.segment_sum(sorted_vals, csr_segment_ids, num_segments=nse)
-            else:
-                J_bcoo_dedup = J_bcoo.sum_duplicates(nse=nse)
-                J_bcsr = BCSR.from_bcoo(J_bcoo_dedup)
-                csr_data = J_bcsr.data
-
-            f_solve = f
-            if noi_row_mask is not None:
-                csr_data = csr_data.at[noi_row_mask].set(0.0)
-                csr_data = csr_data.at[noi_col_mask].set(0.0)
-                csr_data = csr_data.at[noi_diag_indices].set(1.0)
-                f_solve = f.at[noi_res_indices_arr].set(0.0)
-
-            delta, _info = spineax_solver(-f_solve, csr_data)
-
-            max_delta = jnp.max(jnp.abs(delta))
-            scale = jnp.where(max_delta > max_step, max_step / max_delta, 1.0)
-            delta = delta * scale
-
-            # Update X with damping for node voltages, direct update for branch currents
-            V_candidate = X[1:n_total] + delta[:n_unknowns]
-            V_damped = apply_voltage_damping(
-                V_candidate, X[1:n_total], DAMPING_VT, DAMPING_VCRIT, nr_damping=_NR_DAMPING
-            )
-            X_new = X.at[1:n_total].set(V_damped)
-            X_new = X_new.at[n_total:].add(delta[n_unknowns:])
-
-            if noi_indices is not None and len(noi_indices) > 0:
-                X_new = X_new.at[noi_indices].set(0.0)
-
-            delta_converged = max_delta < 1e-12
-            converged = jnp.logical_or(residual_converged, delta_converged)
-
-            return (X_new, iteration + 1, converged, max_f, max_delta, Q)
-
-        X_final, iterations, converged, max_f, max_delta, _ = lax.while_loop(
-            cond_fn, body_fn, init_state
-        )
+        result_state = lax.while_loop(cond_fn, body_fn, init_state)
+        (
+            X_final,
+            iterations,
+            converged,
+            max_f,
+            _,
+            _,
+            _,
+            _,
+            _,
+            _,
+            _,
+            _,
+            _,
+            _,
+            _,
+            _,
+            _,
+            _,
+        ) = result_state
 
         _, _, Q_final, I_vsource, limit_state_final = build_system_jit(
             X_final,
             vsource_vals,
             isource_vals,
             Q_prev,
-            integ_c0,
+            _integ_c0,
             device_arrays_arg,
-            gmin,
-            gshunt,
-            integ_c1,
-            integ_d1,
+            _gmin,
+            _gshunt,
+            _integ_c1,
+            _integ_d1,
             _dQdt_prev,
-            integ_c2,
+            _integ_c2,
             _Q_prev2,
-            limit_state_in,
+            None,  # limit_state_in
         )
 
         # Compute dQdt for next timestep
         dQdt_final = (
-            integ_c0 * Q_final + integ_c1 * Q_prev + integ_d1 * _dQdt_prev + integ_c2 * _Q_prev2
+            _integ_c0 * Q_final + _integ_c1 * Q_prev + _integ_d1 * _dQdt_prev + _integ_c2 * _Q_prev2
         )
 
         return (
