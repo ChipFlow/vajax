@@ -27,6 +27,36 @@ from jax import Array
 logger = logging.getLogger(__name__)
 
 
+def extract_all_sources(devices: List[Dict]) -> List[Dict]:
+    """Extract all independent sources for transfer function analysis.
+
+    Args:
+        devices: List of device dictionaries from circuit parsing
+
+    Returns:
+        List of source specifications with type, name, nodes, mag, dc
+    """
+    sources = []
+
+    for dev in devices:
+        if dev.get("model") in ("vsource", "isource"):
+            params = dev.get("params", {})
+            nodes = dev.get("nodes", [0, 0])
+
+            sources.append(
+                {
+                    "name": dev["name"],
+                    "type": dev["model"],
+                    "pos_node": nodes[0] if len(nodes) > 0 else 0,
+                    "neg_node": nodes[1] if len(nodes) > 1 else 0,
+                    "mag": float(params.get("mag", 0.0)),
+                    "dc": float(params.get("dc", 0.0)),
+                }
+            )
+
+    return sources
+
+
 # =============================================================================
 # DCINC (DC Incremental) Analysis
 # =============================================================================

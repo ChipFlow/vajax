@@ -4104,30 +4104,10 @@ class CircuitEngine:
         return result
 
     def _extract_all_sources(self) -> List[Dict]:
-        """Extract all independent sources for transfer function analysis.
+        """Extract all independent sources for transfer function analysis."""
+        from jax_spice.analysis.xfer import extract_all_sources
 
-        Returns:
-            List of source specifications with type, name, nodes, mag
-        """
-        sources = []
-
-        for dev in self.devices:
-            if dev["model"] in ("vsource", "isource"):
-                params = dev["params"]
-                nodes = dev.get("nodes", [0, 0])
-
-                sources.append(
-                    {
-                        "name": dev["name"],
-                        "type": dev["model"],
-                        "pos_node": nodes[0] if len(nodes) > 0 else 0,
-                        "neg_node": nodes[1] if len(nodes) > 1 else 0,
-                        "mag": float(params.get("mag", 0.0)),
-                        "dc": float(params.get("dc", 0.0)),
-                    }
-                )
-
-        return sources
+        return extract_all_sources(self.devices)
 
     # =========================================================================
     # Noise Analysis
