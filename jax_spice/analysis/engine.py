@@ -47,6 +47,9 @@ warnings.filterwarnings("ignore", category=MatrixRankWarning)
 # The engine uses its own nr_solve with analytic jacobians from OpenVAF
 from jax_spice import configure_xla_cache, get_float_dtype
 from jax_spice._logging import logger
+from jax_spice.analysis.dc_operating_point import (
+    compute_dc_operating_point as _compute_dc_op_impl,
+)
 from jax_spice.analysis.homotopy import (
     HomotopyConfig,
     run_homotopy_chain,
@@ -56,6 +59,13 @@ from jax_spice.analysis.integration import (
     get_method_from_options,
 )
 from jax_spice.analysis.options import SimulationOptions
+from jax_spice.analysis.parsing import (
+    build_devices as _build_devices_impl,
+)
+from jax_spice.analysis.parsing import (
+    flatten_instances,
+    parse_elaborate_directive,
+)
 from jax_spice.analysis.solver_factories import (
     make_dense_full_mna_solver,
 )
@@ -684,191 +694,31 @@ class CircuitEngine:
         return result
 
     def _parse_elaborate_directive(self) -> Optional[str]:
-        """Parse 'elaborate circuit("subckt_name")' directive from control block.
-
-        Returns subcircuit name to elaborate, or None if not found.
-        """
+        """Parse 'elaborate circuit("subckt_name")' directive from control block."""
         text = self.sim_path.read_text()
-        # Match: elaborate circuit("name") or elaborate circuit("name", "other")
-        match = re.search(r'elaborate\s+circuit\s*\(\s*"([^"]+)"', text)
-        if match:
-            return match.group(1)
-        return None
+        return parse_elaborate_directive(text)
 
     def _flatten_top_instances(self) -> List[Tuple[str, List[str], str, Dict[str, str]]]:
-        """Flatten subcircuit instances to leaf devices.
-
-        Returns list of (name, terminals, model, params) tuples for leaf devices.
-        Handles 'elaborate circuit("name")' directive if present.
-        """
-        from jax_spice.netlist.parser import Instance
-
-        flat_instances = []
-        ground = self.circuit.ground or "0"
-
-        # Check for elaborate directive
+        """Flatten subcircuit instances to leaf devices."""
         elaborate_subckt = self._parse_elaborate_directive()
-        if elaborate_subckt:
-            # Create synthetic top-level instance of the elaborated subcircuit
-            subckt = self.circuit.subckts.get(elaborate_subckt)
-            if subckt:
-                logger.debug(f"Elaborating subcircuit: {elaborate_subckt}")
-                # Create synthetic instance with no external ports
-                synthetic_inst = Instance(
-                    name="top",
-                    terminals=subckt.terminals,  # Map to global nodes with same names
-                    model=elaborate_subckt,
-                    params={},
-                )
-                self.circuit.top_instances.append(synthetic_inst)
-
-        # Parameters that should be kept as strings (not evaluated as expressions)
-        # wave is an array of time/value pairs for PWL sources
-        string_params = {"type", "wave"}
-
-        def eval_param_expr(key: str, expr: str, param_env: Dict[str, float]):
-            """Evaluate a parameter expression like 'w*pfact' or '2*(w+ld)'.
-
-            String parameters (like type="pulse") are preserved as-is.
-            """
-            if not isinstance(expr, str):
-                return float(expr)
-
-            # Check if this is a quoted string value - preserve it
-            stripped = expr.strip()
-            if (stripped.startswith('"') and stripped.endswith('"')) or (
-                stripped.startswith("'") and stripped.endswith("'")
-            ):
-                # Return the unquoted string
-                return stripped[1:-1]
-
-            # Check if this key should be kept as string
-            if key.lower() in string_params:
-                return stripped
-
-            # Use safe expression evaluator (no arbitrary code execution)
-            from jax_spice.utils.safe_eval import safe_eval_expr
-
-            return safe_eval_expr(expr, param_env, default=0.0)
-
-        def flatten_instance(
-            inst: Instance, prefix: str, port_map: Dict[str, str], param_env: Dict[str, float]
-        ):
-            """Recursively flatten an instance."""
-            model_name = inst.model
-
-            # Check if this is a subcircuit
-            subckt = self.circuit.subckts.get(model_name)
-            if subckt is None:
-                # Leaf device - map terminals and add to list
-                mapped_terminals = []
-                for t in inst.terminals:
-                    if t in port_map:
-                        mapped_terminals.append(port_map[t])
-                    elif t in self.circuit.globals or t == ground:
-                        mapped_terminals.append(t)
-                    elif prefix:
-                        mapped_terminals.append(f"{prefix}.{t}")
-                    else:
-                        mapped_terminals.append(t)
-
-                # Evaluate instance parameters with current environment
-                inst_params = {}
-                for k, v in inst.params.items():
-                    inst_params[k] = str(eval_param_expr(k, v, param_env))
-
-                flat_name = f"{prefix}.{inst.name}" if prefix else inst.name
-                flat_instances.append((flat_name, mapped_terminals, model_name, inst_params))
-            else:
-                # Subcircuit - recurse
-                # Build new port map
-                new_port_map = {}
-                for i, term in enumerate(subckt.terminals):
-                    if i < len(inst.terminals):
-                        inst_term = inst.terminals[i]
-                        if inst_term in port_map:
-                            new_port_map[term] = port_map[inst_term]
-                        elif inst_term in self.circuit.globals or inst_term == ground:
-                            new_port_map[term] = inst_term
-                        elif prefix:
-                            new_port_map[term] = f"{prefix}.{inst_term}"
-                        else:
-                            new_port_map[term] = inst_term
-
-                # Build new parameter environment
-                new_param_env = dict(param_env)
-                # Add subcircuit default params
-                for k, v in subckt.params.items():
-                    new_param_env[k] = eval_param_expr(k, v, new_param_env)
-                # Override with instance params
-                for k, v in inst.params.items():
-                    new_param_env[k] = eval_param_expr(k, v, param_env)
-
-                # New prefix
-                new_prefix = f"{prefix}.{inst.name}" if prefix else inst.name
-
-                # Flatten subcircuit instances
-                for sub_inst in subckt.instances:
-                    flatten_instance(sub_inst, new_prefix, new_port_map, new_param_env)
-
-        # Flatten all top-level instances
-        for inst in self.circuit.top_instances:
-            # Start with circuit-level parameters
-            param_env = {k: self.parse_spice_number(v) for k, v in self.circuit.params.items()}
-            flatten_instance(inst, "", {}, param_env)
-
-        return flat_instances
+        return flatten_instances(self.circuit, elaborate_subckt, self.parse_spice_number)
 
     def _build_devices(self):
         """Build device list from flattened instances."""
         import time
 
         t_start = time.perf_counter()
-
         logger.info(f"_build_devices(): starting with {len(self.flat_instances)} instances")
 
-        self.devices = []
-
-        # Parameters that should be kept as strings (not parsed as numbers)
-        # wave is an array of time/value pairs for PWL sources
-        STRING_PARAMS = {"type", "wave"}
-
-        for inst_name, inst_terminals, inst_model, inst_params in self.flat_instances:
-            model_name = inst_model.lower()
-            device_type = self._get_device_type(model_name)
-            nodes = [self.node_names[t] for t in inst_terminals]
-
-            # Get model parameters and instance parameters
-            model_params = self._get_model_params(model_name)
-
-            # Parse instance params, but keep string params as strings
-            parsed_params = {}
-            for k, v in inst_params.items():
-                if k in STRING_PARAMS:
-                    # Keep as string, strip quotes
-                    parsed_params[k] = str(v).strip('"').strip("'")
-                else:
-                    parsed_params[k] = self._parse_spice_number_cached(v)
-
-            # Merge model params with instance params (instance overrides model)
-            params = {**model_params, **parsed_params}
-
-            # Track if this is an OpenVAF device
-            is_openvaf = device_type in self.OPENVAF_MODELS
-
-            self.devices.append(
-                {
-                    "name": inst_name,
-                    "model": device_type,
-                    "nodes": nodes,
-                    "params": params,
-                    "original_params": parsed_params,  # Instance params before merge
-                    "is_openvaf": is_openvaf,
-                }
-            )
-
-            if is_openvaf:
-                self._has_openvaf_devices = True
+        # Use extracted function for core device building logic
+        self.devices, self._has_openvaf_devices = _build_devices_impl(
+            flat_instances=self.flat_instances,
+            node_names=self.node_names,
+            get_device_type=self._get_device_type,
+            get_model_params=self._get_model_params,
+            parse_number_cached=self._parse_spice_number_cached,
+            openvaf_models=self.OPENVAF_MODELS,
+        )
 
         t_loop = time.perf_counter()
         logger.info(f"_build_devices(): loop done in {t_loop - t_start:.1f}s")
@@ -2703,191 +2553,23 @@ class CircuitEngine:
     ) -> jax.Array:
         """Compute DC operating point using VACASK-style homotopy chain.
 
-        Uses the homotopy chain (gdev -> gshunt -> src) to find the DC operating
-        point even for difficult circuits like ring oscillators where simple
-        Newton-Raphson fails due to near-singular Jacobians.
-
-        Args:
-            n_nodes: Number of nodes in the system
-            n_vsources: Number of voltage sources
-            n_isources: Number of current sources
-            nr_solve: The cached NR solver function (used for fallback)
-            device_arrays: Dict[model_type, cache] - passed to nr_solve
-            backend: 'gpu' or 'cpu'
-            use_dense: Whether using dense solver
-            max_iterations: Maximum NR iterations per homotopy step
-            device_internal_nodes: Map of device name -> {node_name: circuit_node_idx}
-            source_device_data: Pre-computed source device stamp templates
-            vmapped_fns: Dict of vmapped OpenVAF functions per model type
-            static_inputs_cache: Dict of static inputs per model type
-
-        Returns:
-            DC operating point voltages (shape: [n_nodes])
+        Delegates to dc_operating_point.compute_dc_operating_point().
         """
-        logger.info("Computing DC operating point...")
-
-        # Find VDD value from voltage sources
-        vdd_value = self._get_vdd_value()
-
-        # Initialize V with a good starting point for convergence
-        mid_rail = vdd_value / 2.0
-        V = jnp.full(n_nodes, mid_rail, dtype=get_float_dtype())
-        V = V.at[0].set(0.0)  # Ground is always 0
-
-        # Set VDD nodes to full supply voltage (name-based heuristic)
-        for name, idx in self.node_names.items():
-            name_lower = name.lower()
-            if "vdd" in name_lower or "vcc" in name_lower:
-                V = V.at[idx].set(vdd_value)
-                logger.debug(f"  Initialized VDD node '{name}' (idx {idx}) to {vdd_value}V")
-            elif name_lower in ("gnd", "vss", "0"):
-                V = V.at[idx].set(0.0)
-                logger.debug(f"  Initialized ground node '{name}' (idx {idx}) to 0V")
-
-        # Initialize ALL voltage source nodes to their target DC values
-        # This is critical for convergence - vsource stamps have G=1e12, so
-        # any deviation from target creates residuals of order 1e12 * delta_V
-        vsources_initialized = 0
-        for dev in self.devices:
-            if dev["model"] == "vsource":
-                nodes = dev.get("nodes", [])
-                if len(nodes) >= 2:
-                    p_node, n_node = nodes[0], nodes[1]
-                    dc_val = float(dev["params"].get("dc", 0.0))
-                    if n_node == 0:
-                        # Negative node is ground, set positive node to DC value
-                        if p_node > 0:
-                            V = V.at[p_node].set(dc_val)
-                            vsources_initialized += 1
-                    else:
-                        # Both nodes non-ground - set relative voltage
-                        # Set p_node = n_node_voltage + dc_val
-                        # For now, if n_node is already set, adjust p_node
-                        if p_node > 0:
-                            V = V.at[p_node].set(float(V[n_node]) + dc_val)
-                            vsources_initialized += 1
-        if vsources_initialized > 0:
-            logger.debug(
-                f"  Initialized {vsources_initialized} voltage source nodes to target DC values"
-            )
-
-        # Initialize PSP103 internal nodes
-        noi_indices = []
-        if device_internal_nodes:
-            noi_nodes_initialized = 0
-            body_nodes_initialized = 0
-            device_external_nodes = {dev["name"]: dev.get("nodes", []) for dev in self.devices}
-
-            for dev_name, internal_nodes in device_internal_nodes.items():
-                if "node4" in internal_nodes:
-                    noi_idx = internal_nodes["node4"]
-                    V = V.at[noi_idx].set(0.0)
-                    noi_indices.append(noi_idx)
-                    noi_nodes_initialized += 1
-
-                ext_nodes = device_external_nodes.get(dev_name, [])
-                if len(ext_nodes) >= 4:
-                    b_circuit_node = ext_nodes[3]
-                    b_voltage = float(V[b_circuit_node])
-                    for body_node_name in ["node8", "node9", "node10", "node11"]:
-                        if body_node_name in internal_nodes:
-                            body_idx = internal_nodes[body_node_name]
-                            if body_idx > 0 and abs(V[body_idx] - mid_rail) < 0.01:
-                                V = V.at[body_idx].set(b_voltage)
-                                body_nodes_initialized += 1
-
-            if noi_nodes_initialized > 0:
-                logger.debug(f"  Initialized {noi_nodes_initialized} NOI nodes to 0V")
-            if body_nodes_initialized > 0:
-                logger.debug(f"  Initialized {body_nodes_initialized} body internal nodes")
-
-        noi_indices = jnp.array(noi_indices, dtype=jnp.int32) if noi_indices else None
-        logger.debug(f"  Initial V: ground=0V, VDD={vdd_value}V, others={mid_rail}V")
-
         # Get DC source values
         vsource_dc_vals, isource_dc_vals = self._get_dc_source_values(n_vsources, n_isources)
 
-        n_unknowns = n_nodes - 1
-        Q_prev = jnp.zeros(n_unknowns, dtype=get_float_dtype())
-
-        # First try direct NR without homotopy (works for well-initialized circuits)
-        # Uses analytic jacobians from OpenVAF via the cached nr_solve
-        logger.info("  Trying direct NR solver first...")
-        V_new, nr_iters, is_converged, max_f, _, _, _ = nr_solve(
-            V,
-            vsource_dc_vals,
-            isource_dc_vals,
-            Q_prev,
-            0.0,
-            device_arrays,  # integ_c0=0 for DC
+        return _compute_dc_op_impl(
+            n_nodes=n_nodes,
+            node_names=self.node_names,
+            devices=self.devices,
+            nr_solve=nr_solve,
+            device_arrays=device_arrays,
+            vsource_dc_vals=vsource_dc_vals,
+            isource_dc_vals=isource_dc_vals,
+            options=self.options,
+            vdd_value=self._get_vdd_value(),
+            device_internal_nodes=device_internal_nodes,
         )
-
-        if is_converged:
-            V = V_new
-            logger.info(
-                f"  DC operating point converged via direct NR "
-                f"({nr_iters} iters, residual={max_f:.2e})"
-            )
-        else:
-            # Fall back to homotopy chain using the cached NR solver
-            # This uses analytic jacobians (NOT autodiff)
-            logger.info("  Direct NR failed, trying homotopy chain...")
-
-            # Configure homotopy from SimulationOptions
-            homotopy_config = HomotopyConfig(
-                gmin=self.options.gmin,
-                gdev_start=self.options.homotopy_startgmin,
-                gdev_target=self.options.homotopy_mingmin,
-                gmin_factor=self.options.homotopy_gminfactor,
-                gmin_factor_min=self.options.homotopy_mingminfactor,
-                gmin_factor_max=self.options.homotopy_maxgminfactor,
-                gmin_max=self.options.homotopy_maxgmin,
-                gmin_max_steps=self.options.homotopy_gminsteps,
-                source_step=self.options.homotopy_srcstep,
-                source_step_min=self.options.homotopy_minsrcstep,
-                source_scale=self.options.homotopy_srcscale,
-                source_max_steps=self.options.homotopy_srcsteps,
-                chain=self.options.op_homotopy,
-                max_iterations=self.options.op_itlcont,
-                abstol=self.options.abstol,
-                debug=0,
-            )
-
-            result = run_homotopy_chain(
-                nr_solve,
-                V,
-                vsource_dc_vals,
-                isource_dc_vals,
-                Q_prev,
-                device_arrays,
-                homotopy_config,
-            )
-
-            if result.converged:
-                V = result.V
-                logger.info(
-                    f"  DC operating point converged via {result.method} "
-                    f"({result.iterations} total iters, {result.homotopy_steps} homotopy steps)"
-                )
-            else:
-                logger.warning(f"  Homotopy chain did not converge (method={result.method})")
-                # For oscillator circuits, accept the best solution we have
-                # The DC operating point might be metastable anyway
-                V = result.V
-                logger.info("  Using best available solution for metastable circuit")
-
-        # Clamp NOI nodes after DC solution
-        if noi_indices is not None:
-            V = V.at[noi_indices].set(0.0)
-
-        # Log key node voltages
-        n_external = self.num_nodes
-        logger.info(f"  DC solution: {min(n_external, 5)} node voltages:")
-        for i in range(min(n_external, 5)):
-            name = next((n for n, idx in self.node_names.items() if idx == i), str(i))
-            logger.info(f"    Node {name} (idx {i}): {float(V[i]):.6f}V")
-
-        return V
 
     def _get_source_fn_for_device(self, dev: Dict):
         """Get the source function for a device, or None if not a source."""
