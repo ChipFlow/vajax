@@ -21,6 +21,8 @@ from typing import TYPE_CHECKING, Dict, List, Optional
 import jax.numpy as jnp
 import numpy as np
 
+from jax_spice.analysis.node_setup import setup_internal_nodes
+
 if TYPE_CHECKING:
     from jax_spice.analysis.engine import CircuitEngine
 
@@ -148,7 +150,7 @@ class SimulationTracer:
     def get_node_allocation(self) -> NodeAllocation:
         """Get node allocation information.
 
-        Calls _setup_internal_nodes() if not already done.
+        Calls setup_internal_nodes() if not already done.
 
         Returns:
             NodeAllocation with external and internal node mappings.
@@ -161,7 +163,12 @@ class SimulationTracer:
         num_external = self.engine.num_nodes
 
         # Set up internal nodes (this may have already been done)
-        n_total, device_internal_nodes = self.engine._setup_internal_nodes()
+        n_total, device_internal_nodes = setup_internal_nodes(
+            devices=self.engine.devices,
+            num_nodes=self.engine.num_nodes,
+            compiled_models=self.engine._compiled_models,
+            device_collapse_decisions=self.engine._device_collapse_decisions,
+        )
         self._device_internal_nodes = device_internal_nodes
 
         num_internal = n_total - num_external

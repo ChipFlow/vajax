@@ -27,6 +27,7 @@ MAX_STEPS_ENV = int(os.environ.get("JAX_SPICE_MAX_STEPS", "0"))
 
 from jax_spice._logging import enable_performance_logging, logger
 from jax_spice.analysis import CircuitEngine
+from jax_spice.analysis.node_setup import setup_internal_nodes
 from jax_spice.benchmarks.registry import (
     BENCHMARKS,
     BenchmarkInfo,
@@ -269,7 +270,12 @@ class TestNodeCountComparison:
 
         engine = CircuitEngine(info.sim_path)
         engine.parse()
-        n_total, _ = engine._setup_internal_nodes()
+        n_total, _ = setup_internal_nodes(
+            devices=engine.devices,
+            num_nodes=engine.num_nodes,
+            compiled_models=engine._compiled_models,
+            device_collapse_decisions=engine._device_collapse_decisions,
+        )
 
         logger.info(f"\n{benchmark_name}:")
         logger.info(f"  VACASK: nodes={vacask_counts['nodes']}, unknowns={vacask_unknowns}")
@@ -291,7 +297,12 @@ class TestNodeCountComparison:
 
         engine = CircuitEngine(info.sim_path)
         engine.parse()
-        n_total, _ = engine._setup_internal_nodes()
+        n_total, _ = setup_internal_nodes(
+            devices=engine.devices,
+            num_nodes=engine.num_nodes,
+            compiled_models=engine._compiled_models,
+            device_collapse_decisions=engine._device_collapse_decisions,
+        )
 
         logger.info("\nc6288:")
         logger.info(f"  VACASK: nodes={vacask_counts['nodes']}, unknowns={vacask_unknowns}")
@@ -316,7 +327,12 @@ class TestNodeCollapseStandalone:
         engine = CircuitEngine(info.sim_path)
         engine.parse()
 
-        n_total, _ = engine._setup_internal_nodes()
+        n_total, _ = setup_internal_nodes(
+            devices=engine.devices,
+            num_nodes=engine.num_nodes,
+            compiled_models=engine._compiled_models,
+            device_collapse_decisions=engine._device_collapse_decisions,
+        )
         n_internal = n_total - engine.num_nodes
         n_psp103 = sum(1 for d in engine.devices if d.get("model") == "psp103")
 
@@ -342,7 +358,12 @@ class TestNodeCollapseStandalone:
         engine = CircuitEngine(info.sim_path)
         engine.parse()
 
-        n_total, _ = engine._setup_internal_nodes()
+        n_total, _ = setup_internal_nodes(
+            devices=engine.devices,
+            num_nodes=engine.num_nodes,
+            compiled_models=engine._compiled_models,
+            device_collapse_decisions=engine._device_collapse_decisions,
+        )
         n_psp103 = sum(1 for d in engine.devices if d.get("model") == "psp103")
 
         logger.info("\nring node collapse:")
