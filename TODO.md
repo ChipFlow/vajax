@@ -135,6 +135,25 @@ This issue is likely caused by the array sizes for the while loop (scan mode)
 
 **Note**: These are rarely-used fallback methods for difficult convergence cases. Low priority.
 
+### NR Device Bypass Infrastructure
+
+**Status**: Not implemented. VACASK has device bypass optimization that we don't support.
+
+**VACASK options** (from `simulation_options.md`):
+- `nr_bypass` (default 0): Enable instance bypass - skip device re-evaluation when inputs barely changed
+- `nr_contbypass` (default 1): Allow forced bypass in first NR iteration of continuation mode
+- `nr_bypasstol` (default 0.01): Bypass tolerance factor for instance input check
+
+**Current behavior**: We always evaluate all devices every iteration, which matches `nr_bypass=0`.
+
+**Impact**: Performance only. With `nr_bypass=0` (disabled), correctness is unaffected.
+The graetz benchmark uses `nr_bypass=0 nr_contbypass=1`, so our current behavior is correct.
+
+**Implementation notes**:
+- Would require tracking previous device inputs and comparing against tolerance
+- GPU batched evaluation may not benefit much from bypass (branch divergence)
+- Low priority unless profiling shows device evaluation as bottleneck
+
 ### Clean Up Legacy Transient Code Paths
 
 **Status**: COMPLETED
