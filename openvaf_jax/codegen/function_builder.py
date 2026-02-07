@@ -783,6 +783,7 @@ class EvalFunctionBuilder(FunctionBuilder):
                                 varying_cache_indices: Optional[List[int]] = None,
                                 simparam_params: Optional[Dict[int, str]] = None,
                                 use_limit_functions: bool = False,
+                                limit_param_map: Optional[Dict[int, Tuple[str, str]]] = None,
                                 ) -> Tuple[str, List[str]]:
         """Build eval function with split params and optional split cache.
 
@@ -799,6 +800,10 @@ class EvalFunctionBuilder(FunctionBuilder):
                                 enabled, the generated function has an additional
                                 'limit_funcs' parameter that should be a dict like:
                                 {'pnjlim': pnjlim_fn, 'fetlim': fetlim_fn}
+            limit_param_map: Dict mapping original param indices to (kind, name) tuples
+                            for limit-related params (prev_state, enable_lim, new_state,
+                            enable_integration). These are read from limit_state_in or
+                            set to constants instead of shared/device params.
 
         Returns:
             Tuple of (function_name, code_lines)
@@ -807,6 +812,7 @@ class EvalFunctionBuilder(FunctionBuilder):
         shared_cache_indices = shared_cache_indices or []
         varying_cache_indices = varying_cache_indices or []
         simparam_params = simparam_params or {}
+        limit_param_map = limit_param_map or {}
 
         # Build index mappings
         idx_mapping: Dict[int, Tuple[str, int]] = {}
@@ -817,6 +823,20 @@ class EvalFunctionBuilder(FunctionBuilder):
         # Add simparam mappings - these will be handled specially in _emit_param_mapping
         for orig_idx, simparam_name in simparam_params.items():
             idx_mapping[orig_idx] = ('simparam', simparam_name)
+        # Add limit param mappings - read from limit_state_in or use constants
+        for orig_idx, (kind, name) in limit_param_map.items():
+            if kind == 'prev_state':
+                # Extract state index from name (e.g., "prev_state_0" -> 0)
+                state_idx = int(name.split('_')[-1])
+                idx_mapping[orig_idx] = ('prev_state', state_idx)
+            elif kind == 'enable_lim':
+                idx_mapping[orig_idx] = ('enable_lim', 1.0 if use_limit_functions else 0.0)
+            elif kind == 'new_state':
+                # new_state is written via StoreLimit, initialize to 0
+                idx_mapping[orig_idx] = ('new_state', 0)
+            elif kind == 'enable_integration':
+                # 0.0 for DC, could be 1.0 for transient if needed
+                idx_mapping[orig_idx] = ('enable_integration', 0.0)
 
         # Build cache index mappings
         cache_idx_mapping: Dict[int, Tuple[str, int]] = {}
@@ -948,6 +968,19 @@ class EvalFunctionBuilder(FunctionBuilder):
                     simparam_idx = ctx.register_simparam(simparam_name)
                     body.append(assign(var_name,
                         subscript(ast_name('simparams'), ast_const(simparam_idx))))
+                elif source == 'prev_state':
+                    # Read previous iteration's limited voltage from limit_state_in[N]
+                    body.append(assign(var_name,
+                        subscript(ast_name('limit_state_in'), ast_const(value))))
+                elif source == 'enable_lim':
+                    # Constant flag: 1.0 when limiting enabled, 0.0 otherwise
+                    body.append(assign(var_name, ast_const(value)))
+                elif source == 'new_state':
+                    # Output state - initialized to 0, written via StoreLimit
+                    body.append(assign(var_name, ast_const(0.0)))
+                elif source == 'enable_integration':
+                    # Integration enable flag (0.0 for DC, 1.0 for transient)
+                    body.append(assign(var_name, ast_const(value)))
             else:
                 # Fallback: derivative selector params default to 0
                 body.append(assign(var_name, ast_const(0)))
@@ -1029,21 +1062,16 @@ class EvalFunctionBuilder(FunctionBuilder):
 
         The corrected residual becomes:
             f_corrected = f_computed - lim_rhs
+
+        NOTE: OpenVAF's MIR does not actually compute resist_lim_rhs values.
+        The MIR indices point to uninitialized (zero) variables, but the generated
+        code uses them in a formula like `J * (0 - V_raw)` which produces incorrect
+        corrections. Until proper lim_rhs computation is implemented, emit zeros
+        to avoid corrupting the residual.
         """
-        resist_exprs: List[ast.expr] = []
-        react_exprs: List[ast.expr] = []
-
-        for res in self.dae_data['residuals']:
-            # Get lim_rhs variables if they exist
-            resist_lim_rhs_var = self._mir_to_var(res.get('resist_lim_rhs_var', ''), ctx)
-            react_lim_rhs_var = self._mir_to_var(res.get('react_lim_rhs_var', ''), ctx)
-
-            resist_exprs.append(
-                ast_name(resist_lim_rhs_var) if resist_lim_rhs_var in ctx.defined_vars
-                else ctx.zero())
-            react_exprs.append(
-                ast_name(react_lim_rhs_var) if react_lim_rhs_var in ctx.defined_vars
-                else ctx.zero())
+        n_residuals = len(self.dae_data['residuals'])
+        resist_exprs: List[ast.expr] = [ctx.zero() for _ in range(n_residuals)]
+        react_exprs: List[ast.expr] = [ctx.zero() for _ in range(n_residuals)]
 
         body.append(assign('lim_rhs_resist', jnp_call('array', list_expr(resist_exprs))))
         body.append(assign('lim_rhs_react', jnp_call('array', list_expr(react_exprs))))

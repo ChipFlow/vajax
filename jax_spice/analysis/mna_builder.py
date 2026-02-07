@@ -198,6 +198,8 @@ def make_mna_build_system_fn(
             "default_simparams": compiled.get(
                 "default_simparams", jnp.array([0.0, 1.0, 1e-12])
             ),
+            # Simparam metadata for correct index lookup
+            "simparam_indices": compiled.get("simparam_indices", {}),
             # Device-level limiting info
             "use_device_limiting": compiled.get("use_device_limiting", False),
             "num_limit_states": num_limit_states,
@@ -257,6 +259,7 @@ def make_mna_build_system_fn(
         integ_c2: float | Array = 0.0,
         Q_prev2: Array | None = None,
         limit_state_in: Array | None = None,
+        nr_iteration: int | Array = 1,
     ) -> Tuple[Any, Array, Array, Array, Array]:
         """Build augmented Jacobian J and residual f for MNA.
 
@@ -275,6 +278,7 @@ def make_mna_build_system_fn(
             gmin_arg, gshunt: Regularization parameters
             integ_c1, integ_d1, dQdt_prev, integ_c2, Q_prev2: Integration history
             limit_state_in: Flat array of all limit states from previous iteration
+            nr_iteration: Current NR iteration number (1-based). Used for iniLim/iteration simparams.
 
         Returns:
             J: Augmented Jacobian matrix (n_unknowns+n_vsources)²
@@ -341,11 +345,30 @@ def make_mna_build_system_fn(
 
             vmapped_split_eval = split_info["vmapped_split_eval"]
             default_simparams = split_info["default_simparams"]
+            simparam_indices = split_info.get("simparam_indices", {})
             use_device_limiting = split_info.get("use_device_limiting", False)
             num_limit_states = split_info.get("num_limit_states", 0)
 
+            # Build simparams using correct indices from the model's metadata
             analysis_type_val = jnp.where(integ_c0 > 0, 2.0, 0.0)
-            simparams = default_simparams.at[0].set(analysis_type_val).at[2].set(gmin_arg)
+            # VACASK: iniLim=1 on first NR iteration, 0 otherwise (coreopnr.cpp:716)
+            iniLim_val = jnp.where(nr_iteration == 1, 1.0, 0.0)
+
+            simparams = default_simparams
+            # Set analysis_type if present
+            if "$analysis_type" in simparam_indices:
+                simparams = simparams.at[simparam_indices["$analysis_type"]].set(analysis_type_val)
+            # Set gmin if present
+            if "gmin" in simparam_indices:
+                simparams = simparams.at[simparam_indices["gmin"]].set(gmin_arg)
+            # Set iniLim if present (VACASK initialize_limiting support)
+            if "iniLim" in simparam_indices:
+                simparams = simparams.at[simparam_indices["iniLim"]].set(iniLim_val)
+            # Set iteration if present
+            if "iteration" in simparam_indices:
+                simparams = simparams.at[simparam_indices["iteration"]].set(
+                    jnp.asarray(nr_iteration, dtype=default_simparams.dtype)
+                )
 
             # Get limit_state slice for this model type
             n_dev = split_info["n_devices"]

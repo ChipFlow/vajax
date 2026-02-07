@@ -28,6 +28,7 @@ Example usage:
 """
 
 import logging
+import os
 import time
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
@@ -1222,6 +1223,7 @@ class OpenVAFToJAX:
         shared_cache_indices: Optional[List[int]] = None,
         varying_cache_indices: Optional[List[int]] = None,
         use_limit_functions: bool = False,
+        limit_param_map: Optional[Dict[int, Tuple[str, str]]] = None,
     ) -> Tuple[Callable, Dict]:
         """Generate a vmappable eval function with split params and cache (internal API).
 
@@ -1236,6 +1238,9 @@ class OpenVAFToJAX:
                                 When enabled, the generated function has an additional
                                 'limit_funcs' parameter that should be a dict like:
                                 {'pnjlim': pnjlim_fn, 'fetlim': fetlim_fn}
+            limit_param_map: Dict mapping original param indices to (kind, name) tuples
+                            for limit-related params (prev_state, enable_lim, new_state,
+                            enable_integration). Excluded from shared/device params.
 
         Returns:
             Tuple of (eval_fn, metadata)
@@ -1273,7 +1278,8 @@ class OpenVAFToJAX:
         fn_name, code_lines = builder.build_with_cache_split(
             shared_indices, varying_indices,
             shared_cache_indices, varying_cache_indices,
-            use_limit_functions=use_limit_functions
+            use_limit_functions=use_limit_functions,
+            limit_param_map=limit_param_map,
         )
 
         t1 = time.perf_counter()
@@ -1281,6 +1287,21 @@ class OpenVAFToJAX:
 
         code = '\n'.join(code_lines)
         logger.info(f"    translate_eval_array_with_cache_split: code size = {len(code)} chars")
+
+        # Dump generated code when OPENVAF_JAX_DUMP_CODE=1 is set
+        if os.environ.get("OPENVAF_JAX_DUMP_CODE"):
+            import hashlib
+            dump_dir = os.path.expanduser("~/.cache/jax_spice/openvaf_codegen_dump")
+            os.makedirs(dump_dir, exist_ok=True)
+            code_hash = hashlib.sha256(code.encode()).hexdigest()[:8]
+            dump_path = os.path.join(dump_dir, f"{fn_name}_{code_hash}_{len(code_lines)}lines.py")
+            with open(dump_path, 'w') as df:
+                df.write(f"# limit_param_map={limit_param_map}\n")
+                df.write(f"# use_limit_functions={use_limit_functions}\n")
+                df.write(f"# shared_indices={shared_indices}\n")
+                df.write(f"# varying_indices={varying_indices}\n")
+                df.write(code)
+            logger.info(f"    Generated code dumped to {dump_path}")
 
         # Compile with caching
         logger.info("    translate_eval_array_with_cache_split: exec()...")
@@ -1301,6 +1322,9 @@ class OpenVAFToJAX:
         ]
         cache_to_param = [m['eval_param'] for m in self.cache_mapping]
 
+        # Get simparam metadata from builder
+        simparam_meta = builder.simparam_metadata
+
         metadata = {
             'node_names': node_names,
             'node_indices': node_indices,
@@ -1320,6 +1344,10 @@ class OpenVAFToJAX:
             'varying_cache_indices': varying_cache_indices,
             'use_limit_functions': use_limit_functions,
             'limit_metadata': builder.limit_metadata if use_limit_functions else None,
+            # Simparam metadata for building the simparams array
+            'simparams_used': simparam_meta.get('simparams_used', ['$analysis_type']),
+            'simparam_indices': simparam_meta.get('simparam_indices', {'$analysis_type': 0}),
+            'simparam_count': simparam_meta.get('simparam_count', 1),
         }
 
         return eval_fn, metadata

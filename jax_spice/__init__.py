@@ -181,7 +181,7 @@ def get_float_dtype():
 # Simparam helpers (VAMS-LRM Table 9-27)
 # =============================================================================
 
-# Default simparam values per VAMS-LRM
+# Default simparam values per VAMS-LRM and VACASK extensions
 SIMPARAM_DEFAULTS = {
     "$analysis_type": 0.0,  # 0=DC, 1=AC, 2=transient, 3=noise
     "gmin": 1e-12,  # Minimum conductance (S)
@@ -194,6 +194,11 @@ SIMPARAM_DEFAULTS = {
     "imax": 1.0,  # Branch current limit (A)
     "$abstime": 0.0,  # Absolute simulation time (s)
     "$mfactor": 1.0,  # Device multiplicity factor
+    # VACASK extensions for limiting and iteration control
+    "iniLim": 0.0,  # 1=initialize limiting (first NR iter), 0=normal eval
+    "iteration": 1.0,  # Current NR iteration number (1-based)
+    "gdev": 0.0,  # Extra conductance during homotopy (S)
+    "sourceScaleFactor": 1.0,  # Source scaling during homotopy
 }
 
 

@@ -810,8 +810,21 @@ def prepare_static_inputs(
         shared_cache = cache[0, shared_cache_indices]
         device_cache = cache[:, varying_cache_indices]
 
-        # Default simparams
-        default_simparams = jnp.array([0.0, 1.0, 1e-12], dtype=get_float_dtype())
+        # Build default simparams from model metadata
+        simparams_used = split_meta.get('simparams_used', ['$analysis_type', '$mfactor', 'gmin'])
+        simparam_count = split_meta.get('simparam_count', len(simparams_used))
+        # Import defaults from jax_spice
+        from jax_spice import SIMPARAM_DEFAULTS
+        default_simparams_list = []
+        for name in simparams_used:
+            if name in SIMPARAM_DEFAULTS:
+                default_simparams_list.append(float(SIMPARAM_DEFAULTS[name]))
+            else:
+                # Unknown simparam - use 0.0 and log warning
+                logger.warning(f"{model_type}: unknown simparam '{name}', using 0.0")
+                default_simparams_list.append(0.0)
+        default_simparams = jnp.array(default_simparams_list, dtype=get_float_dtype())
+        logger.info(f"{model_type}: simparams_used={simparams_used}, count={simparam_count}")
 
         # Voltage positions in device_params
         varying_idx_to_pos = {orig_idx: pos for pos, orig_idx in enumerate(varying_indices_list)}
@@ -831,6 +844,8 @@ def prepare_static_inputs(
         compiled["shared_cache_indices"] = shared_cache_indices
         compiled["varying_cache_indices"] = varying_cache_indices
         compiled["default_simparams"] = default_simparams
+        compiled["simparams_used"] = simparams_used
+        compiled["simparam_indices"] = split_meta.get('simparam_indices', {})
         compiled["use_device_limiting"] = use_device_limiting
         compiled["limit_param_map"] = limit_param_map
 

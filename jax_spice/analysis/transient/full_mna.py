@@ -711,7 +711,8 @@ class FullMNAStrategy(TransientStrategy):
                 None,
                 0.0,
                 None,
-                None,  # Last None is limit_state_in
+                None,  # limit_state_in
+                1,  # nr_iteration=1 for initial Q computation (iniLim=1)
             )
             logger.info(
                 f"{self.name}: Initial state - Q_max={float(jnp.max(jnp.abs(Q_init))):.2e}, "
