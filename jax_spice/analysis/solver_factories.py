@@ -158,15 +158,25 @@ def make_dense_full_mna_solver(
     # Extract options (captured at trace time, not JAX values)
     nr_damping = options.nr_damping if options is not None else 1.0
 
-    # System-level convergence uses abstol directly (VACASK docs: "Two Levels of Convergence")
-    # nr_convtol is only for per-instance change checks (bypass optimization), not implemented here
-    effective_abstol = abstol
+    # Extract convergence tolerances from options
     vntol = options.vntol if options is not None else 1e-6
     reltol = options.reltol if options is not None else 1e-3
     n_unknowns = n_nodes - 1
     n_total = n_nodes  # Size of voltage part of X
-    # Per-unknown absolute tolerance for VACASK-style delta convergence
-    # Voltages use vntol, branch currents use abstol
+
+    # Per-equation absolute tolerance for residual convergence check.
+    # Uses vntol (1e-6) as a uniform floor for all equations. The residual check
+    # is a safety net — the delta check (with per-unknown tolerances) is the
+    # primary VACASK-style convergence criterion. Using raw abstol (1e-12) for
+    # KCL equations is too tight for stiff circuits (large capacitors create
+    # condition numbers ~1e11 that limit achievable residual precision).
+    residual_abs_tol = jnp.concatenate([
+        jnp.full(n_unknowns, vntol, dtype=jnp.float64),
+        jnp.full(n_vsources, vntol, dtype=jnp.float64),
+    ])
+
+    # Per-unknown absolute tolerance for VACASK-style delta convergence check.
+    # Voltage unknowns use vntol, branch current unknowns use abstol.
     delta_abs_tol = jnp.concatenate([
         jnp.full(n_unknowns, vntol, dtype=jnp.float64),
         jnp.full(n_vsources, abstol, dtype=jnp.float64),
@@ -256,13 +266,13 @@ def make_dense_full_mna_solver(
             iteration,  # NR iteration for iniLim/iteration simparams
         )
 
-        # Check residual convergence (mask NOI nodes)
+        # Check residual convergence with per-equation tolerances (mask NOI nodes)
         if residual_mask is not None:
-            f_masked = jnp.where(residual_mask, f, 0.0)
-            max_f = jnp.max(jnp.abs(f_masked))
+            f_check = jnp.where(residual_mask, f, 0.0)
         else:
-            max_f = jnp.max(jnp.abs(f))
-        residual_converged = max_f < effective_abstol
+            f_check = f
+        max_f = jnp.max(jnp.abs(f_check))
+        residual_converged = jnp.all(jnp.abs(f_check) < residual_abs_tol)
 
         # Enforce NOI constraints on node equations only
         if noi_res_idx is not None:
@@ -503,9 +513,8 @@ def make_sparse_full_mna_solver(
     """
     # Extract options (captured at trace time, not JAX values)
     nr_damping = options.nr_damping if options is not None else 1.0
-    # System-level convergence uses abstol directly (VACASK docs: "Two Levels of Convergence")
-    # nr_convtol is only for per-instance change checks (bypass optimization), not implemented here
-    effective_abstol = abstol
+
+    # Extract convergence tolerances from options
     vntol = options.vntol if options is not None else 1e-6
     reltol = options.reltol if options is not None else 1e-3
     from jax.experimental.sparse import BCSR
@@ -513,6 +522,20 @@ def make_sparse_full_mna_solver(
 
     n_unknowns = n_nodes - 1
     n_total = n_nodes  # Size of voltage part of X
+
+    # Per-equation absolute tolerance for residual convergence check.
+    # Uses vntol (1e-6) as a uniform floor for all equations. The residual check
+    # is a safety net — the delta check (with per-unknown tolerances) is the
+    # primary VACASK-style convergence criterion. Using raw abstol (1e-12) for
+    # KCL equations is too tight for stiff circuits (large capacitors create
+    # condition numbers ~1e11 that limit achievable residual precision).
+    residual_abs_tol = jnp.concatenate([
+        jnp.full(n_unknowns, vntol, dtype=jnp.float64),
+        jnp.full(n_vsources, vntol, dtype=jnp.float64),
+    ])
+
+    # Per-unknown absolute tolerance for VACASK-style delta convergence check.
+    # Voltage unknowns use vntol, branch current unknowns use abstol.
     delta_abs_tol = jnp.concatenate([
         jnp.full(n_unknowns, vntol, dtype=jnp.float64),
         jnp.full(n_vsources, abstol, dtype=jnp.float64),
@@ -608,13 +631,13 @@ def make_sparse_full_mna_solver(
             iteration,  # NR iteration for iniLim/iteration simparams
         )
 
-        # Check residual convergence
+        # Check residual convergence with per-equation tolerances (mask NOI nodes)
         if residual_mask is not None:
-            f_masked = jnp.where(residual_mask, f, 0.0)
-            max_f = jnp.max(jnp.abs(f_masked))
+            f_check = jnp.where(residual_mask, f, 0.0)
         else:
-            max_f = jnp.max(jnp.abs(f))
-        residual_converged = max_f < effective_abstol
+            f_check = f
+        max_f = jnp.max(jnp.abs(f_check))
+        residual_converged = jnp.all(jnp.abs(f_check) < residual_abs_tol)
 
         if use_precomputed:
             # Fast path: pre-computed COO→CSR
@@ -852,9 +875,7 @@ def make_umfpack_full_mna_solver(
     # Extract options (captured at trace time, not JAX values)
     nr_damping = options.nr_damping if options is not None else 1.0
 
-    # System-level convergence uses abstol directly (VACASK docs: "Two Levels of Convergence")
-    # nr_convtol is only for per-instance change checks (bypass optimization), not implemented here
-    effective_abstol = abstol
+    # Extract convergence tolerances from options
     vntol = options.vntol if options is not None else 1e-6
     reltol = options.reltol if options is not None else 1e-3
 
@@ -864,6 +885,20 @@ def make_umfpack_full_mna_solver(
 
     n_unknowns = n_nodes - 1
     n_total = n_nodes
+
+    # Per-equation absolute tolerance for residual convergence check.
+    # Uses vntol (1e-6) as a uniform floor for all equations. The residual check
+    # is a safety net — the delta check (with per-unknown tolerances) is the
+    # primary VACASK-style convergence criterion. Using raw abstol (1e-12) for
+    # KCL equations is too tight for stiff circuits (large capacitors create
+    # condition numbers ~1e11 that limit achievable residual precision).
+    residual_abs_tol = jnp.concatenate([
+        jnp.full(n_unknowns, vntol, dtype=jnp.float64),
+        jnp.full(n_vsources, vntol, dtype=jnp.float64),
+    ])
+
+    # Per-unknown absolute tolerance for VACASK-style delta convergence check.
+    # Voltage unknowns use vntol, branch current unknowns use abstol.
     delta_abs_tol = jnp.concatenate([
         jnp.full(n_unknowns, vntol, dtype=jnp.float64),
         jnp.full(n_vsources, abstol, dtype=jnp.float64),
@@ -954,13 +989,13 @@ def make_umfpack_full_mna_solver(
             iteration,  # NR iteration for iniLim/iteration simparams
         )
 
-        # Check residual convergence
+        # Check residual convergence with per-equation tolerances (mask NOI nodes)
         if residual_mask is not None:
-            f_masked = jnp.where(residual_mask, f, 0.0)
-            max_f = jnp.max(jnp.abs(f_masked))
+            f_check = jnp.where(residual_mask, f, 0.0)
         else:
-            max_f = jnp.max(jnp.abs(f))
-        residual_converged = max_f < effective_abstol
+            f_check = f
+        max_f = jnp.max(jnp.abs(f_check))
+        residual_converged = jnp.all(jnp.abs(f_check) < residual_abs_tol)
 
         if use_precomputed:
             coo_vals = J_bcoo.data
@@ -1178,9 +1213,8 @@ def make_spineax_full_mna_solver(
     """
     # Extract options (captured at trace time, not JAX values)
     nr_damping = options.nr_damping if options is not None else 1.0
-    # System-level convergence uses abstol directly (VACASK docs: "Two Levels of Convergence")
-    # nr_convtol is only for per-instance change checks (bypass optimization), not implemented here
-    effective_abstol = abstol
+
+    # Extract convergence tolerances from options
     vntol = options.vntol if options is not None else 1e-6
     reltol = options.reltol if options is not None else 1e-3
 
@@ -1189,6 +1223,20 @@ def make_spineax_full_mna_solver(
 
     n_unknowns = n_nodes - 1
     n_total = n_nodes
+
+    # Per-equation absolute tolerance for residual convergence check.
+    # Uses vntol (1e-6) as a uniform floor for all equations. The residual check
+    # is a safety net — the delta check (with per-unknown tolerances) is the
+    # primary VACASK-style convergence criterion. Using raw abstol (1e-12) for
+    # KCL equations is too tight for stiff circuits (large capacitors create
+    # condition numbers ~1e11 that limit achievable residual precision).
+    residual_abs_tol = jnp.concatenate([
+        jnp.full(n_unknowns, vntol, dtype=jnp.float64),
+        jnp.full(n_vsources, vntol, dtype=jnp.float64),
+    ])
+
+    # Per-unknown absolute tolerance for VACASK-style delta convergence check.
+    # Voltage unknowns use vntol, branch current unknowns use abstol.
     delta_abs_tol = jnp.concatenate([
         jnp.full(n_unknowns, vntol, dtype=jnp.float64),
         jnp.full(n_vsources, abstol, dtype=jnp.float64),
@@ -1283,12 +1331,13 @@ def make_spineax_full_mna_solver(
             iteration,  # NR iteration for iniLim/iteration simparams
         )
 
+        # Check residual convergence with per-equation tolerances (mask NOI nodes)
         if residual_mask is not None:
-            f_masked = jnp.where(residual_mask, f, 0.0)
-            max_f = jnp.max(jnp.abs(f_masked))
+            f_check = jnp.where(residual_mask, f, 0.0)
         else:
-            max_f = jnp.max(jnp.abs(f))
-        residual_converged = max_f < effective_abstol
+            f_check = f
+        max_f = jnp.max(jnp.abs(f_check))
+        residual_converged = jnp.all(jnp.abs(f_check) < residual_abs_tol)
 
         if use_precomputed:
             coo_vals = J_bcoo.data
@@ -1526,9 +1575,8 @@ def make_umfpack_ffi_full_mna_solver(
     """
     # Extract options (captured at trace time, not JAX values)
     nr_damping = options.nr_damping if options is not None else 1.0
-    # System-level convergence uses abstol directly (VACASK docs: "Two Levels of Convergence")
-    # nr_convtol is only for per-instance change checks (bypass optimization), not implemented here
-    effective_abstol = abstol
+
+    # Extract convergence tolerances from options
     vntol = options.vntol if options is not None else 1e-6
     reltol = options.reltol if options is not None else 1e-3
 
@@ -1544,6 +1592,20 @@ def make_umfpack_ffi_full_mna_solver(
 
     n_unknowns = n_nodes - 1
     n_total = n_nodes
+
+    # Per-equation absolute tolerance for residual convergence check.
+    # Uses vntol (1e-6) as a uniform floor for all equations. The residual check
+    # is a safety net — the delta check (with per-unknown tolerances) is the
+    # primary VACASK-style convergence criterion. Using raw abstol (1e-12) for
+    # KCL equations is too tight for stiff circuits (large capacitors create
+    # condition numbers ~1e11 that limit achievable residual precision).
+    residual_abs_tol = jnp.concatenate([
+        jnp.full(n_unknowns, vntol, dtype=jnp.float64),
+        jnp.full(n_vsources, vntol, dtype=jnp.float64),
+    ])
+
+    # Per-unknown absolute tolerance for VACASK-style delta convergence check.
+    # Voltage unknowns use vntol, branch current unknowns use abstol.
     delta_abs_tol = jnp.concatenate([
         jnp.full(n_unknowns, vntol, dtype=jnp.float64),
         jnp.full(n_vsources, abstol, dtype=jnp.float64),
@@ -1616,12 +1678,13 @@ def make_umfpack_ffi_full_mna_solver(
             iteration,  # NR iteration for iniLim/iteration simparams
         )
 
+        # Check residual convergence with per-equation tolerances (mask NOI nodes)
         if residual_mask is not None:
-            f_masked = jnp.where(residual_mask, f, 0.0)
-            max_f = jnp.max(jnp.abs(f_masked))
+            f_check = jnp.where(residual_mask, f, 0.0)
         else:
-            max_f = jnp.max(jnp.abs(f))
-        residual_converged = max_f < effective_abstol
+            f_check = f
+        max_f = jnp.max(jnp.abs(f_check))
+        residual_converged = jnp.all(jnp.abs(f_check) < residual_abs_tol)
 
         if use_precomputed:
             coo_vals = J_bcoo.data
