@@ -309,9 +309,15 @@ class CircuitEngine:
         # Simulation temperature in Kelvin (default room temperature)
         self._simulation_temperature: float = DEFAULT_TEMPERATURE_K
 
-        # Device-level voltage limiting (pnjlim/fetlim) - Phase 2 of damping implementation
-        # When True, generates calls to limit_funcs in device eval instead of passthrough
-        self.use_device_limiting: bool = True
+        # Device-level voltage limiting (pnjlim/fetlim).
+        # When True, generates calls to limit_funcs in device eval instead of passthrough.
+        # NOTE: Currently disabled by default because the lim_rhs correction
+        # (f_corrected = f - J*(V_limited - V_raw)) is not implemented in the
+        # OpenVAF JAX codegen. Without this correction, the NR step is computed
+        # at the limited voltage but applied from the raw voltage, making the
+        # iteration inconsistent and causing convergence failures.
+        # See: openvaf_jax/codegen/function_builder.py:_emit_lim_rhs_arrays()
+        self.use_device_limiting: bool = False
 
         # Unified simulation options (replaces scattered analysis_params)
         self.options = SimulationOptions()

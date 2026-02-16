@@ -354,6 +354,22 @@ def make_dense_full_mna_solver(
         # Both solution delta and KCL residual must be below tolerance.
         converged = jnp.logical_and(residual_converged, delta_converged)
 
+        # VACASK preventedConvergence (nrsolver.cpp:326, coreopnr.cpp:778):
+        # When device limiting (pnjlim/fetlim) is active, block convergence.
+        # Detected by checking if limit_state has settled between iterations.
+        # When pnjlim modifies a voltage, the stored limited voltage changes;
+        # until it stabilizes (device sees consistent voltages), the solution
+        # is not self-consistent and convergence must be prevented.
+        if total_limit_states > 0:
+            limit_delta = jnp.max(jnp.abs(limit_state_out - limit_state))
+            limit_ref = jnp.maximum(
+                jnp.max(jnp.abs(limit_state)) * reltol, vntol
+            )
+            limit_settled = limit_delta < limit_ref
+            # Also require at least iteration 1 (iteration 0 always has
+            # unsettled limit_state since it starts from initial/previous step)
+            converged = converged & limit_settled & (iteration >= 1)
+
         # Return updated state with same solver params (unchanged)
         return (
             X_new,
@@ -1871,6 +1887,17 @@ def make_umfpack_ffi_full_mna_solver(
 
         # VACASK-style AND convergence (nrsolver.h:226).
         converged = jnp.logical_and(residual_converged, delta_converged)
+
+        # VACASK preventedConvergence (nrsolver.cpp:326, coreopnr.cpp:778):
+        # When device limiting (pnjlim/fetlim) is active, block convergence.
+        # Detected by checking if limit_state has settled between iterations.
+        if total_limit_states > 0:
+            limit_delta = jnp.max(jnp.abs(limit_state_out - limit_state))
+            limit_ref = jnp.maximum(
+                jnp.max(jnp.abs(limit_state)) * reltol, vntol
+            )
+            limit_settled = limit_delta < limit_ref
+            converged = converged & limit_settled & (iteration >= 1)
 
         # Return updated state with same solver params (unchanged)
         return (
