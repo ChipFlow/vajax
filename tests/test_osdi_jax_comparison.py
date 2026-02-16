@@ -824,8 +824,13 @@ def create_jax_evaluator(
         limit_state_in = jnp.zeros(1)
         limit_funcs = {}
         result = eval_fn(
-            shared_arr, varying_arr, shared_cache, device_cache,
-            simparams_arr, limit_state_in, limit_funcs,
+            shared_arr,
+            varying_arr,
+            shared_cache,
+            device_cache,
+            simparams_arr,
+            limit_state_in,
+            limit_funcs,
         )
         res_resist, res_react, jac_resist, jac_react = result[:4]
 

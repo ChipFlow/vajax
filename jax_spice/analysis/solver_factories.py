@@ -190,13 +190,17 @@ def make_dense_full_mna_solver(
 
     # Per-unknown absolute tolerance for VACASK-style delta convergence check.
     # Voltage unknowns use vntol, branch current unknowns use abstol.
-    delta_abs_tol = jnp.concatenate([
-        jnp.full(n_unknowns, vntol, dtype=jnp.float64),
-        jnp.full(n_vsources, abstol, dtype=jnp.float64),
-    ])
+    delta_abs_tol = jnp.concatenate(
+        [
+            jnp.full(n_unknowns, vntol, dtype=jnp.float64),
+            jnp.full(n_vsources, abstol, dtype=jnp.float64),
+        ]
+    )
 
     # Compute NOI masks for node equations only
-    masks = _compute_noi_masks(noi_indices, n_nodes, internal_device_indices=internal_device_indices)
+    masks = _compute_noi_masks(
+        noi_indices, n_nodes, internal_device_indices=internal_device_indices
+    )
     noi_res_idx = masks["noi_res_idx"]
 
     # Create augmented residual mask for delta check (NOI-only)
@@ -297,7 +301,9 @@ def make_dense_full_mna_solver(
         # This prevents tolerance collapse at zero crossings where device
         # currents are momentarily small.
         res_tol_nodes = jnp.maximum(max_res_contrib * reltol, res_tol_floor)
-        res_tol = jnp.concatenate([res_tol_nodes, jnp.full(n_vsources, vntol, dtype=res_tol_nodes.dtype)])
+        res_tol = jnp.concatenate(
+            [res_tol_nodes, jnp.full(n_vsources, vntol, dtype=res_tol_nodes.dtype)]
+        )
         if residual_conv_mask is not None:
             f_check = jnp.where(residual_conv_mask, f, 0.0)
         else:
@@ -323,10 +329,12 @@ def make_dense_full_mna_solver(
 
         # VACASK-style delta convergence (before step limiting)
         # Check the damped correction that would actually be applied
-        conv_delta = jnp.concatenate([
-            delta[:n_unknowns] * nr_damping,
-            delta[n_unknowns:],
-        ])
+        conv_delta = jnp.concatenate(
+            [
+                delta[:n_unknowns] * nr_damping,
+                delta[n_unknowns:],
+            ]
+        )
         X_ref = jnp.concatenate([X[1:n_total], X[n_total:]])
         tol = jnp.maximum(jnp.abs(X_ref) * reltol, delta_abs_tol)
         if residual_mask is not None:
@@ -362,9 +370,7 @@ def make_dense_full_mna_solver(
         # is not self-consistent and convergence must be prevented.
         if total_limit_states > 0:
             limit_delta = jnp.max(jnp.abs(limit_state_out - limit_state))
-            limit_ref = jnp.maximum(
-                jnp.max(jnp.abs(limit_state)) * reltol, vntol
-            )
+            limit_ref = jnp.maximum(jnp.max(jnp.abs(limit_state)) * reltol, vntol)
             limit_settled = limit_delta < limit_ref
             # Also require at least iteration 1 (iteration 0 always has
             # unsettled limit_state since it starts from initial/previous step)
@@ -591,10 +597,12 @@ def make_sparse_full_mna_solver(
 
     # Per-unknown absolute tolerance for VACASK-style delta convergence check.
     # Voltage unknowns use vntol, branch current unknowns use abstol.
-    delta_abs_tol = jnp.concatenate([
-        jnp.full(n_unknowns, vntol, dtype=jnp.float64),
-        jnp.full(n_vsources, abstol, dtype=jnp.float64),
-    ])
+    delta_abs_tol = jnp.concatenate(
+        [
+            jnp.full(n_unknowns, vntol, dtype=jnp.float64),
+            jnp.full(n_vsources, abstol, dtype=jnp.float64),
+        ]
+    )
 
     use_precomputed = (
         coo_sort_perm is not None
@@ -604,7 +612,13 @@ def make_sparse_full_mna_solver(
     )
 
     # Compute NOI masks for node equations only (branch equations are not masked)
-    masks = _compute_noi_masks(noi_indices, n_nodes, bcsr_indptr, bcsr_indices, internal_device_indices=internal_device_indices)
+    masks = _compute_noi_masks(
+        noi_indices,
+        n_nodes,
+        bcsr_indptr,
+        bcsr_indices,
+        internal_device_indices=internal_device_indices,
+    )
     noi_row_mask = masks["noi_row_mask"]
     noi_col_mask = masks["noi_col_mask"]
     noi_diag_indices = masks["noi_diag_indices"]
@@ -704,7 +718,9 @@ def make_sparse_full_mna_solver(
         # This prevents tolerance collapse at zero crossings where device
         # currents are momentarily small.
         res_tol_nodes = jnp.maximum(max_res_contrib * reltol, res_tol_floor)
-        res_tol = jnp.concatenate([res_tol_nodes, jnp.full(n_vsources, vntol, dtype=res_tol_nodes.dtype)])
+        res_tol = jnp.concatenate(
+            [res_tol_nodes, jnp.full(n_vsources, vntol, dtype=res_tol_nodes.dtype)]
+        )
         if residual_conv_mask is not None:
             f_check = jnp.where(residual_conv_mask, f, 0.0)
         else:
@@ -742,10 +758,12 @@ def make_sparse_full_mna_solver(
             delta = spsolve(data, J_bcsr.indices, J_bcsr.indptr, -f_solve, tol=1e-6)
 
         # VACASK-style delta convergence (before step limiting)
-        conv_delta = jnp.concatenate([
-            delta[:n_unknowns] * nr_damping,
-            delta[n_unknowns:],
-        ])
+        conv_delta = jnp.concatenate(
+            [
+                delta[:n_unknowns] * nr_damping,
+                delta[n_unknowns:],
+            ]
+        )
         X_ref = jnp.concatenate([X[1:n_total], X[n_total:]])
         tol = jnp.maximum(jnp.abs(X_ref) * reltol, delta_abs_tol)
         if residual_mask is not None:
@@ -979,15 +997,23 @@ def make_umfpack_full_mna_solver(
 
     # Per-unknown absolute tolerance for VACASK-style delta convergence check.
     # Voltage unknowns use vntol, branch current unknowns use abstol.
-    delta_abs_tol = jnp.concatenate([
-        jnp.full(n_unknowns, vntol, dtype=jnp.float64),
-        jnp.full(n_vsources, abstol, dtype=jnp.float64),
-    ])
+    delta_abs_tol = jnp.concatenate(
+        [
+            jnp.full(n_unknowns, vntol, dtype=jnp.float64),
+            jnp.full(n_vsources, abstol, dtype=jnp.float64),
+        ]
+    )
 
     use_precomputed = coo_sort_perm is not None and csr_segment_ids is not None
 
     # Compute NOI masks for node equations only
-    masks = _compute_noi_masks(noi_indices, n_nodes, bcsr_indptr, bcsr_indices, internal_device_indices=internal_device_indices)
+    masks = _compute_noi_masks(
+        noi_indices,
+        n_nodes,
+        bcsr_indptr,
+        bcsr_indices,
+        internal_device_indices=internal_device_indices,
+    )
     noi_row_mask = masks["noi_row_mask"]
     noi_col_mask = masks["noi_col_mask"]
     noi_diag_indices = masks["noi_diag_indices"]
@@ -1089,7 +1115,9 @@ def make_umfpack_full_mna_solver(
         # This prevents tolerance collapse at zero crossings where device
         # currents are momentarily small.
         res_tol_nodes = jnp.maximum(max_res_contrib * reltol, res_tol_floor)
-        res_tol = jnp.concatenate([res_tol_nodes, jnp.full(n_vsources, vntol, dtype=res_tol_nodes.dtype)])
+        res_tol = jnp.concatenate(
+            [res_tol_nodes, jnp.full(n_vsources, vntol, dtype=res_tol_nodes.dtype)]
+        )
         if residual_conv_mask is not None:
             f_check = jnp.where(residual_conv_mask, f, 0.0)
         else:
@@ -1116,10 +1144,12 @@ def make_umfpack_full_mna_solver(
         delta, _info = umfpack_solver(-f_solve, csr_data)
 
         # VACASK-style delta convergence (before step limiting)
-        conv_delta = jnp.concatenate([
-            delta[:n_unknowns] * nr_damping,
-            delta[n_unknowns:],
-        ])
+        conv_delta = jnp.concatenate(
+            [
+                delta[:n_unknowns] * nr_damping,
+                delta[n_unknowns:],
+            ]
+        )
         X_ref = jnp.concatenate([X[1:n_total], X[n_total:]])
         tol = jnp.maximum(jnp.abs(X_ref) * reltol, delta_abs_tol)
         if residual_mask is not None:
@@ -1344,13 +1374,21 @@ def make_spineax_full_mna_solver(
 
     # Per-unknown absolute tolerance for VACASK-style delta convergence check.
     # Voltage unknowns use vntol, branch current unknowns use abstol.
-    delta_abs_tol = jnp.concatenate([
-        jnp.full(n_unknowns, vntol, dtype=jnp.float64),
-        jnp.full(n_vsources, abstol, dtype=jnp.float64),
-    ])
+    delta_abs_tol = jnp.concatenate(
+        [
+            jnp.full(n_unknowns, vntol, dtype=jnp.float64),
+            jnp.full(n_vsources, abstol, dtype=jnp.float64),
+        ]
+    )
     use_precomputed = coo_sort_perm is not None and csr_segment_ids is not None
 
-    masks = _compute_noi_masks(noi_indices, n_nodes, bcsr_indptr, bcsr_indices, internal_device_indices=internal_device_indices)
+    masks = _compute_noi_masks(
+        noi_indices,
+        n_nodes,
+        bcsr_indptr,
+        bcsr_indices,
+        internal_device_indices=internal_device_indices,
+    )
     noi_row_mask = masks["noi_row_mask"]
     noi_col_mask = masks["noi_col_mask"]
     noi_diag_indices = masks["noi_diag_indices"]
@@ -1458,7 +1496,9 @@ def make_spineax_full_mna_solver(
         # This prevents tolerance collapse at zero crossings where device
         # currents are momentarily small.
         res_tol_nodes = jnp.maximum(max_res_contrib * reltol, res_tol_floor)
-        res_tol = jnp.concatenate([res_tol_nodes, jnp.full(n_vsources, vntol, dtype=res_tol_nodes.dtype)])
+        res_tol = jnp.concatenate(
+            [res_tol_nodes, jnp.full(n_vsources, vntol, dtype=res_tol_nodes.dtype)]
+        )
         if residual_conv_mask is not None:
             f_check = jnp.where(residual_conv_mask, f, 0.0)
         else:
@@ -1485,10 +1525,12 @@ def make_spineax_full_mna_solver(
         delta, _info = spineax_solver(-f_solve, csr_data)
 
         # VACASK-style delta convergence (before step limiting)
-        conv_delta = jnp.concatenate([
-            delta[:n_unknowns] * nr_damping,
-            delta[n_unknowns:],
-        ])
+        conv_delta = jnp.concatenate(
+            [
+                delta[:n_unknowns] * nr_damping,
+                delta[n_unknowns:],
+            ]
+        )
         X_ref = jnp.concatenate([X[1:n_total], X[n_total:]])
         tol = jnp.maximum(jnp.abs(X_ref) * reltol, delta_abs_tol)
         if residual_mask is not None:
@@ -1740,14 +1782,22 @@ def make_umfpack_ffi_full_mna_solver(
 
     # Per-unknown absolute tolerance for VACASK-style delta convergence check.
     # Voltage unknowns use vntol, branch current unknowns use abstol.
-    delta_abs_tol = jnp.concatenate([
-        jnp.full(n_unknowns, vntol, dtype=jnp.float64),
-        jnp.full(n_vsources, abstol, dtype=jnp.float64),
-    ])
+    delta_abs_tol = jnp.concatenate(
+        [
+            jnp.full(n_unknowns, vntol, dtype=jnp.float64),
+            jnp.full(n_vsources, abstol, dtype=jnp.float64),
+        ]
+    )
 
     use_precomputed = coo_sort_perm is not None and csr_segment_ids is not None
 
-    masks = _compute_noi_masks(noi_indices, n_nodes, bcsr_indptr, bcsr_indices, internal_device_indices=internal_device_indices)
+    masks = _compute_noi_masks(
+        noi_indices,
+        n_nodes,
+        bcsr_indptr,
+        bcsr_indices,
+        internal_device_indices=internal_device_indices,
+    )
     noi_row_mask = masks["noi_row_mask"]
     noi_col_mask = masks["noi_col_mask"]
     noi_diag_indices = masks["noi_diag_indices"]
@@ -1832,7 +1882,9 @@ def make_umfpack_ffi_full_mna_solver(
         # This prevents tolerance collapse at zero crossings where device
         # currents are momentarily small.
         res_tol_nodes = jnp.maximum(max_res_contrib * reltol, res_tol_floor)
-        res_tol = jnp.concatenate([res_tol_nodes, jnp.full(n_vsources, vntol, dtype=res_tol_nodes.dtype)])
+        res_tol = jnp.concatenate(
+            [res_tol_nodes, jnp.full(n_vsources, vntol, dtype=res_tol_nodes.dtype)]
+        )
         if residual_conv_mask is not None:
             f_check = jnp.where(residual_conv_mask, f, 0.0)
         else:
@@ -1860,10 +1912,12 @@ def make_umfpack_ffi_full_mna_solver(
         delta = umfpack_jax.solve(bcsr_indptr, bcsr_indices, csr_data, -f_solve)
 
         # VACASK-style delta convergence (before step limiting)
-        conv_delta = jnp.concatenate([
-            delta[:n_unknowns] * nr_damping,
-            delta[n_unknowns:],
-        ])
+        conv_delta = jnp.concatenate(
+            [
+                delta[:n_unknowns] * nr_damping,
+                delta[n_unknowns:],
+            ]
+        )
         X_ref = jnp.concatenate([X[1:n_total], X[n_total:]])
         tol = jnp.maximum(jnp.abs(X_ref) * reltol, delta_abs_tol)
         if residual_mask is not None:
@@ -1893,9 +1947,7 @@ def make_umfpack_ffi_full_mna_solver(
         # Detected by checking if limit_state has settled between iterations.
         if total_limit_states > 0:
             limit_delta = jnp.max(jnp.abs(limit_state_out - limit_state))
-            limit_ref = jnp.maximum(
-                jnp.max(jnp.abs(limit_state)) * reltol, vntol
-            )
+            limit_ref = jnp.maximum(jnp.max(jnp.abs(limit_state)) * reltol, vntol)
             limit_settled = limit_delta < limit_ref
             converged = converged & limit_settled & (iteration >= 1)
 

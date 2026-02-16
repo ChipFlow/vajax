@@ -107,7 +107,6 @@ def fetlim(vnew: Array, vold: Array, vto: float = 0.5) -> Array:
     return limited
 
 
-
 def apply_voltage_damping(
     V_new: Array,
     V_old: Array,

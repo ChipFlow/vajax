@@ -293,7 +293,17 @@ class TestSimpleCircuits:
                 I_vsource = jnp.zeros(0)
                 limit_state = jnp.zeros(0)
                 max_res_contrib = jnp.zeros(len(V_init) - 1)
-                return V_final, iters, converged, max_f, Q, dQdt, I_vsource, limit_state, max_res_contrib
+                return (
+                    V_final,
+                    iters,
+                    converged,
+                    max_f,
+                    Q,
+                    dQdt,
+                    I_vsource,
+                    limit_state,
+                    max_res_contrib,
+                )
 
             return nr_solve
 
@@ -380,7 +390,17 @@ class TestSimpleCircuits:
                 I_vsource = jnp.zeros(0)
                 limit_state = jnp.zeros(0)
                 max_res_contrib = jnp.zeros(len(V_init) - 1)
-                return V_final, iters, converged, max_f, Q, dQdt, I_vsource, limit_state, max_res_contrib
+                return (
+                    V_final,
+                    iters,
+                    converged,
+                    max_f,
+                    Q,
+                    dQdt,
+                    I_vsource,
+                    limit_state,
+                    max_res_contrib,
+                )
 
             return nr_solve
 
@@ -474,7 +494,17 @@ class TestDifficultCircuits:
                 I_vsource = jnp.zeros(0)
                 limit_state = jnp.zeros(0)
                 max_res_contrib = jnp.zeros(len(V_init) - 1)
-                return V_final, iters, converged, max_f, Q, dQdt, I_vsource, limit_state, max_res_contrib
+                return (
+                    V_final,
+                    iters,
+                    converged,
+                    max_f,
+                    Q,
+                    dQdt,
+                    I_vsource,
+                    limit_state,
+                    max_res_contrib,
+                )
 
             return nr_solve
 

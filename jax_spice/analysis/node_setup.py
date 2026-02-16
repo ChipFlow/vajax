@@ -104,9 +104,7 @@ def setup_internal_nodes(
         # Cache collapse roots by pattern (most devices of same type will share)
         pairs_key = tuple(sorted(collapse_pairs))
         if pairs_key not in collapse_roots_cache:
-            collapse_roots_cache[pairs_key] = compute_collapse_roots(
-                collapse_pairs, n_model_nodes
-            )
+            collapse_roots_cache[pairs_key] = compute_collapse_roots(collapse_pairs, n_model_nodes)
         collapse_roots = collapse_roots_cache[pairs_key]
 
         # Include all internal nodes including branch currents

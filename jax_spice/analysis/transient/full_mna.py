@@ -347,14 +347,12 @@ class FullMNAStrategy(TransientStrategy):
             return self._cached_full_mna_solver
 
         # Create full MNA build_system function
-        build_system_fn, device_arrays, total_limit_states = (
-            self.runner._make_mna_build_system_fn(
-                setup.source_device_data,
-                setup.vmapped_fns,
-                setup.static_inputs_cache,
-                setup.n_unknowns,
-                use_dense=self.use_dense,
-            )
+        build_system_fn, device_arrays, total_limit_states = self.runner._make_mna_build_system_fn(
+            setup.source_device_data,
+            setup.vmapped_fns,
+            setup.static_inputs_cache,
+            setup.n_unknowns,
+            use_dense=self.use_dense,
         )
 
         # Store device arrays and limit state size for solver
@@ -376,7 +374,8 @@ class FullMNAStrategy(TransientStrategy):
         noi_indices = jnp.array(noi_indices, dtype=jnp.int32) if noi_indices else None
         internal_device_indices = (
             jnp.array(sorted(set(all_internal_indices)), dtype=jnp.int32)
-            if all_internal_indices else None
+            if all_internal_indices
+            else None
         )
 
         # Create full MNA solver
@@ -730,21 +729,23 @@ class FullMNAStrategy(TransientStrategy):
             # Compute DC operating point
             # Use gmin from netlist options (default 1e-12)
             dc_gmin = getattr(self.runner.options, "gmin", 1e-12)
-            X_dc, _, dc_converged, dc_residual, Q_dc, _, I_vsource_dc, _, dc_max_res_contrib = nr_solve(
-                X0,
-                vsource_vals_init,
-                isource_vals_init,
-                jnp.zeros(n_unknowns, dtype=dtype),
-                0.0,
-                device_arrays,
-                dc_gmin,
-                0.0,
-                0.0,
-                0.0,
-                None,
-                0.0,
-                None,
-                limit_state_in=None,  # Device-level limiting state (optional)
+            X_dc, _, dc_converged, dc_residual, Q_dc, _, I_vsource_dc, _, dc_max_res_contrib = (
+                nr_solve(
+                    X0,
+                    vsource_vals_init,
+                    isource_vals_init,
+                    jnp.zeros(n_unknowns, dtype=dtype),
+                    0.0,
+                    device_arrays,
+                    dc_gmin,
+                    0.0,
+                    0.0,
+                    0.0,
+                    None,
+                    0.0,
+                    None,
+                    limit_state_in=None,  # Device-level limiting state (optional)
+                )
             )
 
             # Always use DC result — even if not "converged" by strict criteria,
@@ -1013,7 +1014,8 @@ class FullMNAStrategy(TransientStrategy):
         current_warmup_count = 0
         current_V_max_historic = jnp.abs(X0[:n_total])
         current_historic_max_res_contrib = (
-            dc_max_res_contrib if dc_max_res_contrib is not None
+            dc_max_res_contrib
+            if dc_max_res_contrib is not None
             else jnp.zeros(n_unknowns, dtype=dtype)
         )
         # Initialize device-level limiting state for checkpoint mode
@@ -1441,8 +1443,15 @@ def _make_full_mna_while_loop_fns(
 
         # Newton-Raphson solve with device-level limiting state
         (
-            X_new, iterations, converged, max_f, Q, dQdt_out,
-            I_vsource, limit_state_out, max_res_contrib_out,
+            X_new,
+            iterations,
+            converged,
+            max_f,
+            Q,
+            dQdt_out,
+            I_vsource,
+            limit_state_out,
+            max_res_contrib_out,
         ) = nr_solve(
             X_init,
             vsource_vals,
@@ -1561,9 +1570,7 @@ def _make_full_mna_while_loop_fns(
         # to near where convergence last worked, giving the solver another chance.
         # If that fails, normal halving will cascade back down, but each cycle
         # advances time and eventually the circuit moves past the discontinuity.
-        last_good_dt = jnp.where(
-            state.history_count > 0, state.dt_history[0], config.min_dt * 16.0
-        )
+        last_good_dt = jnp.where(state.history_count > 0, state.dt_history[0], config.min_dt * 16.0)
         dt_recovery = jnp.maximum(last_good_dt / 8.0, config.min_dt * 2.0)
 
         new_dt = jnp.where(

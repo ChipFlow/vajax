@@ -1038,17 +1038,15 @@ class CircuitEngine:
             compiled = self._compiled_models.get(model_type)
             if compiled and "dae_metadata" in compiled:
                 logger.debug(f"{model_type} already compiled")
-                voltage_indices, device_contexts, cache, collapse_decisions = (
-                    prepare_static_inputs(
-                        model_type=model_type,
-                        openvaf_devices=openvaf_by_type[model_type],
-                        device_internal_nodes=device_internal_nodes,
-                        compiled_models=self._compiled_models,
-                        simulation_temperature=self._simulation_temperature,
-                        use_device_limiting=getattr(self, "use_device_limiting", False),
-                        parse_voltage_param_fn=self._parse_voltage_param,
-                        ground=ground,
-                    )
+                voltage_indices, device_contexts, cache, collapse_decisions = prepare_static_inputs(
+                    model_type=model_type,
+                    openvaf_devices=openvaf_by_type[model_type],
+                    device_internal_nodes=device_internal_nodes,
+                    compiled_models=self._compiled_models,
+                    simulation_temperature=self._simulation_temperature,
+                    use_device_limiting=getattr(self, "use_device_limiting", False),
+                    parse_voltage_param_fn=self._parse_voltage_param,
+                    ground=ground,
                 )
                 stamp_indices = build_stamp_index_mapping(
                     model_type, device_contexts, ground, self._compiled_models
@@ -1176,8 +1174,7 @@ class CircuitEngine:
     ):
         """Collect COO triplets from source devices using fully vectorized operations."""
         collect_source_devices_coo(
-            device_data, V, vsource_vals, isource_vals,
-            f_indices, f_values, j_rows, j_cols, j_vals
+            device_data, V, vsource_vals, isource_vals, f_indices, f_values, j_rows, j_cols, j_vals
         )
 
     def _collect_openvaf_coo(
@@ -1427,7 +1424,8 @@ class CircuitEngine:
         noi_indices = jnp.array(noi_indices, dtype=jnp.int32) if noi_indices else None
         internal_device_indices = (
             jnp.array(sorted(set(all_internal_indices)), dtype=jnp.int32)
-            if all_internal_indices else None
+            if all_internal_indices
+            else None
         )
 
         nr_solve = make_dense_full_mna_solver(

@@ -268,6 +268,7 @@ class COOVector(NamedTuple):
                  -1 indicates invalid entry (will be masked out).
         values: Values to accumulate at each position, shape (n_entries,).
     """
+
     indices: Array
     values: Array
 
@@ -280,6 +281,7 @@ class COOMatrix(NamedTuple):
         cols: Column indices, shape (n_entries,). -1 indicates invalid.
         values: Values to accumulate, shape (n_entries,).
     """
+
     rows: Array
     cols: Array
     values: Array
@@ -518,14 +520,18 @@ def build_vsource_kcl_contribution(
     valid_n = vsource_node_n > 0
 
     # Build COO entries
-    all_idx = jnp.concatenate([
-        jnp.where(valid_p, p_mna, 0),
-        jnp.where(valid_n, n_mna, 0),
-    ])
-    all_val = jnp.concatenate([
-        jnp.where(valid_p, I_branch, 0.0),
-        jnp.where(valid_n, -I_branch, 0.0),
-    ])
+    all_idx = jnp.concatenate(
+        [
+            jnp.where(valid_p, p_mna, 0),
+            jnp.where(valid_n, n_mna, 0),
+        ]
+    )
+    all_val = jnp.concatenate(
+        [
+            jnp.where(valid_p, I_branch, 0.0),
+            jnp.where(valid_n, -I_branch, 0.0),
+        ]
+    )
 
     return jax.ops.segment_sum(all_val, all_idx, num_segments=n_unknowns)
 
@@ -615,17 +621,17 @@ def assemble_dense_jacobian(
     """
     # COO -> dense via segment_sum
     flat_indices = j_rows * n_augmented + j_cols
-    J_flat = jax.ops.segment_sum(
-        j_vals, flat_indices, num_segments=n_augmented * n_augmented
-    )
+    J_flat = jax.ops.segment_sum(j_vals, flat_indices, num_segments=n_augmented * n_augmented)
     J = J_flat.reshape((n_augmented, n_augmented))
 
     # Add diagonal regularization to node equations only
     # Branch equations (voltage constraints) should NOT have regularization
-    diag_reg = jnp.concatenate([
-        jnp.full(n_unknowns, min_diag_reg + gshunt),
-        jnp.zeros(n_vsources),
-    ])
+    diag_reg = jnp.concatenate(
+        [
+            jnp.full(n_unknowns, min_diag_reg + gshunt),
+            jnp.zeros(n_vsources),
+        ]
+    )
     J = J + jnp.diag(diag_reg)
 
     return J
@@ -702,7 +708,8 @@ def combine_transient_residual(
         Combined residual vector
     """
     f_node = (
-        f_resist - lim_rhs_resist
+        f_resist
+        - lim_rhs_resist
         + integ_c0 * (Q - lim_rhs_react)
         + integ_c1 * Q_prev
         + integ_d1 * dQdt_prev

@@ -63,6 +63,7 @@ try:
     import openvaf_py
 
     import openvaf_jax
+
     HAS_OPENVAF = True
 except ImportError:
     HAS_OPENVAF = False
@@ -82,6 +83,7 @@ MODEL_PATHS = {
     "diode": ("vacask", "diode.va"),
     "sp_diode": ("vacask", "spice/sn/diode.va"),
 }
+
 
 # Base paths for VA model sources
 def _get_base_paths() -> Dict[str, Path]:
@@ -303,7 +305,9 @@ def compile_openvaf_models(
         # Check module-level cache
         if model_type in COMPILED_MODEL_CACHE:
             cached = COMPILED_MODEL_CACHE[model_type]
-            log(f"  {model_type}: reusing cached ({len(cached['param_names'])} params, {len(cached['nodes'])} nodes)")
+            log(
+                f"  {model_type}: reusing cached ({len(cached['param_names'])} params, {len(cached['nodes'])} nodes)"
+            )
             compiled_models[model_type] = cached
             continue
 
@@ -393,7 +397,9 @@ def compile_openvaf_models(
         init_fn, init_meta = translator.translate_init_array()
         vmapped_init = jax.jit(jax.vmap(init_fn))
         t4 = time.perf_counter()
-        log(f"  {model_type}: init function done in {t4 - t3:.1f}s (cache_size={init_meta['cache_size']})")
+        log(
+            f"  {model_type}: init function done in {t4 - t3:.1f}s (cache_size={init_meta['cache_size']})"
+        )
 
         # Build init->eval index mapping
         eval_name_to_idx = {n.lower(): i for i, n in enumerate(param_names)}
@@ -515,7 +521,9 @@ def compute_early_collapse_decisions(
             unique_params.setdefault(key, []).append(dev)
 
         n_unique = len(unique_params)
-        logger.info(f"Computing collapse decisions for {model_type}: {len(devs)} devices, {n_unique} unique param combos")
+        logger.info(
+            f"Computing collapse decisions for {model_type}: {len(devs)} devices, {n_unique} unique param combos"
+        )
 
         cpu_device = jax.devices("cpu")[0]
         for param_key, param_devs in unique_params.items():
@@ -625,7 +633,9 @@ def prepare_static_inputs(
         # Fill param values
         for pname in all_unique:
             if pname in param_to_cols:
-                vals = np.array([float(p.get(pname, p.get(pname.upper(), 0.0))) for p in all_dev_params])
+                vals = np.array(
+                    [float(p.get(pname, p.get(pname.upper(), 0.0))) for p in all_dev_params]
+                )
                 if np.all(vals == vals[0]):
                     for col in param_to_cols[pname]:
                         col_values[col] = float(vals[0])
@@ -686,12 +696,14 @@ def prepare_static_inputs(
             node_pair = parse_voltage_param_fn(name, node_map, model_nodes, ground)
             voltage_node_pairs.append(node_pair)
 
-        device_contexts.append({
-            "name": dev["name"],
-            "node_map": node_map,
-            "ext_nodes": ext_nodes,
-            "voltage_node_pairs": voltage_node_pairs,
-        })
+        device_contexts.append(
+            {
+                "name": dev["name"],
+                "node_map": node_map,
+                "ext_nodes": ext_nodes,
+                "voltage_node_pairs": voltage_node_pairs,
+            }
+        )
 
     # Add analysis_type and gmin if needed
     uses_analysis = compiled.get("uses_analysis", False)
@@ -722,7 +734,9 @@ def prepare_static_inputs(
 
         n_const = len(shared_indices)
         n_varying = len(varying_indices_list)
-        logger.info(f"{model_type}: {n_const}/{n_params_total} constant, {n_varying} varying across {n_devices} devices")
+        logger.info(
+            f"{model_type}: {n_const}/{n_params_total} constant, {n_varying} varying across {n_devices} devices"
+        )
 
         # Build shared_params
         shared_params_list = []
@@ -744,7 +758,9 @@ def prepare_static_inputs(
                 elif isinstance(val, np.ndarray):
                     device_params_cols.append(val)
                 else:
-                    device_params_cols.append(np.full(n_devices, float(val), dtype=get_float_dtype()))
+                    device_params_cols.append(
+                        np.full(n_devices, float(val), dtype=get_float_dtype())
+                    )
             device_params = jnp.array(np.column_stack(device_params_cols), dtype=get_float_dtype())
         else:
             device_params = jnp.empty((n_devices, 0), dtype=get_float_dtype())
@@ -765,7 +781,9 @@ def prepare_static_inputs(
                 shared_indices, varying_indices_list, init_to_eval_list
             )
             code_hash = init_split_meta.get("code_hash", "")
-            vmapped_split_init = openvaf_jax.get_vmapped_jit(code_hash, split_init_fn, in_axes=(None, 0))
+            vmapped_split_init = openvaf_jax.get_vmapped_jit(
+                code_hash, split_init_fn, in_axes=(None, 0)
+            )
 
             logger.info(f"Computing init cache for {model_type} ({n_devices} devices)...")
             cpu_device = jax.devices("cpu")[0]
@@ -780,7 +798,9 @@ def prepare_static_inputs(
                 const_mask = np.all(cache_np == cache_np[0:1, :], axis=0)
                 shared_cache_indices = [int(i) for i in np.where(const_mask)[0]]
                 varying_cache_indices = [int(i) for i in np.where(~const_mask)[0]]
-                logger.info(f"{model_type}: cache: {len(shared_cache_indices)}/{n_cache_cols} shared")
+                logger.info(
+                    f"{model_type}: cache: {len(shared_cache_indices)}/{n_cache_cols} shared"
+                )
             else:
                 shared_cache_indices = []
                 varying_cache_indices = list(range(n_cache_cols))
@@ -792,9 +812,12 @@ def prepare_static_inputs(
 
         # Generate eval function with cache split
         from jax_spice.analysis.limiting import fetlim, pnjlim
+
         limit_funcs = {"pnjlim": pnjlim, "fetlim": fetlim}
 
-        logger.info(f"{model_type}: generating split eval function (limit={use_device_limiting})...")
+        logger.info(
+            f"{model_type}: generating split eval function (limit={use_device_limiting})..."
+        )
         split_fn, split_meta = translator.translate_eval_array_with_cache_split(
             shared_indices,
             varying_indices_list,
@@ -811,10 +834,11 @@ def prepare_static_inputs(
         device_cache = cache[:, varying_cache_indices]
 
         # Build default simparams from model metadata
-        simparams_used = split_meta.get('simparams_used', ['$analysis_type', '$mfactor', 'gmin'])
-        simparam_count = split_meta.get('simparam_count', len(simparams_used))
+        simparams_used = split_meta.get("simparams_used", ["$analysis_type", "$mfactor", "gmin"])
+        simparam_count = split_meta.get("simparam_count", len(simparams_used))
         # Import defaults from jax_spice
         from jax_spice import SIMPARAM_DEFAULTS
+
         default_simparams_list = []
         for name in simparams_used:
             if name in SIMPARAM_DEFAULTS:
@@ -828,7 +852,9 @@ def prepare_static_inputs(
 
         # Voltage positions in device_params
         varying_idx_to_pos = {orig_idx: pos for pos, orig_idx in enumerate(varying_indices_list)}
-        voltage_positions = [varying_idx_to_pos[v] for v in voltage_indices if v in varying_idx_to_pos]
+        voltage_positions = [
+            varying_idx_to_pos[v] for v in voltage_indices if v in varying_idx_to_pos
+        ]
         voltage_positions = jnp.array(voltage_positions, dtype=jnp.int32)
 
         # Store in compiled dict
@@ -845,7 +871,7 @@ def prepare_static_inputs(
         compiled["varying_cache_indices"] = varying_cache_indices
         compiled["default_simparams"] = default_simparams
         compiled["simparams_used"] = simparams_used
-        compiled["simparam_indices"] = split_meta.get('simparam_indices', {})
+        compiled["simparam_indices"] = split_meta.get("simparam_indices", {})
         compiled["use_device_limiting"] = use_device_limiting
         compiled["limit_param_map"] = limit_param_map
 

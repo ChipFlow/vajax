@@ -196,9 +196,7 @@ def make_mna_build_system_fn(
             "device_params": compiled["device_params"],
             "voltage_positions": compiled["voltage_positions_in_varying"],
             "shared_cache": compiled["shared_cache"],
-            "default_simparams": compiled.get(
-                "default_simparams", jnp.array([0.0, 1.0, 1e-12])
-            ),
+            "default_simparams": compiled.get("default_simparams", jnp.array([0.0, 1.0, 1e-12])),
             # Simparam metadata for correct index lookup
             "simparam_indices": compiled.get("simparam_indices", {}),
             # Device-level limiting info
@@ -213,12 +211,8 @@ def make_mna_build_system_fn(
 
     # Pre-compute vsource node indices as JAX arrays (captured in closure)
     if n_vsources > 0:
-        vsource_node_p = jnp.array(
-            source_device_data["vsource"]["node_p"], dtype=jnp.int32
-        )
-        vsource_node_n = jnp.array(
-            source_device_data["vsource"]["node_n"], dtype=jnp.int32
-        )
+        vsource_node_p = jnp.array(source_device_data["vsource"]["node_p"], dtype=jnp.int32)
+        vsource_node_n = jnp.array(source_device_data["vsource"]["node_n"], dtype=jnp.int32)
     else:
         vsource_node_p = jnp.zeros(0, dtype=jnp.int32)
         vsource_node_n = jnp.zeros(0, dtype=jnp.int32)
@@ -323,9 +317,9 @@ def make_mna_build_system_fn(
 
         # OpenVAF devices
         for model_type in model_types:
-            voltage_indices, stamp_indices, voltage_node1, voltage_node2 = (
-                static_metadata[model_type]
-            )
+            voltage_indices, stamp_indices, voltage_node1, voltage_node2 = static_metadata[
+                model_type
+            ]
             cache = device_arrays_arg[model_type]
 
             voltage_updates = V[voltage_node1] - V[voltage_node2]
@@ -385,9 +379,9 @@ def make_mna_build_system_fn(
                 and limit_state_in is not None
             ):
                 offset, _, n_lim = limit_state_offsets[model_type]
-                model_limit_state_in = limit_state_in[
-                    offset : offset + n_dev * n_lim
-                ].reshape(n_dev, n_lim)
+                model_limit_state_in = limit_state_in[offset : offset + n_dev * n_lim].reshape(
+                    n_dev, n_lim
+                )
             else:
                 model_limit_state_in = jnp.zeros((n_dev, n_lim), dtype=get_float_dtype())
 
@@ -431,9 +425,7 @@ def make_mna_build_system_fn(
             j_resist_parts.append(
                 mask_coo_matrix(jac_row_idx, jac_col_idx, batch_jac_resist.ravel())
             )
-            j_react_parts.append(
-                mask_coo_matrix(jac_row_idx, jac_col_idx, batch_jac_react.ravel())
-            )
+            j_react_parts.append(mask_coo_matrix(jac_row_idx, jac_col_idx, batch_jac_react.ravel()))
 
             # Mask and collect limiting RHS contributions
             lim_rhs_resist_parts.append(mask_coo_vector(res_idx, batch_lim_rhs_resist.ravel()))
@@ -454,9 +446,7 @@ def make_mna_build_system_fn(
         I_vsource_kcl = compute_vsource_current_from_kcl(f_resist, vsource_node_p)
 
         _dQdt_prev = (
-            dQdt_prev
-            if dQdt_prev is not None
-            else jnp.zeros(n_unknowns, dtype=get_float_dtype())
+            dQdt_prev if dQdt_prev is not None else jnp.zeros(n_unknowns, dtype=get_float_dtype())
         )
         _Q_prev2 = (
             Q_prev2 if Q_prev2 is not None else jnp.zeros(n_unknowns, dtype=get_float_dtype())

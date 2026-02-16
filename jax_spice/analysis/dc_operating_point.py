@@ -179,8 +179,7 @@ def compute_dc_operating_point(
     if is_converged:
         V = V_new
         logger.info(
-            f"  DC operating point converged via direct NR "
-            f"({nr_iters} iters, residual={max_f:.2e})"
+            f"  DC operating point converged via direct NR ({nr_iters} iters, residual={max_f:.2e})"
         )
     else:
         # Fall back to homotopy chain using the NR solver
