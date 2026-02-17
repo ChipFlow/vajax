@@ -63,9 +63,16 @@ jobs:
         with:
           workspaces: openvaf_jax/openvaf_py
 
+      - name: Install CUDA toolkit
+        run: |
+          # The runner has NVIDIA drivers but not the CUDA toolkit (nvcc).
+          # NVIDIA apt repo is already configured on the runner.
+          sudo apt-get update
+          sudo apt-get install -y cuda-nvcc-12-6 cuda-cudart-dev-12-6
+          echo "/usr/local/cuda-12.6/bin" >> $GITHUB_PATH
+
       - name: Install system dependencies
         run: |
-          sudo apt-get update
           sudo apt-get install -y libsuitesparse-dev swig cmake pkg-config
 
       - name: Install uv
