@@ -826,6 +826,27 @@ def prepare_static_inputs(
             use_limit_functions=use_device_limiting,
             limit_param_map=limit_param_map,
         )
+        # Safety check: if limiting is enabled but lim_rhs could not be computed
+        # (model uses inline limiting without $limit/BuiltinLimit calls), disable
+        # limiting for this model to avoid NR inconsistency.
+        if use_device_limiting and split_meta.get("limit_metadata"):
+            raw_operands = split_meta["limit_metadata"].get("raw_operands", {})
+            limit_count = split_meta["limit_metadata"].get("limit_count", 0)
+            if limit_count > 0 and len(raw_operands) == 0:
+                logger.warning(
+                    f"{model_type}: {limit_count} limit state(s) but no BuiltinLimit calls "
+                    "traced (inline limiting?) - disabling limiting for this model"
+                )
+                use_device_limiting = False
+                split_fn, split_meta = translator.translate_eval_array_with_cache_split(
+                    shared_indices,
+                    varying_indices_list,
+                    shared_cache_indices,
+                    varying_cache_indices,
+                    use_limit_functions=False,
+                    limit_param_map=limit_param_map,
+                )
+
         split_fn = partial(split_fn, limit_funcs=limit_funcs)
         vmapped_split_fn = jax.jit(jax.vmap(split_fn, in_axes=(None, 0, None, 0, None, 0)))
 

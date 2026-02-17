@@ -6,9 +6,12 @@ This module provides builders for:
 """
 
 import ast
+import logging
+import re
+from collections import defaultdict
 from typing import Any, Dict, List, Optional, Set, Tuple
 
-from collections import defaultdict
+logger = logging.getLogger(__name__)
 
 from ..mir.cfg import CFGAnalyzer, LoopInfo
 from ..mir.constprop import SCCP
@@ -18,6 +21,7 @@ from ..openvaf_ast import (
     assign,
     assign_tuple,
     attr,
+    binop,
     function_def,
     import_from,
     jnp_bool,
@@ -62,8 +66,8 @@ class FunctionBuilder:
         """Emit function preamble: imports."""
         # JAX imports: import jax; from jax import numpy as jnp, lax
         # The 'import jax' is needed for jax.debug.print used by $display
-        body.append(ast.Import(names=[ast.alias(name='jax', asname=None)]))
-        body.append(import_from('jax', [('numpy', 'jnp'), 'lax']))
+        body.append(ast.Import(names=[ast.alias(name="jax", asname=None)]))
+        body.append(import_from("jax", [("numpy", "jnp"), "lax"]))
         # Note: 0.0 and 1.0 constants are now inlined via ctx.zero() and ctx.one()
 
     def _emit_constants(self, body: List[ast.stmt], ctx: CodeGenContext):
@@ -71,12 +75,12 @@ class FunctionBuilder:
         # Float constants
         for name, value in self.mir_func.constants.items():
             var_name = f"{ctx.var_prefix}{name}"
-            if value == float('inf'):
-                expr = attr(ast_name('jnp'), 'inf')  # jnp.inf (constant, not call)
-            elif value == float('-inf'):
-                expr = unaryop(ast.USub(), attr(ast_name('jnp'), 'inf'))
+            if value == float("inf"):
+                expr = attr(ast_name("jnp"), "inf")  # jnp.inf (constant, not call)
+            elif value == float("-inf"):
+                expr = unaryop(ast.USub(), attr(ast_name("jnp"), "inf"))
             elif value != value:  # NaN
-                expr = attr(ast_name('jnp'), 'nan')  # jnp.nan (constant, not call)
+                expr = attr(ast_name("jnp"), "nan")  # jnp.nan (constant, not call)
             else:
                 expr = ast_const(value)
             body.append(assign(var_name, expr))
@@ -94,17 +98,23 @@ class FunctionBuilder:
             body.append(assign(var_name, ast_const(value)))
             ctx.defined_vars.add(var_name)
 
-    def _emit_block(self, body: List[ast.stmt], ctx: CodeGenContext,
-                    block: Block, translator: InstructionTranslator,
-                    loop_info: Optional[LoopInfo] = None):
+    def _emit_block(
+        self,
+        body: List[ast.stmt],
+        ctx: CodeGenContext,
+        block: Block,
+        translator: InstructionTranslator,
+        loop_info: Optional[LoopInfo] = None,
+    ):
         """Emit code for a basic block with PHI batching optimization.
 
         PHIs with the same condition are batched to reduce XLA graph complexity.
         """
         # Separate PHIs from regular instructions
         phi_insts = block.phi_nodes
-        regular_insts = [inst for inst in block.instructions
-                         if not inst.is_phi and not inst.is_terminator]
+        regular_insts = [
+            inst for inst in block.instructions if not inst.is_phi and not inst.is_terminator
+        ]
 
         # Batch PHIs with same condition
         self._emit_batched_phis(body, ctx, translator, phi_insts, loop_info)
@@ -119,10 +129,14 @@ class FunctionBuilder:
                 # Side-effect only instruction (e.g., $display)
                 body.append(ast.Expr(value=expr))
 
-    def _emit_batched_phis(self, body: List[ast.stmt], ctx: CodeGenContext,
-                           translator: InstructionTranslator,
-                           phi_insts: List[MIRInstruction],
-                           loop_info: Optional[LoopInfo] = None):
+    def _emit_batched_phis(
+        self,
+        body: List[ast.stmt],
+        ctx: CodeGenContext,
+        translator: InstructionTranslator,
+        phi_insts: List[MIRInstruction],
+        loop_info: Optional[LoopInfo] = None,
+    ):
         """Emit PHI nodes with batching optimization.
 
         Groups PHIs by their condition and emits batched jnp.where calls
@@ -133,7 +147,9 @@ class FunctionBuilder:
 
         # Resolve all PHIs and group by condition
         # Key: (condition_str, is_negated) -> list of (inst, resolution, true_val, false_val)
-        cond_groups: Dict[Tuple[str, bool], List[Tuple[MIRInstruction, PHIResolution]]] = defaultdict(list)
+        cond_groups: Dict[Tuple[str, bool], List[Tuple[MIRInstruction, PHIResolution]]] = (
+            defaultdict(list)
+        )
         non_batchable: List[Tuple[MIRInstruction, PHIResolution]] = []
 
         for inst in phi_insts:
@@ -143,16 +159,17 @@ class FunctionBuilder:
             resolution = self.ssa.resolve_phi(inst, loop_info)
 
             # Only batch simple TWO_WAY PHIs (no nested resolutions)
-            if (resolution.type == PHIResolutionType.TWO_WAY and
-                resolution.condition and
-                resolution.nested_true is None and
-                resolution.nested_false is None and
-                resolution.true_value and
-                resolution.false_value):
-
+            if (
+                resolution.type == PHIResolutionType.TWO_WAY
+                and resolution.condition
+                and resolution.nested_true is None
+                and resolution.nested_false is None
+                and resolution.true_value
+                and resolution.false_value
+            ):
                 # Normalize negated conditions for grouping
                 cond_str = resolution.condition
-                is_negated = cond_str.startswith('!')
+                is_negated = cond_str.startswith("!")
                 base_cond = cond_str[1:] if is_negated else cond_str
 
                 cond_groups[(base_cond, is_negated)].append((inst, resolution))
@@ -176,10 +193,15 @@ class FunctionBuilder:
             var_name = ctx.define_var(inst.result)
             body.append(assign(var_name, expr))
 
-    def _emit_phi_batch(self, body: List[ast.stmt], ctx: CodeGenContext,
-                        translator: InstructionTranslator,
-                        base_cond: str, is_negated: bool,
-                        group: List[Tuple[MIRInstruction, PHIResolution]]):
+    def _emit_phi_batch(
+        self,
+        body: List[ast.stmt],
+        ctx: CodeGenContext,
+        translator: InstructionTranslator,
+        base_cond: str,
+        is_negated: bool,
+        group: List[Tuple[MIRInstruction, PHIResolution]],
+    ):
         """Emit a batch of PHIs with the same condition using tree_map.
 
         Generates:
@@ -192,7 +214,7 @@ class FunctionBuilder:
         # Build the condition expression
         cond_expr = ctx.get_operand(base_cond)
         if is_negated:
-            cond_expr = jnp_call('logical_not', cond_expr)
+            cond_expr = jnp_call("logical_not", cond_expr)
 
         # Collect variable names and values
         var_names = []
@@ -209,9 +231,9 @@ class FunctionBuilder:
         # jax.tree_util.tree_map(lambda t, f: jnp.where(cond, t, f), (t1, t2, ...), (f1, f2, ...))
 
         # Lambda: lambda t, f: jnp.where(cond, t, f)
-        t_param = ast.arg(arg='t', annotation=None)
-        f_param = ast.arg(arg='f', annotation=None)
-        lambda_body = jnp_where(cond_expr, ast_name('t'), ast_name('f'))
+        t_param = ast.arg(arg="t", annotation=None)
+        f_param = ast.arg(arg="f", annotation=None)
+        lambda_body = jnp_where(cond_expr, ast_name("t"), ast_name("f"))
         lambda_node = ast.Lambda(
             args=ast.arguments(
                 posonlyargs=[],
@@ -220,22 +242,27 @@ class FunctionBuilder:
                 kwonlyargs=[],
                 kw_defaults=[],
                 kwarg=None,
-                defaults=[]
+                defaults=[],
             ),
-            body=lambda_body
+            body=lambda_body,
         )
 
         # jax.tree_util.tree_map(lambda_node, (true_vals), (false_vals))
         tree_map_call = ast_call(
-            attr(attr(ast_name('jax'), 'tree_util'), 'tree_map'),
-            [lambda_node, tuple_expr(true_vals), tuple_expr(false_vals)]
+            attr(attr(ast_name("jax"), "tree_util"), "tree_map"),
+            [lambda_node, tuple_expr(true_vals), tuple_expr(false_vals)],
         )
 
         # Emit tuple assignment: (v1, v2, ...) = tree_map(...)
         body.append(assign_tuple(var_names, tree_map_call))
 
-    def _emit_loop(self, body: List[ast.stmt], ctx: CodeGenContext,
-                   loop: LoopInfo, translator: InstructionTranslator) -> None:
+    def _emit_loop(
+        self,
+        body: List[ast.stmt],
+        ctx: CodeGenContext,
+        loop: LoopInfo,
+        translator: InstructionTranslator,
+    ) -> None:
         """Emit code for a loop using lax.while_loop."""
         header_block = self.mir_func.blocks.get(loop.header)
         if not header_block:
@@ -260,11 +287,7 @@ class FunctionBuilder:
                 assert phi.result is not None
                 assert resolution.init_value is not None
                 assert resolution.update_value is not None
-                loop_state.append((
-                    phi.result,
-                    resolution.init_value,
-                    resolution.update_value
-                ))
+                loop_state.append((phi.result, resolution.init_value, resolution.update_value))
 
         if not loop_state:
             # Couldn't extract loop state, emit linearly
@@ -276,7 +299,7 @@ class FunctionBuilder:
 
         # Build initial state tuple
         # Cast all values to float32 to ensure type consistency
-        init_vals = [jnp_call('float32', ctx.get_operand(lc[1])) for lc in loop_state]
+        init_vals = [jnp_call("float32", ctx.get_operand(lc[1])) for lc in loop_state]
         init_state = tuple_expr(init_vals) if len(init_vals) > 1 else init_vals[0]
 
         # Pre-initialize PHI variables from non-header loop body blocks
@@ -292,42 +315,46 @@ class FunctionBuilder:
 
         # Build condition function
         cond_body = self._build_loop_cond(ctx, loop, loop_state, translator, branch_cond)
-        cond_fn = function_def('_loop_cond', ['_state'], cond_body)
+        cond_fn = function_def("_loop_cond", ["_state"], cond_body)
         body.append(cond_fn)
 
         # Build body function
         loop_body_stmts = self._build_loop_body(ctx, loop, loop_state, translator)
-        body_fn = function_def('_loop_body', ['_state'], loop_body_stmts)
+        body_fn = function_def("_loop_body", ["_state"], loop_body_stmts)
         body.append(body_fn)
 
         # Call while_loop
         loop_call = ast_call(
-            attr(ast_name('lax'), 'while_loop'),
-            [ast_name('_loop_cond'), ast_name('_loop_body'), init_state]
+            attr(ast_name("lax"), "while_loop"),
+            [ast_name("_loop_cond"), ast_name("_loop_body"), init_state],
         )
-        body.append(assign('_loop_result', loop_call))
+        body.append(assign("_loop_result", loop_call))
 
         # Unpack results
         for i, (result, _, _) in enumerate(loop_state):
             var_name = ctx.define_var(result)
             if len(loop_state) > 1:
-                body.append(assign(var_name, subscript(ast_name('_loop_result'), ast_const(i))))
+                body.append(assign(var_name, subscript(ast_name("_loop_result"), ast_const(i))))
             else:
-                body.append(assign(var_name, ast_name('_loop_result')))
+                body.append(assign(var_name, ast_name("_loop_result")))
 
-    def _build_loop_cond(self, ctx: CodeGenContext, loop: LoopInfo,
-                         loop_state: List[Tuple[ValueId, ValueId, ValueId]],
-                         translator: InstructionTranslator,
-                         branch_cond: Optional[ValueId]) -> List[ast.stmt]:
+    def _build_loop_cond(
+        self,
+        ctx: CodeGenContext,
+        loop: LoopInfo,
+        loop_state: List[Tuple[ValueId, ValueId, ValueId]],
+        translator: InstructionTranslator,
+        branch_cond: Optional[ValueId],
+    ) -> List[ast.stmt]:
         """Build loop condition function body."""
         cond_body = []
 
         # Unpack state
         state_vars = [f"{ctx.var_prefix}{ls[0]}" for ls in loop_state]
         if len(state_vars) > 1:
-            cond_body.append(assign_tuple(state_vars, ast_name('_state')))
+            cond_body.append(assign_tuple(state_vars, ast_name("_state")))
         else:
-            cond_body.append(assign(state_vars[0], ast_name('_state')))
+            cond_body.append(assign(state_vars[0], ast_name("_state")))
 
         # Mark state vars as defined in ctx so get_operand finds them
         # This is critical: without this, SCCP constants take precedence
@@ -358,18 +385,22 @@ class FunctionBuilder:
 
         return cond_body
 
-    def _build_loop_body(self, ctx: CodeGenContext, loop: LoopInfo,
-                         loop_state: List[Tuple[ValueId, ValueId, ValueId]],
-                         translator: InstructionTranslator) -> List[ast.stmt]:
+    def _build_loop_body(
+        self,
+        ctx: CodeGenContext,
+        loop: LoopInfo,
+        loop_state: List[Tuple[ValueId, ValueId, ValueId]],
+        translator: InstructionTranslator,
+    ) -> List[ast.stmt]:
         """Build loop body function."""
         loop_body = []
 
         # Unpack state
         state_vars = [f"{ctx.var_prefix}{ls[0]}" for ls in loop_state]
         if len(state_vars) > 1:
-            loop_body.append(assign_tuple(state_vars, ast_name('_state')))
+            loop_body.append(assign_tuple(state_vars, ast_name("_state")))
         else:
-            loop_body.append(assign(state_vars[0], ast_name('_state')))
+            loop_body.append(assign(state_vars[0], ast_name("_state")))
 
         # Mark state vars as defined in ctx so get_operand finds them
         # This is critical: without this, SCCP constants take precedence
@@ -417,7 +448,7 @@ class FunctionBuilder:
                 # Fallback to operand resolution
                 val_expr = ctx.get_operand(update)
             # Cast to float32 to ensure type consistency
-            cast_expr = jnp_call('float32', val_expr)
+            cast_expr = jnp_call("float32", val_expr)
             update_vals.append(cast_expr)
 
         if len(update_vals) > 1:
@@ -427,9 +458,9 @@ class FunctionBuilder:
 
         return loop_body
 
-    def _pre_initialize_loop_body_phis(self, body: List[ast.stmt],
-                                        ctx: CodeGenContext,
-                                        loop: LoopInfo) -> None:
+    def _pre_initialize_loop_body_phis(
+        self, body: List[ast.stmt], ctx: CodeGenContext, loop: LoopInfo
+    ) -> None:
         """Pre-initialize PHI variables from non-header loop body blocks.
 
         PHI nodes inside loop bodies (not the header) may be used in post-loop
@@ -461,9 +492,12 @@ class FunctionBuilder:
 class InitFunctionBuilder(FunctionBuilder):
     """Builder for init functions."""
 
-    def __init__(self, mir_func: MIRFunction,
-                 cache_mapping: List[Dict[str, Any]],
-                 collapse_decision_outputs: List[Tuple[int, str]]):
+    def __init__(
+        self,
+        mir_func: MIRFunction,
+        cache_mapping: List[Dict[str, Any]],
+        collapse_decision_outputs: List[Tuple[int, str]],
+    ):
         """Initialize init function builder.
 
         Args:
@@ -485,7 +519,7 @@ class InitFunctionBuilder(FunctionBuilder):
             Tuple of (function_name, code_lines)
         """
         # Create context
-        ctx = build_context_from_mir(self.mir_func, var_prefix='')
+        ctx = build_context_from_mir(self.mir_func, var_prefix="")
 
         # Build function body
         body: List[ast.stmt] = []
@@ -497,9 +531,9 @@ class InitFunctionBuilder(FunctionBuilder):
         self._emit_constants(body, ctx)
 
         # Ensure v3 exists (commonly used for zero)
-        if 'v3' not in ctx.defined_vars:
-            body.append(assign('v3', ctx.zero()))
-            ctx.defined_vars.add('v3')
+        if "v3" not in ctx.defined_vars:
+            body.append(assign("v3", ctx.zero()))
+            ctx.defined_vars.add("v3")
 
         # Map init params from input array
         self._emit_simple_param_mapping(body, ctx, param_indices)
@@ -531,40 +565,36 @@ class InitFunctionBuilder(FunctionBuilder):
         self._emit_collapse_decisions(body, ctx)
 
         # Return statement
-        body.append(return_stmt(tuple_expr([
-            ast_name('cache'),
-            ast_name('collapse_decisions')
-        ])))
+        body.append(return_stmt(tuple_expr([ast_name("cache"), ast_name("collapse_decisions")])))
 
         # Build function
-        func = function_def('init_fn', ['inputs'], body)
+        func = function_def("init_fn", ["inputs"], body)
 
         # Compile to code
         module = build_module([func])
         ast.fix_missing_locations(module)
         code_str = ast.unparse(module)
 
-        return 'init_fn', code_str.split('\n')
+        return "init_fn", code_str.split("\n")
 
-    def _emit_simple_param_mapping(self, body: List[ast.stmt],
-                                    ctx: CodeGenContext,
-                                    param_indices: List[int]):
+    def _emit_simple_param_mapping(
+        self, body: List[ast.stmt], ctx: CodeGenContext, param_indices: List[int]
+    ):
         """Emit parameter mapping from single input array."""
         for init_idx, param in enumerate(self.mir_func.params):
             var_name = f"{ctx.var_prefix}{param}"
 
             if init_idx < len(param_indices):
-                body.append(assign(var_name,
-                    subscript(ast_name('inputs'), ast_const(init_idx))))
+                body.append(assign(var_name, subscript(ast_name("inputs"), ast_const(init_idx))))
             else:
                 # Fallback to zero
                 body.append(assign(var_name, ctx.zero()))
 
             ctx.defined_vars.add(var_name)
 
-    def build_split(self, shared_indices: List[int],
-                    varying_indices: List[int],
-                    init_to_eval: List[int]) -> Tuple[str, List[str]]:
+    def build_split(
+        self, shared_indices: List[int], varying_indices: List[int], init_to_eval: List[int]
+    ) -> Tuple[str, List[str]]:
         """Build init function with split shared/device params.
 
         Args:
@@ -582,7 +612,7 @@ class InitFunctionBuilder(FunctionBuilder):
         varying_to_pos = {idx: pos for pos, idx in enumerate(varying_indices)}
 
         # Create context
-        ctx = build_context_from_mir(self.mir_func, var_prefix='')
+        ctx = build_context_from_mir(self.mir_func, var_prefix="")
 
         # Build function body
         body: List[ast.stmt] = []
@@ -594,13 +624,14 @@ class InitFunctionBuilder(FunctionBuilder):
         self._emit_constants(body, ctx)
 
         # Ensure v3 exists (commonly used for zero)
-        if 'v3' not in ctx.defined_vars:
-            body.append(assign('v3', ctx.zero()))
-            ctx.defined_vars.add('v3')
+        if "v3" not in ctx.defined_vars:
+            body.append(assign("v3", ctx.zero()))
+            ctx.defined_vars.add("v3")
 
         # Map init params from split arrays
-        self._emit_split_param_mapping(body, ctx, shared_set, varying_set,
-                                       shared_to_pos, varying_to_pos, init_to_eval)
+        self._emit_split_param_mapping(
+            body, ctx, shared_set, varying_set, shared_to_pos, varying_to_pos, init_to_eval
+        )
 
         # Pre-initialize all cache output variables to 0.0 to avoid NameError
         # for variables only assigned in conditional branches (NMOS/PMOS paths)
@@ -629,30 +660,28 @@ class InitFunctionBuilder(FunctionBuilder):
         self._emit_collapse_decisions(body, ctx)
 
         # Return statement
-        body.append(return_stmt(tuple_expr([
-            ast_name('cache'),
-            ast_name('collapse_decisions')
-        ])))
+        body.append(return_stmt(tuple_expr([ast_name("cache"), ast_name("collapse_decisions")])))
 
         # Build function
-        func = function_def('init_fn_split',
-                            ['shared_params', 'device_params'],
-                            body)
+        func = function_def("init_fn_split", ["shared_params", "device_params"], body)
 
         # Compile to code
         module = build_module([func])
         ast.fix_missing_locations(module)
         code_str = ast.unparse(module)
 
-        return 'init_fn_split', code_str.split('\n')
+        return "init_fn_split", code_str.split("\n")
 
-    def _emit_split_param_mapping(self, body: List[ast.stmt],
-                                   ctx: CodeGenContext,
-                                   shared_set: Set[int],
-                                   varying_set: Set[int],
-                                   shared_to_pos: Dict[int, int],
-                                   varying_to_pos: Dict[int, int],
-                                   init_to_eval: List[int]):
+    def _emit_split_param_mapping(
+        self,
+        body: List[ast.stmt],
+        ctx: CodeGenContext,
+        shared_set: Set[int],
+        varying_set: Set[int],
+        shared_to_pos: Dict[int, int],
+        varying_to_pos: Dict[int, int],
+        init_to_eval: List[int],
+    ):
         """Emit parameter mapping from split arrays."""
         for init_idx, param in enumerate(self.mir_func.params):
             eval_idx = init_to_eval[init_idx] if init_idx < len(init_to_eval) else -1
@@ -660,12 +689,10 @@ class InitFunctionBuilder(FunctionBuilder):
 
             if eval_idx in shared_set:
                 pos = shared_to_pos[eval_idx]
-                body.append(assign(var_name,
-                    subscript(ast_name('shared_params'), ast_const(pos))))
+                body.append(assign(var_name, subscript(ast_name("shared_params"), ast_const(pos))))
             elif eval_idx in varying_set:
                 pos = varying_to_pos[eval_idx]
-                body.append(assign(var_name,
-                    subscript(ast_name('device_params'), ast_const(pos))))
+                body.append(assign(var_name, subscript(ast_name("device_params"), ast_const(pos))))
             else:
                 # Fallback to zero
                 body.append(assign(var_name, ctx.zero()))
@@ -682,7 +709,7 @@ class InitFunctionBuilder(FunctionBuilder):
         """
         cache_vars = set()
         for mapping in self.cache_mapping:
-            init_val = mapping['init_value']
+            init_val = mapping["init_value"]
             var_name = f"{ctx.var_prefix}{init_val}"
             cache_vars.add(var_name)
 
@@ -698,7 +725,7 @@ class InitFunctionBuilder(FunctionBuilder):
         cache_vals: List[ast.expr] = []
 
         for mapping in self.cache_mapping:
-            init_val = mapping['init_value']
+            init_val = mapping["init_value"]
             var_name = f"{ctx.var_prefix}{init_val}"
             if var_name in ctx.defined_vars or init_val in ctx.defined_vars:
                 cache_vals.append(ast_name(var_name if var_name in ctx.defined_vars else init_val))
@@ -706,16 +733,16 @@ class InitFunctionBuilder(FunctionBuilder):
                 cache_vals.append(ctx.zero())
 
         if cache_vals:
-            body.append(assign('cache', jnp_call('array', list_expr(cache_vals))))
+            body.append(assign("cache", jnp_call("array", list_expr(cache_vals))))
         else:
-            body.append(assign('cache', jnp_call('array', list_expr([]))))
+            body.append(assign("cache", jnp_call("array", list_expr([]))))
 
     def _emit_collapse_decisions(self, body: List[ast.stmt], ctx: CodeGenContext):
         """Emit collapse decision array construction."""
         collapse_vals: List[ast.expr] = []
 
         for pair_idx, val_name in self.collapse_decision_outputs:
-            if val_name.startswith('!'):
+            if val_name.startswith("!"):
                 actual_val = val_name[1:]
                 negate = True
             else:
@@ -726,28 +753,30 @@ class InitFunctionBuilder(FunctionBuilder):
             if var_name in ctx.defined_vars or actual_val in ctx.defined_vars:
                 val_expr = ast_name(var_name if var_name in ctx.defined_vars else actual_val)
                 if negate:
-                    val_expr = jnp_call('logical_not', val_expr)
-                collapse_vals.append(ast_call(
-                    attr(ast_name('jnp'), 'float32'), [val_expr]))
+                    val_expr = jnp_call("logical_not", val_expr)
+                collapse_vals.append(ast_call(attr(ast_name("jnp"), "float32"), [val_expr]))
             else:
                 # Default based on negation
                 collapse_vals.append(ctx.one() if negate else ctx.zero())
 
         if collapse_vals:
-            body.append(assign('collapse_decisions',
-                jnp_call('array', list_expr(collapse_vals))))
+            body.append(assign("collapse_decisions", jnp_call("array", list_expr(collapse_vals))))
         else:
-            body.append(assign('collapse_decisions', jnp_call('array', list_expr([]))))
+            body.append(assign("collapse_decisions", jnp_call("array", list_expr([]))))
 
 
 class EvalFunctionBuilder(FunctionBuilder):
     """Builder for eval functions."""
 
-    def __init__(self, mir_func: MIRFunction,
-                 dae_data: Dict[str, Any],
-                 cache_mapping: List[Dict[str, Any]],
-                 param_idx_to_val: Dict[int, str],
-                 sccp_known_values: Optional[Dict[str, Any]] = None):
+    def __init__(
+        self,
+        mir_func: MIRFunction,
+        dae_data: Dict[str, Any],
+        cache_mapping: List[Dict[str, Any]],
+        param_idx_to_val: Dict[int, str],
+        sccp_known_values: Optional[Dict[str, Any]] = None,
+        eval_param_names: Optional[List[str]] = None,
+    ):
         """Initialize eval function builder.
 
         Args:
@@ -759,6 +788,8 @@ class EvalFunctionBuilder(FunctionBuilder):
                               for SCCP-based dead code elimination. Used to eliminate
                               branches based on compile-time known values like TYPE=1.
                               Example: {'v51588': 1} for NMOS.
+            eval_param_names: Optional list of eval parameter names (e.g., ['V(A,CI)', 'R', ...]).
+                             Used for tracing voltage params to node names for lim_rhs computation.
         """
         # Run SCCP if known values provided
         self.sccp: Optional[SCCP] = None
@@ -775,16 +806,19 @@ class EvalFunctionBuilder(FunctionBuilder):
         self.dae_data = dae_data
         self.cache_mapping = cache_mapping
         self.param_idx_to_val = param_idx_to_val
+        self.eval_param_names = eval_param_names or []
         self.limit_metadata = {}  # Will be populated by build_with_cache_split if limit functions used
 
-    def build_with_cache_split(self, shared_indices: List[int],
-                                varying_indices: List[int],
-                                shared_cache_indices: Optional[List[int]] = None,
-                                varying_cache_indices: Optional[List[int]] = None,
-                                simparam_params: Optional[Dict[int, str]] = None,
-                                use_limit_functions: bool = False,
-                                limit_param_map: Optional[Dict[int, Tuple[str, str]]] = None,
-                                ) -> Tuple[str, List[str]]:
+    def build_with_cache_split(
+        self,
+        shared_indices: List[int],
+        varying_indices: List[int],
+        shared_cache_indices: Optional[List[int]] = None,
+        varying_cache_indices: Optional[List[int]] = None,
+        simparam_params: Optional[Dict[int, str]] = None,
+        use_limit_functions: bool = False,
+        limit_param_map: Optional[Dict[int, Tuple[str, str]]] = None,
+    ) -> Tuple[str, List[str]]:
         """Build eval function with split params and optional split cache.
 
         Args:
@@ -817,36 +851,36 @@ class EvalFunctionBuilder(FunctionBuilder):
         # Build index mappings
         idx_mapping: Dict[int, Tuple[str, int]] = {}
         for new_idx, orig_idx in enumerate(shared_indices):
-            idx_mapping[orig_idx] = ('shared', new_idx)
+            idx_mapping[orig_idx] = ("shared", new_idx)
         for new_idx, orig_idx in enumerate(varying_indices):
-            idx_mapping[orig_idx] = ('device', new_idx)
+            idx_mapping[orig_idx] = ("device", new_idx)
         # Add simparam mappings - these will be handled specially in _emit_param_mapping
         for orig_idx, simparam_name in simparam_params.items():
-            idx_mapping[orig_idx] = ('simparam', simparam_name)
+            idx_mapping[orig_idx] = ("simparam", simparam_name)
         # Add limit param mappings - read from limit_state_in or use constants
         for orig_idx, (kind, name) in limit_param_map.items():
-            if kind == 'prev_state':
+            if kind == "prev_state":
                 # Extract state index from name (e.g., "prev_state_0" -> 0)
-                state_idx = int(name.split('_')[-1])
-                idx_mapping[orig_idx] = ('prev_state', state_idx)
-            elif kind == 'enable_lim':
-                idx_mapping[orig_idx] = ('enable_lim', 1.0 if use_limit_functions else 0.0)
-            elif kind == 'new_state':
+                state_idx = int(name.split("_")[-1])
+                idx_mapping[orig_idx] = ("prev_state", state_idx)
+            elif kind == "enable_lim":
+                idx_mapping[orig_idx] = ("enable_lim", 1.0 if use_limit_functions else 0.0)
+            elif kind == "new_state":
                 # new_state is written via StoreLimit, initialize to 0
-                idx_mapping[orig_idx] = ('new_state', 0)
-            elif kind == 'enable_integration':
+                idx_mapping[orig_idx] = ("new_state", 0)
+            elif kind == "enable_integration":
                 # 0.0 for DC, could be 1.0 for transient if needed
-                idx_mapping[orig_idx] = ('enable_integration', 0.0)
+                idx_mapping[orig_idx] = ("enable_integration", 0.0)
 
         # Build cache index mappings
         cache_idx_mapping: Dict[int, Tuple[str, int]] = {}
         for new_idx, orig_idx in enumerate(shared_cache_indices):
-            cache_idx_mapping[orig_idx] = ('shared_cache', new_idx)
+            cache_idx_mapping[orig_idx] = ("shared_cache", new_idx)
         for new_idx, orig_idx in enumerate(varying_cache_indices):
-            cache_idx_mapping[orig_idx] = ('device_cache', new_idx)
+            cache_idx_mapping[orig_idx] = ("device_cache", new_idx)
 
         # Create context
-        ctx = build_context_from_mir(self.mir_func, var_prefix='')
+        ctx = build_context_from_mir(self.mir_func, var_prefix="")
         ctx.use_limit_functions = use_limit_functions
 
         # Build function body
@@ -859,9 +893,9 @@ class EvalFunctionBuilder(FunctionBuilder):
         self._emit_constants(body, ctx)
 
         # Ensure v3 exists
-        if 'v3' not in ctx.defined_vars:
-            body.append(assign('v3', ctx.zero()))
-            ctx.defined_vars.add('v3')
+        if "v3" not in ctx.defined_vars:
+            body.append(assign("v3", ctx.zero()))
+            ctx.defined_vars.add("v3")
 
         # Map params from split arrays
         self._emit_param_mapping(body, ctx, idx_mapping)
@@ -910,24 +944,31 @@ class EvalFunctionBuilder(FunctionBuilder):
         #                    small_signal_resist, small_signal_react, limit_state_out)
         # Note: limit_state_out is always returned (empty array if no limits) for uniform interface
         return_values = [
-            ast_name('residuals_resist'),
-            ast_name('residuals_react'),
-            ast_name('jacobian_resist'),
-            ast_name('jacobian_react'),
-            ast_name('lim_rhs_resist'),
-            ast_name('lim_rhs_react'),
-            ast_name('small_signal_resist'),
-            ast_name('small_signal_react'),
-            ast_name('limit_state_out'),
+            ast_name("residuals_resist"),
+            ast_name("residuals_react"),
+            ast_name("jacobian_resist"),
+            ast_name("jacobian_react"),
+            ast_name("lim_rhs_resist"),
+            ast_name("lim_rhs_react"),
+            ast_name("small_signal_resist"),
+            ast_name("small_signal_react"),
+            ast_name("limit_state_out"),
         ]
         body.append(return_stmt(tuple_expr(return_values)))
 
         # Build function with uniform interface
         # Args: shared_params, device_params, shared_cache, device_cache, simparams, limit_state_in, limit_funcs
         # simparams layout: [analysis_type, mfactor, gmin]
-        fn_name = 'eval_fn'
-        args = ['shared_params', 'device_params', 'shared_cache', 'device_cache', 'simparams',
-                'limit_state_in', 'limit_funcs']
+        fn_name = "eval_fn"
+        args = [
+            "shared_params",
+            "device_params",
+            "shared_cache",
+            "device_cache",
+            "simparams",
+            "limit_state_in",
+            "limit_funcs",
+        ]
 
         func = function_def(fn_name, args, body)
 
@@ -936,11 +977,11 @@ class EvalFunctionBuilder(FunctionBuilder):
         ast.fix_missing_locations(module)
         code_str = ast.unparse(module)
 
-        return fn_name, code_str.split('\n')
+        return fn_name, code_str.split("\n")
 
-    def _emit_param_mapping(self, body: List[ast.stmt],
-                             ctx: CodeGenContext,
-                             idx_mapping: Dict[int, Tuple[str, any]]):
+    def _emit_param_mapping(
+        self, body: List[ast.stmt], ctx: CodeGenContext, idx_mapping: Dict[int, Tuple[str, any]]
+    ):
         """Emit parameter mapping from split arrays.
 
         Args:
@@ -956,29 +997,33 @@ class EvalFunctionBuilder(FunctionBuilder):
 
             if i in idx_mapping:
                 source, value = idx_mapping[i]
-                if source == 'shared':
-                    body.append(assign(var_name,
-                        subscript(ast_name('shared_params'), ast_const(value))))
-                elif source == 'device':
-                    body.append(assign(var_name,
-                        subscript(ast_name('device_params'), ast_const(value))))
-                elif source == 'simparam':
+                if source == "shared":
+                    body.append(
+                        assign(var_name, subscript(ast_name("shared_params"), ast_const(value)))
+                    )
+                elif source == "device":
+                    body.append(
+                        assign(var_name, subscript(ast_name("device_params"), ast_const(value)))
+                    )
+                elif source == "simparam":
                     # Register simparam and emit simparams[idx]
                     simparam_name = value
                     simparam_idx = ctx.register_simparam(simparam_name)
-                    body.append(assign(var_name,
-                        subscript(ast_name('simparams'), ast_const(simparam_idx))))
-                elif source == 'prev_state':
+                    body.append(
+                        assign(var_name, subscript(ast_name("simparams"), ast_const(simparam_idx)))
+                    )
+                elif source == "prev_state":
                     # Read previous iteration's limited voltage from limit_state_in[N]
-                    body.append(assign(var_name,
-                        subscript(ast_name('limit_state_in'), ast_const(value))))
-                elif source == 'enable_lim':
+                    body.append(
+                        assign(var_name, subscript(ast_name("limit_state_in"), ast_const(value)))
+                    )
+                elif source == "enable_lim":
                     # Constant flag: 1.0 when limiting enabled, 0.0 otherwise
                     body.append(assign(var_name, ast_const(value)))
-                elif source == 'new_state':
+                elif source == "new_state":
                     # Output state - initialized to 0, written via StoreLimit
                     body.append(assign(var_name, ast_const(0.0)))
-                elif source == 'enable_integration':
+                elif source == "enable_integration":
                     # Integration enable flag (0.0 for DC, 1.0 for transient)
                     body.append(assign(var_name, ast_const(value)))
             else:
@@ -987,26 +1032,31 @@ class EvalFunctionBuilder(FunctionBuilder):
 
             ctx.defined_vars.add(var_name)
 
-    def _emit_cache_mapping(self, body: List[ast.stmt],
-                             ctx: CodeGenContext,
-                             cache_idx_mapping: Dict[int, Tuple[str, int]]):
+    def _emit_cache_mapping(
+        self,
+        body: List[ast.stmt],
+        ctx: CodeGenContext,
+        cache_idx_mapping: Dict[int, Tuple[str, int]],
+    ):
         """Emit cache value mapping from split cache arrays.
 
         Always uses split cache format (shared_cache, device_cache) for uniform interface.
         """
         for cache_idx, mapping in enumerate(self.cache_mapping):
-            eval_param_idx = mapping['eval_param']
+            eval_param_idx = mapping["eval_param"]
             eval_val = self.param_idx_to_val.get(eval_param_idx, f"cached_{eval_param_idx}")
             var_name = f"{ctx.var_prefix}{eval_val}"
 
             if cache_idx in cache_idx_mapping:
                 source, new_idx = cache_idx_mapping[cache_idx]
-                if source == 'shared_cache':
-                    body.append(assign(var_name,
-                        subscript(ast_name('shared_cache'), ast_const(new_idx))))
+                if source == "shared_cache":
+                    body.append(
+                        assign(var_name, subscript(ast_name("shared_cache"), ast_const(new_idx)))
+                    )
                 else:
-                    body.append(assign(var_name,
-                        subscript(ast_name('device_cache'), ast_const(new_idx))))
+                    body.append(
+                        assign(var_name, subscript(ast_name("device_cache"), ast_const(new_idx)))
+                    )
             else:
                 # Cache index not in mapping - this shouldn't happen with proper setup
                 # but fall back to zero for safety
@@ -1019,62 +1069,243 @@ class EvalFunctionBuilder(FunctionBuilder):
         resist_exprs: List[ast.expr] = []
         react_exprs: List[ast.expr] = []
 
-        for res in self.dae_data['residuals']:
-            resist_var = self._mir_to_var(res['resist_var'], ctx)
-            react_var = self._mir_to_var(res['react_var'], ctx)
+        for res in self.dae_data["residuals"]:
+            resist_var = self._mir_to_var(res["resist_var"], ctx)
+            react_var = self._mir_to_var(res["react_var"], ctx)
 
             resist_exprs.append(
-                ast_name(resist_var) if resist_var in ctx.defined_vars
-                else ctx.zero())
-            react_exprs.append(
-                ast_name(react_var) if react_var in ctx.defined_vars
-                else ctx.zero())
+                ast_name(resist_var) if resist_var in ctx.defined_vars else ctx.zero()
+            )
+            react_exprs.append(ast_name(react_var) if react_var in ctx.defined_vars else ctx.zero())
 
-        body.append(assign('residuals_resist', jnp_call('array', list_expr(resist_exprs))))
-        body.append(assign('residuals_react', jnp_call('array', list_expr(react_exprs))))
+        body.append(assign("residuals_resist", jnp_call("array", list_expr(resist_exprs))))
+        body.append(assign("residuals_react", jnp_call("array", list_expr(react_exprs))))
 
     def _emit_jacobian_arrays(self, body: List[ast.stmt], ctx: CodeGenContext):
         """Emit Jacobian output arrays."""
         resist_exprs: List[ast.expr] = []
         react_exprs: List[ast.expr] = []
 
-        for entry in self.dae_data['jacobian']:
-            resist_var = self._mir_to_var(entry['resist_var'], ctx)
-            react_var = self._mir_to_var(entry['react_var'], ctx)
+        for entry in self.dae_data["jacobian"]:
+            resist_var = self._mir_to_var(entry["resist_var"], ctx)
+            react_var = self._mir_to_var(entry["react_var"], ctx)
 
             resist_exprs.append(
-                ast_name(resist_var) if resist_var in ctx.defined_vars
-                else ctx.zero())
-            react_exprs.append(
-                ast_name(react_var) if react_var in ctx.defined_vars
-                else ctx.zero())
+                ast_name(resist_var) if resist_var in ctx.defined_vars else ctx.zero()
+            )
+            react_exprs.append(ast_name(react_var) if react_var in ctx.defined_vars else ctx.zero())
 
-        body.append(assign('jacobian_resist', jnp_call('array', list_expr(resist_exprs))))
-        body.append(assign('jacobian_react', jnp_call('array', list_expr(react_exprs))))
+        body.append(assign("jacobian_resist", jnp_call("array", list_expr(resist_exprs))))
+        body.append(assign("jacobian_react", jnp_call("array", list_expr(react_exprs))))
 
     def _emit_lim_rhs_arrays(self, body: List[ast.stmt], ctx: CodeGenContext):
         """Emit limiting RHS correction arrays.
 
         These corrections are subtracted from residuals during Newton-Raphson iteration
-        when limiting is applied. The formula is:
-            lim_rhs = J(lim_x) * (lim_x - x)
-        where lim_x is the limited voltage and x is the actual voltage.
+        when limiting is applied. The formula for each residual i is:
+
+            lim_rhs[i] = sum_k J[i, hi_k] * (V_lim_k - V_raw_k)
+
+        where:
+            - k iterates over each limited branch
+            - J[i, hi_k] is the Jacobian entry at (residual i, hi_node of limited branch k)
+            - V_lim_k is the limited voltage (output of pnjlim/fetlim)
+            - V_raw_k is the raw branch voltage before limiting
+            - hi_k is the positive terminal node of limited branch k
 
         The corrected residual becomes:
             f_corrected = f_computed - lim_rhs
 
-        NOTE: OpenVAF's MIR does not actually compute resist_lim_rhs values.
-        The MIR indices point to uninitialized (zero) variables, but the generated
-        code uses them in a formula like `J * (0 - V_raw)` which produces incorrect
-        corrections. Until proper lim_rhs computation is implemented, emit zeros
-        to avoid corrupting the residual.
+        This correction accounts for the fact that the device is evaluated at V_lim
+        but the NR update is applied at V_raw.
         """
-        n_residuals = len(self.dae_data['residuals'])
-        resist_exprs: List[ast.expr] = [ctx.zero() for _ in range(n_residuals)]
-        react_exprs: List[ast.expr] = [ctx.zero() for _ in range(n_residuals)]
+        n_residuals = len(self.dae_data["residuals"])
 
-        body.append(assign('lim_rhs_resist', jnp_call('array', list_expr(resist_exprs))))
-        body.append(assign('lim_rhs_react', jnp_call('array', list_expr(react_exprs))))
+        # Collect limited branches: list of (lim_state_idx, v_raw_var, v_lim_var, hi_node_name)
+        limited_branches = self._collect_limited_branches(ctx)
+
+        if not limited_branches:
+            # No limited branches traced - emit zeros (safe fallback)
+            resist_exprs: List[ast.expr] = [ctx.zero() for _ in range(n_residuals)]
+            react_exprs: List[ast.expr] = [ctx.zero() for _ in range(n_residuals)]
+            body.append(assign("lim_rhs_resist", jnp_call("array", list_expr(resist_exprs))))
+            body.append(assign("lim_rhs_react", jnp_call("array", list_expr(react_exprs))))
+            return
+
+        # Build node_name -> residual index lookup
+        node_to_res_idx: Dict[str, int] = {}
+        for i, res in enumerate(self.dae_data["residuals"]):
+            node_to_res_idx[res["node_name"]] = i
+
+        # Build (row_node_name, col_node_name) -> jacobian entry index lookup
+        jac_key_to_idx: Dict[Tuple[str, str], int] = {}
+        for j, entry in enumerate(self.dae_data["jacobian"]):
+            jac_key_to_idx[(entry["row_node_name"], entry["col_node_name"])] = j
+
+        # For each limited branch, compute delta = V_lim - V_raw as a named variable
+        for branch_idx, (lim_idx, v_raw_var, v_lim_var, _hi_node) in enumerate(limited_branches):
+            delta_name = f"_lim_delta_{branch_idx}"
+            delta_expr = binop(ast_name(v_lim_var), ast.Sub(), ast_name(v_raw_var))
+            body.append(assign(delta_name, delta_expr))
+            ctx.defined_vars.add(delta_name)
+
+        # Build resist and react lim_rhs expressions for each residual
+        resist_exprs = []
+        react_exprs = []
+        for i, res in enumerate(self.dae_data["residuals"]):
+            row_node = res["node_name"]
+            resist_terms: List[ast.expr] = []
+            react_terms: List[ast.expr] = []
+
+            for branch_idx, (lim_idx, v_raw_var, v_lim_var, hi_node) in enumerate(limited_branches):
+                jac_key = (row_node, hi_node)
+                if jac_key in jac_key_to_idx:
+                    j_entry_idx = jac_key_to_idx[jac_key]
+                    j_entry = self.dae_data["jacobian"][j_entry_idx]
+
+                    delta_name = f"_lim_delta_{branch_idx}"
+
+                    # Resistive: jacobian_resist[j] * delta
+                    j_resist_var = self._mir_to_var(j_entry["resist_var"], ctx)
+                    if j_resist_var in ctx.defined_vars:
+                        resist_terms.append(
+                            binop(ast_name(j_resist_var), ast.Mult(), ast_name(delta_name))
+                        )
+
+                    # Reactive: jacobian_react[j] * delta
+                    j_react_var = self._mir_to_var(j_entry["react_var"], ctx)
+                    if j_react_var in ctx.defined_vars:
+                        react_terms.append(
+                            binop(ast_name(j_react_var), ast.Mult(), ast_name(delta_name))
+                        )
+
+            # Sum all terms for this residual, or zero if none
+            resist_exprs.append(self._sum_exprs(resist_terms, ctx))
+            react_exprs.append(self._sum_exprs(react_terms, ctx))
+
+        body.append(assign("lim_rhs_resist", jnp_call("array", list_expr(resist_exprs))))
+        body.append(assign("lim_rhs_react", jnp_call("array", list_expr(react_exprs))))
+
+    def _collect_limited_branches(self, ctx: CodeGenContext) -> List[Tuple[int, str, str, str]]:
+        """Collect info about each limited branch for lim_rhs computation.
+
+        For each LimState, traces back to find:
+        - V_raw: the raw voltage MIR variable (before limiting)
+        - V_lim: the limited voltage MIR variable (after pnjlim/fetlim)
+        - hi_node: the positive terminal node name of the limited branch
+
+        Returns:
+            List of (lim_state_idx, v_raw_var_name, v_lim_var_name, hi_node_name).
+            Only includes branches that could be fully traced.
+        """
+        result = []
+
+        # Build MIR param ID -> original param index mapping
+        # MIR params are listed in the same order as param indices
+        param_id_to_idx: Dict[str, int] = {}
+        for i, param in enumerate(self.mir_func.params):
+            param_id_to_idx[param] = i
+
+        for lim_idx in range(ctx.limit_next_index):
+            v_raw_id = ctx.limit_to_raw_operand.get(lim_idx)
+            if v_raw_id is None:
+                logger.debug(f"LimState {lim_idx}: no V_raw mapping, skipping")
+                continue
+
+            # Get the V_lim variable (the operand stored by StoreLimit)
+            v_lim_id = ctx.limit_store_operands.get(lim_idx)
+            if v_lim_id is None:
+                logger.debug(f"LimState {lim_idx}: no V_lim store operand, skipping")
+                continue
+
+            v_raw_var = f"{ctx.var_prefix}{v_raw_id}"
+            v_lim_var = f"{ctx.var_prefix}{v_lim_id}"
+
+            # Verify both variables are defined in generated code
+            if v_raw_var not in ctx.defined_vars:
+                logger.debug(f"LimState {lim_idx}: V_raw var {v_raw_var} not defined, skipping")
+                continue
+            if v_lim_var not in ctx.defined_vars:
+                logger.debug(f"LimState {lim_idx}: V_lim var {v_lim_var} not defined, skipping")
+                continue
+
+            # Trace V_raw back to a voltage param to find hi_node
+            # V_raw is typically a direct param read: V_raw = device_params[N]
+            # The param index N maps to param_idx_to_val which has the voltage name
+            hi_node = self._find_hi_node_for_operand(v_raw_id, param_id_to_idx)
+            if hi_node is None:
+                logger.debug(
+                    f"LimState {lim_idx}: could not trace V_raw {v_raw_id} to a voltage param, "
+                    f"skipping"
+                )
+                continue
+
+            result.append((lim_idx, v_raw_var, v_lim_var, hi_node))
+
+        return result
+
+    def _find_hi_node_for_operand(
+        self, v_raw_id: str, param_id_to_idx: Dict[str, int]
+    ) -> Optional[str]:
+        """Find the hi (positive) node name for a voltage operand.
+
+        Traces a MIR value ID back to a voltage parameter name like V(A,CI)
+        and extracts the first (hi) node name.
+
+        Args:
+            v_raw_id: MIR value ID of the raw voltage (e.g., 'v123')
+            param_id_to_idx: Maps MIR param IDs to original param indices
+
+        Returns:
+            Hi node name (e.g., 'A') or None if not traceable.
+        """
+        # Check if V_raw is a direct param reference
+        if v_raw_id in param_id_to_idx:
+            orig_idx = param_id_to_idx[v_raw_id]
+            return self._voltage_param_to_hi_node(orig_idx)
+
+        # V_raw might be computed (e.g., optbarrier of a param).
+        # Look through all params for a match - the param_idx_to_val
+        # maps eval param index to MIR value name.
+        for orig_idx, val_name in self.param_idx_to_val.items():
+            if val_name == v_raw_id:
+                return self._voltage_param_to_hi_node(orig_idx)
+
+        return None
+
+    def _voltage_param_to_hi_node(self, param_idx: int) -> Optional[str]:
+        """Extract the hi node name from a voltage parameter.
+
+        Voltage params have names like V(A,CI) or V(A).
+        The hi node is the first node name.
+
+        Args:
+            param_idx: Original eval param index
+
+        Returns:
+            Hi node name or None if not a voltage param.
+        """
+        if param_idx >= len(self.eval_param_names):
+            return None
+
+        param_name = self.eval_param_names[param_idx]
+
+        # Parse V(hi_node, lo_node) or V(hi_node)
+        m = re.match(r"^V\((\w+)(?:,(\w+))?\)$", param_name)
+        if m:
+            return m.group(1)
+
+        return None
+
+    @staticmethod
+    def _sum_exprs(terms: List[ast.expr], ctx: CodeGenContext) -> ast.expr:
+        """Sum a list of AST expressions, returning 0.0 if empty."""
+        if not terms:
+            return ctx.zero()
+        result = terms[0]
+        for term in terms[1:]:
+            result = binop(result, ast.Add(), term)
+        return result
 
     def _emit_small_signal_arrays(self, body: List[ast.stmt], ctx: CodeGenContext):
         """Emit small-signal residual output arrays.
@@ -1086,20 +1317,20 @@ class EvalFunctionBuilder(FunctionBuilder):
         resist_exprs: List[ast.expr] = []
         react_exprs: List[ast.expr] = []
 
-        for res in self.dae_data['residuals']:
+        for res in self.dae_data["residuals"]:
             # Get small-signal variables if they exist
-            resist_ss_var = self._mir_to_var(res.get('resist_small_signal_var', ''), ctx)
-            react_ss_var = self._mir_to_var(res.get('react_small_signal_var', ''), ctx)
+            resist_ss_var = self._mir_to_var(res.get("resist_small_signal_var", ""), ctx)
+            react_ss_var = self._mir_to_var(res.get("react_small_signal_var", ""), ctx)
 
             resist_exprs.append(
-                ast_name(resist_ss_var) if resist_ss_var in ctx.defined_vars
-                else ctx.zero())
+                ast_name(resist_ss_var) if resist_ss_var in ctx.defined_vars else ctx.zero()
+            )
             react_exprs.append(
-                ast_name(react_ss_var) if react_ss_var in ctx.defined_vars
-                else ctx.zero())
+                ast_name(react_ss_var) if react_ss_var in ctx.defined_vars else ctx.zero()
+            )
 
-        body.append(assign('small_signal_resist', jnp_call('array', list_expr(resist_exprs))))
-        body.append(assign('small_signal_react', jnp_call('array', list_expr(react_exprs))))
+        body.append(assign("small_signal_resist", jnp_call("array", list_expr(resist_exprs))))
+        body.append(assign("small_signal_react", jnp_call("array", list_expr(react_exprs))))
 
     def _emit_limit_state_out(self, body: List[ast.stmt], ctx: CodeGenContext):
         """Emit limit_state_out array from stored limit values.
@@ -1113,7 +1344,7 @@ class EvalFunctionBuilder(FunctionBuilder):
         limit_count = ctx.limit_next_index
         if limit_count == 0:
             # No limit states used - emit empty array
-            body.append(assign('limit_state_out', jnp_call('array', list_expr([]))))
+            body.append(assign("limit_state_out", jnp_call("array", list_expr([]))))
             return
 
         # Build array of stored limit values
@@ -1137,15 +1368,15 @@ class EvalFunctionBuilder(FunctionBuilder):
                     f"Expected StoreLimit for all registered limit states."
                 )
 
-        body.append(assign('limit_state_out', jnp_call('array', list_expr(limit_exprs))))
+        body.append(assign("limit_state_out", jnp_call("array", list_expr(limit_exprs))))
 
     def _mir_to_var(self, mir_ref: str, ctx: CodeGenContext) -> str:
         """Convert MIR reference (e.g., 'mir_123') to variable name."""
-        if mir_ref and mir_ref.startswith('mir_'):
+        if mir_ref and mir_ref.startswith("mir_"):
             # Extract value ID
             val_id = mir_ref[4:]  # Remove 'mir_' prefix
             return f"{ctx.var_prefix}v{val_id}"
-        return mir_ref or ''
+        return mir_ref or ""
 
     def _pre_initialize_output_vars(self, body: List[ast.stmt], ctx: CodeGenContext):
         """Pre-initialize all variables that appear in output arrays to 0.0.
@@ -1160,20 +1391,25 @@ class EvalFunctionBuilder(FunctionBuilder):
         """
         # Collect all variables from residuals
         output_vars = set()
-        for res in self.dae_data.get('residuals', []):
-            for key in ['resist_var', 'react_var', 'resist_lim_rhs_var',
-                       'react_lim_rhs_var', 'resist_small_signal_var',
-                       'react_small_signal_var']:
-                mir_ref = res.get(key, '')
+        for res in self.dae_data.get("residuals", []):
+            for key in [
+                "resist_var",
+                "react_var",
+                "resist_lim_rhs_var",
+                "react_lim_rhs_var",
+                "resist_small_signal_var",
+                "react_small_signal_var",
+            ]:
+                mir_ref = res.get(key, "")
                 if mir_ref:
                     var_name = self._mir_to_var(mir_ref, ctx)
                     if var_name:
                         output_vars.add(var_name)
 
         # Collect all variables from jacobian
-        for entry in self.dae_data.get('jacobian', []):
-            for key in ['resist_var', 'react_var']:
-                mir_ref = entry.get(key, '')
+        for entry in self.dae_data.get("jacobian", []):
+            for key in ["resist_var", "react_var"]:
+                mir_ref = entry.get(key, "")
                 if mir_ref:
                     var_name = self._mir_to_var(mir_ref, ctx)
                     if var_name:

@@ -52,10 +52,10 @@ class CodeGenContext:
     defined_vars: Set[str] = field(default_factory=set)
 
     # Prefix for variable names (e.g., 'init_' for init function variables)
-    var_prefix: str = ''
+    var_prefix: str = ""
 
     # Input array name
-    input_array: str = 'inputs'
+    input_array: str = "inputs"
 
     # String constants (for $simparam, etc.)
     str_constants: Dict[str, str] = field(default_factory=dict)
@@ -78,6 +78,14 @@ class CodeGenContext:
     # We track the operand ID so we can reference it when building the output array
     limit_store_operands: Dict[int, str] = field(default_factory=dict)
 
+    # Maps BuiltinLimit result MIR value ID -> V_raw operand MIR value ID
+    # Populated by _translate_builtin_limit, consumed by _translate_store_limit
+    builtin_limit_raw: Dict[str, str] = field(default_factory=dict)
+
+    # Maps LimState index -> V_raw MIR operand ID
+    # Populated by _translate_store_limit, consumed by _emit_lim_rhs_arrays
+    limit_to_raw_operand: Dict[int, str] = field(default_factory=dict)
+
     # Enable limit functions (when True, generates calls to limit_funcs)
     use_limit_functions: bool = False
 
@@ -94,7 +102,7 @@ class CodeGenContext:
         self.constants.setdefault(V_F_N_ONE, -1.0)
 
         # Pre-allocate analysis_type at index 0 (always needed for analysis() function)
-        self.simparam_registry['$analysis_type'] = 0
+        self.simparam_registry["$analysis_type"] = 0
         self.simparam_next_index = 1
 
     def register_simparam(self, name: str) -> int:
@@ -138,14 +146,14 @@ class CodeGenContext:
                 - simparam_count: Total number of simparams
         """
         # Build list in index order
-        simparams_used = [''] * self.simparam_next_index
+        simparams_used = [""] * self.simparam_next_index
         for name, idx in self.simparam_registry.items():
             simparams_used[idx] = name
 
         return {
-            'simparams_used': simparams_used,
-            'simparam_indices': dict(self.simparam_registry),
-            'simparam_count': self.simparam_next_index,
+            "simparams_used": simparams_used,
+            "simparam_indices": dict(self.simparam_registry),
+            "simparam_count": self.simparam_next_index,
         }
 
     def register_limit(self, name: str) -> int:
@@ -190,15 +198,16 @@ class CodeGenContext:
                 - store_operands: Dict mapping limit index -> MIR operand ID
         """
         # Build list in index order
-        limits_used = [''] * self.limit_next_index
+        limits_used = [""] * self.limit_next_index
         for name, idx in self.limit_registry.items():
             limits_used[idx] = name
 
         return {
-            'limits_used': limits_used,
-            'limit_indices': dict(self.limit_registry),
-            'limit_count': self.limit_next_index,
-            'store_operands': dict(self.limit_store_operands),
+            "limits_used": limits_used,
+            "limit_indices": dict(self.limit_registry),
+            "limit_count": self.limit_next_index,
+            "store_operands": dict(self.limit_store_operands),
+            "raw_operands": dict(self.limit_to_raw_operand),
         }
 
     def define_var(self, var: str) -> str:
@@ -210,10 +219,12 @@ class CodeGenContext:
     def is_defined(self, var: str) -> bool:
         """Check if a variable is defined."""
         prefixed = f"{self.var_prefix}{var}"
-        return (prefixed in self.defined_vars or
-                var in self.constants or
-                var in self.bool_constants or
-                var in self.int_constants)
+        return (
+            prefixed in self.defined_vars
+            or var in self.constants
+            or var in self.bool_constants
+            or var in self.int_constants
+        )
 
     def get_operand(self, op: str, allow_undefined: bool = False) -> ast.expr:
         """Resolve an operand to an AST expression.
@@ -234,9 +245,9 @@ class CodeGenContext:
         # Check float constants (includes pre-allocated v3, v6, v7)
         if op in self.constants:
             value = self.constants[op]
-            if value == float('inf'):
+            if value == float("inf"):
                 return jnp_inf()
-            elif value == float('-inf'):
+            elif value == float("-inf"):
                 return unaryop(ast.USub(), jnp_inf())
             elif value != value:  # NaN check
                 return jnp_nan()
@@ -276,12 +287,12 @@ class CodeGenContext:
         # Check float constants (includes pre-allocated v3, v6, v7)
         if op in self.constants:
             value = self.constants[op]
-            if value == float('inf'):
-                return 'jnp.inf'
-            elif value == float('-inf'):
-                return '-jnp.inf'
+            if value == float("inf"):
+                return "jnp.inf"
+            elif value == float("-inf"):
+                return "-jnp.inf"
             elif value != value:
-                return 'jnp.nan'
+                return "jnp.nan"
             else:
                 return repr(value)
 
@@ -306,10 +317,7 @@ class CodeGenContext:
 
     def get_input_negative(self, offset: int) -> ast.expr:
         """Get AST expression for inputs[-offset] (e.g., inputs[-1])."""
-        return subscript(
-            ast_name(self.input_array),
-            unaryop(ast.USub(), ast_const(offset))
-        )
+        return subscript(ast_name(self.input_array), unaryop(ast.USub(), ast_const(offset)))
 
     def zero(self) -> ast.expr:
         """Get AST expression for zero constant (0.0)."""
@@ -335,16 +343,16 @@ class SplitParamContext(CodeGenContext):
     cache_mapping: Dict[int, tuple] = field(default_factory=dict)
 
     # Array names
-    shared_params_array: str = 'shared_params'
-    device_params_array: str = 'device_params'
-    shared_cache_array: str = 'shared_cache'
-    device_cache_array: str = 'device_cache'
+    shared_params_array: str = "shared_params"
+    device_params_array: str = "device_params"
+    shared_cache_array: str = "shared_cache"
+    device_cache_array: str = "device_cache"
 
     def get_param(self, orig_index: int) -> ast.expr:
         """Get AST expression for parameter by original index."""
         if orig_index in self.param_mapping:
             source, new_idx = self.param_mapping[orig_index]
-            if source == 'shared':
+            if source == "shared":
                 return subscript(ast_name(self.shared_params_array), ast_const(new_idx))
             else:
                 return subscript(ast_name(self.device_params_array), ast_const(new_idx))
@@ -355,7 +363,7 @@ class SplitParamContext(CodeGenContext):
         """Get AST expression for cache value by index (always uses split cache format)."""
         if cache_index in self.cache_mapping:
             source, new_idx = self.cache_mapping[cache_index]
-            if source == 'shared_cache':
+            if source == "shared_cache":
                 return subscript(ast_name(self.shared_cache_array), ast_const(new_idx))
             else:
                 return subscript(ast_name(self.device_cache_array), ast_const(new_idx))
@@ -363,7 +371,7 @@ class SplitParamContext(CodeGenContext):
         return ast_const(0.0)
 
 
-def build_context_from_mir(mir_func, var_prefix: str = '') -> CodeGenContext:
+def build_context_from_mir(mir_func, var_prefix: str = "") -> CodeGenContext:
     """Build a CodeGenContext from a MIRFunction.
 
     Args:

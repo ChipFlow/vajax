@@ -442,8 +442,6 @@ COMPARISON_SPECS = {
         max_rel_error=0.10,
         vacask_nodes=["v(p0)", "p0"],
         jax_nodes=["top.p0"],
-        xfail=True,
-        xfail_reason="PSP103 transient behavior differs - same issue as ring benchmark",
     ),
 }
 

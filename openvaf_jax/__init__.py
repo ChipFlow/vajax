@@ -73,17 +73,17 @@ class OpenVAFToJAX:
         self.str_constants = dict(module.get_str_constants())
 
         # Parse into structured MIR
-        self.eval_mir = parse_mir_function('eval', self.mir_data, self.str_constants)
-        self.init_mir = parse_mir_function('init', self.init_mir_data, self.str_constants)
+        self.eval_mir = parse_mir_function("eval", self.mir_data, self.str_constants)
+        self.init_mir = parse_mir_function("init", self.init_mir_data, self.str_constants)
 
         # Extract metadata
-        self.params = list(self.mir_data['params'])
-        self.constants = dict(self.mir_data['constants'])
-        self.bool_constants = dict(self.mir_data.get('bool_constants', {}))
-        self.int_constants = dict(self.mir_data.get('int_constants', {}))
+        self.params = list(self.mir_data["params"])
+        self.constants = dict(self.mir_data["constants"])
+        self.bool_constants = dict(self.mir_data.get("bool_constants", {}))
+        self.int_constants = dict(self.mir_data.get("int_constants", {}))
 
-        self.init_params = list(self.init_mir_data['params'])
-        self.cache_mapping = list(self.init_mir_data['cache_mapping'])
+        self.init_params = list(self.init_mir_data["params"])
+        self.cache_mapping = list(self.init_mir_data["cache_mapping"])
 
         # Node collapse support
         self.collapse_decision_outputs = list(module.collapse_decision_outputs)
@@ -97,11 +97,13 @@ class OpenVAFToJAX:
         self.uses_simparam_gmin = False
         self.uses_analysis = False
         self.analysis_type_map = {
-            'dc': 0, 'static': 0,
-            'ac': 1,
-            'tran': 2, 'transient': 2,
-            'noise': 3,
-            'nodeset': 4,
+            "dc": 0,
+            "static": 0,
+            "ac": 1,
+            "tran": 2,
+            "transient": 2,
+            "noise": 3,
+            "nodeset": 4,
         }
 
     @classmethod
@@ -126,62 +128,66 @@ class OpenVAFToJAX:
             pass
 
         mock = MockModule()
-        mock.param_names = cached_data['param_names']
-        mock.param_kinds = cached_data['param_kinds']
-        mock.nodes = cached_data['nodes']
-        mock.collapse_decision_outputs = cached_data['collapse_decision_outputs']
-        mock.collapsible_pairs = cached_data['collapsible_pairs']
-        mock.num_collapsible = cached_data['num_collapsible']
-        mock.init_param_names = cached_data['init_param_names']
-        mock.init_param_kinds = cached_data['init_param_kinds']
-        mock.name = cached_data.get('model_name', 'cached_model')
+        mock.param_names = cached_data["param_names"]
+        mock.param_kinds = cached_data["param_kinds"]
+        mock.nodes = cached_data["nodes"]
+        mock.collapse_decision_outputs = cached_data["collapse_decision_outputs"]
+        mock.collapsible_pairs = cached_data["collapsible_pairs"]
+        mock.num_collapsible = cached_data["num_collapsible"]
+        mock.init_param_names = cached_data["init_param_names"]
+        mock.init_param_kinds = cached_data["init_param_kinds"]
+        mock.name = cached_data.get("model_name", "cached_model")
 
         # Cached callables
-        _param_defaults = cached_data['param_defaults']
-        _osdi_descriptor = cached_data['osdi_descriptor']
+        _param_defaults = cached_data["param_defaults"]
+        _osdi_descriptor = cached_data["osdi_descriptor"]
 
         mock.get_param_defaults = lambda: _param_defaults.items()
         mock.get_osdi_descriptor = lambda: _osdi_descriptor
-        mock.get_all_func_params = lambda: cached_data['all_func_params']
+        mock.get_all_func_params = lambda: cached_data["all_func_params"]
 
         instance.module = mock
 
         # Load MIR data from cache
-        instance.mir_data = cached_data['mir_data']
-        instance.dae_data = cached_data['dae_data']
-        instance.init_mir_data = cached_data['init_mir_data']
-        instance.str_constants = cached_data['str_constants']
+        instance.mir_data = cached_data["mir_data"]
+        instance.dae_data = cached_data["dae_data"]
+        instance.init_mir_data = cached_data["init_mir_data"]
+        instance.str_constants = cached_data["str_constants"]
 
         # Parse into structured MIR
-        instance.eval_mir = parse_mir_function('eval', instance.mir_data, instance.str_constants)
-        instance.init_mir = parse_mir_function('init', instance.init_mir_data, instance.str_constants)
+        instance.eval_mir = parse_mir_function("eval", instance.mir_data, instance.str_constants)
+        instance.init_mir = parse_mir_function(
+            "init", instance.init_mir_data, instance.str_constants
+        )
 
         # Extract metadata
-        instance.params = list(instance.mir_data['params'])
-        instance.constants = dict(instance.mir_data['constants'])
-        instance.bool_constants = dict(instance.mir_data.get('bool_constants', {}))
-        instance.int_constants = dict(instance.mir_data.get('int_constants', {}))
+        instance.params = list(instance.mir_data["params"])
+        instance.constants = dict(instance.mir_data["constants"])
+        instance.bool_constants = dict(instance.mir_data.get("bool_constants", {}))
+        instance.int_constants = dict(instance.mir_data.get("int_constants", {}))
 
-        instance.init_params = list(instance.init_mir_data['params'])
-        instance.cache_mapping = list(instance.init_mir_data['cache_mapping'])
+        instance.init_params = list(instance.init_mir_data["params"])
+        instance.cache_mapping = list(instance.init_mir_data["cache_mapping"])
 
         # Node collapse support
-        instance.collapse_decision_outputs = cached_data['collapse_decision_outputs']
-        instance.collapsible_pairs = cached_data['collapsible_pairs']
+        instance.collapse_decision_outputs = cached_data["collapse_decision_outputs"]
+        instance.collapsible_pairs = cached_data["collapsible_pairs"]
 
         # Build param index to value mapping
-        all_func_params = cached_data['all_func_params']
+        all_func_params = cached_data["all_func_params"]
         instance.param_idx_to_val = {p[0]: f"v{p[1]}" for p in all_func_params}
 
         # Track feature usage (will be set during code generation)
         instance.uses_simparam_gmin = False
         instance.uses_analysis = False
         instance.analysis_type_map = {
-            'dc': 0, 'static': 0,
-            'ac': 1,
-            'tran': 2, 'transient': 2,
-            'noise': 3,
-            'nodeset': 4,
+            "dc": 0,
+            "static": 0,
+            "ac": 1,
+            "tran": 2,
+            "transient": 2,
+            "noise": 3,
+            "nodeset": 4,
         }
 
         logger.info("Created OpenVAFToJAX from cached MIR data")
@@ -193,26 +199,26 @@ class OpenVAFToJAX:
         Returns:
             Dict with all data needed by from_cache()
         """
-        if self.module is None or not hasattr(self.module, 'get_mir_instructions'):
+        if self.module is None or not hasattr(self.module, "get_mir_instructions"):
             raise ValueError("Cannot get cache data from a translator loaded from cache")
 
         return {
-            'mir_data': self.mir_data,
-            'init_mir_data': self.init_mir_data,
-            'dae_data': self.dae_data,
-            'str_constants': self.str_constants,
-            'param_names': list(self.module.param_names),
-            'param_kinds': list(self.module.param_kinds),
-            'nodes': list(self.module.nodes),
-            'collapse_decision_outputs': list(self.module.collapse_decision_outputs),
-            'collapsible_pairs': list(self.module.collapsible_pairs),
-            'num_collapsible': self.module.num_collapsible,
-            'all_func_params': list(self.module.get_all_func_params()),
-            'init_param_names': list(self.module.init_param_names),
-            'init_param_kinds': list(self.module.init_param_kinds),
-            'param_defaults': dict(self.module.get_param_defaults()),
-            'osdi_descriptor': self.module.get_osdi_descriptor(),
-            'model_name': self.module.name if hasattr(self.module, 'name') else 'model',
+            "mir_data": self.mir_data,
+            "init_mir_data": self.init_mir_data,
+            "dae_data": self.dae_data,
+            "str_constants": self.str_constants,
+            "param_names": list(self.module.param_names),
+            "param_kinds": list(self.module.param_kinds),
+            "nodes": list(self.module.nodes),
+            "collapse_decision_outputs": list(self.module.collapse_decision_outputs),
+            "collapsible_pairs": list(self.module.collapsible_pairs),
+            "num_collapsible": self.module.num_collapsible,
+            "all_func_params": list(self.module.get_all_func_params()),
+            "init_param_names": list(self.module.init_param_names),
+            "init_param_kinds": list(self.module.init_param_kinds),
+            "param_defaults": dict(self.module.get_param_defaults()),
+            "osdi_descriptor": self.module.get_osdi_descriptor(),
+            "model_name": self.module.name if hasattr(self.module, "name") else "model",
         }
 
     @classmethod
@@ -226,6 +232,7 @@ class OpenVAFToJAX:
             OpenVAFToJAX instance
         """
         import openvaf_py
+
         modules = openvaf_py.compile_va(va_path)
         if not modules:
             raise ValueError(f"No modules found in {va_path}")
@@ -261,15 +268,15 @@ class OpenVAFToJAX:
         """
         assert self.dae_data is not None, "dae_data released, call before release_mir_data()"
         return {
-            'node_names': [res['node_name'] for res in self.dae_data['residuals']],
-            'jacobian_keys': [
-                (entry['row_node_name'], entry['col_node_name'])
-                for entry in self.dae_data['jacobian']
+            "node_names": [res["node_name"] for res in self.dae_data["residuals"]],
+            "jacobian_keys": [
+                (entry["row_node_name"], entry["col_node_name"])
+                for entry in self.dae_data["jacobian"]
             ],
-            'terminals': self.dae_data['terminals'],
-            'internal_nodes': self.dae_data['internal_nodes'],
-            'num_terminals': self.dae_data['num_terminals'],
-            'num_internal': self.dae_data['num_internal'],
+            "terminals": self.dae_data["terminals"],
+            "internal_nodes": self.dae_data["internal_nodes"],
+            "num_terminals": self.dae_data["num_terminals"],
+            "num_internal": self.dae_data["num_internal"],
         }
 
     def get_params(self, include_internal: bool = False) -> List[Dict]:
@@ -306,35 +313,37 @@ class OpenVAFToJAX:
         defaults = dict(self.module.get_param_defaults())
 
         params = []
-        for p in desc['params']:
-            name = p['name']
+        for p in desc["params"]:
+            name = p["name"]
 
             # Skip internal params unless requested
             if not include_internal:
                 # Skip system params and hidden state
-                if name.startswith('$') or name == 'mfactor':
+                if name.startswith("$") or name == "mfactor":
                     continue
 
             # Type is encoded in flags: 0=real, 1=int, 2=str
-            flags = p.get('flags', 0)
+            flags = p.get("flags", 0)
             type_code = flags & 3
-            type_str = {0: 'real', 1: 'int', 2: 'str'}.get(type_code, 'real')
+            type_str = {0: "real", 1: "int", 2: "str"}.get(type_code, "real")
 
             # Get default - lookup case-insensitive
             default = defaults.get(name)
             if default is None:
                 default = defaults.get(name.lower())
 
-            params.append({
-                'name': name,
-                'type': type_str,
-                'default': default,
-                'units': p.get('units', ''),
-                'description': p.get('description', ''),
-                'aliases': p.get('aliases', []),
-                'is_instance': p.get('is_instance', False),
-                'is_model_param': p.get('is_model_param', True),
-            })
+            params.append(
+                {
+                    "name": name,
+                    "type": type_str,
+                    "default": default,
+                    "units": p.get("units", ""),
+                    "description": p.get("description", ""),
+                    "aliases": p.get("aliases", []),
+                    "is_instance": p.get("is_instance", False),
+                    "is_model_param": p.get("is_model_param", True),
+                }
+            )
 
         return params
 
@@ -358,7 +367,7 @@ class OpenVAFToJAX:
             ...
         """
         params = self.get_params(include_internal=include_internal)
-        model_name = self.module.name if hasattr(self.module, 'name') else 'model'
+        model_name = self.module.name if hasattr(self.module, "name") else "model"
 
         print(f"\n=== Parameters for {model_name} ({len(params)} params) ===")
         print(f"{'Name':<20} {'Type':<6} {'Default':<12} {'Units':<8} Description")
@@ -366,22 +375,22 @@ class OpenVAFToJAX:
 
         for p in params:
             default_str = "None"
-            if p['default'] is not None:
-                if isinstance(p['default'], float):
-                    if abs(p['default']) < 1e-3 or abs(p['default']) >= 1e6:
+            if p["default"] is not None:
+                if isinstance(p["default"], float):
+                    if abs(p["default"]) < 1e-3 or abs(p["default"]) >= 1e6:
                         default_str = f"{p['default']:.4g}"
                     else:
                         default_str = f"{p['default']}"
                 else:
-                    default_str = str(p['default'])
+                    default_str = str(p["default"])
 
-            units = p['units'] if p['units'] else '-'
-            desc = p['description'][:40] if p['description'] else ''
+            units = p["units"] if p["units"] else "-"
+            desc = p["description"][:40] if p["description"] else ""
 
             print(f"{p['name']:<20} {p['type']:<6} {default_str:<12} {units:<8} {desc}")
 
         # Show aliases if any
-        aliases_found = [(p['name'], p['aliases']) for p in params if p['aliases']]
+        aliases_found = [(p["name"], p["aliases"]) for p in params if p["aliases"]]
         if aliases_found:
             print(f"\nAliases:")
             for name, aliases in aliases_found:
@@ -400,12 +409,12 @@ class OpenVAFToJAX:
         defaults = dict(self.module.get_param_defaults())
 
         param_info = {}
-        for p in desc['params']:
-            name = p['name']
+        for p in desc["params"]:
+            name = p["name"]
             # Type is encoded in flags: 0=real, 1=int, 2=str
-            flags = p.get('flags', 0)
+            flags = p.get("flags", 0)
             type_code = flags & 3
-            type_str = {0: 'real', 1: 'int', 2: 'str'}.get(type_code, 'real')
+            type_str = {0: "real", 1: "int", 2: "str"}.get(type_code, "real")
 
             # Get default - lookup case-insensitive
             default = defaults.get(name)
@@ -413,13 +422,13 @@ class OpenVAFToJAX:
                 default = defaults.get(name.lower())
 
             param_info[name] = {
-                'name': name,
-                'type': type_str,
-                'default': default,
-                'units': p.get('units', ''),
-                'description': p.get('description', ''),
-                'is_instance': p.get('is_instance', False),
-                'is_model_param': p.get('is_model_param', True),
+                "name": name,
+                "type": type_str,
+                "default": default,
+                "units": p.get("units", ""),
+                "description": p.get("description", ""),
+                "is_instance": p.get("is_instance", False),
+                "is_model_param": p.get("is_model_param", True),
             }
 
         return param_info
@@ -462,35 +471,39 @@ class OpenVAFToJAX:
             value = None
 
             # Handle by kind first
-            if kind == 'voltage':
+            if kind == "voltage":
                 # Voltage params are set at runtime, use 0.0 placeholder
                 value = 0.0
-            elif kind == 'temperature' or name == '$temperature':
+            elif kind == "temperature" or name == "$temperature":
                 # System temperature
                 value = temperature
-            elif kind == 'sysfun' and name == 'mfactor':
+            elif kind == "sysfun" and name == "mfactor":
                 value = mfactor
-            elif kind in ('hidden_state', 'current'):
+            elif kind in ("hidden_state", "current"):
                 # Placeholders - filled by init or eval
                 value = 0.0
-            elif kind == 'implicit_unknown':
+            elif kind == "implicit_unknown":
                 # Internal node voltage for implicit equations
                 # These are set at runtime from the voltage array, same as 'voltage'
                 value = 0.0
-            elif kind == 'param_given':
+            elif kind == "param_given":
                 # Check if the corresponding param was explicitly set
                 # param_given names are like "VTO_given" -> check for "VTO"
-                base_name = name.replace('_given', '').lower()
+                base_name = name.replace("_given", "").lower()
                 value = 1.0 if base_name in params_lower else 0.0
-            elif kind == 'port_connected':
+            elif kind == "port_connected":
                 # Assume all ports are connected (LRM 9.19)
                 # TODO: Add support for optional ports by tracking connections
-                warnings.append(f"{context}: $port_connected({name}) assumed true - optional ports not supported")
+                warnings.append(
+                    f"{context}: $port_connected({name}) assumed true - optional ports not supported"
+                )
                 value = 1.0
-            elif kind == 'abstime':
+            elif kind == "abstime":
                 # Absolute simulation time (LRM 9.7)
                 # For DC analysis, abstime=0.0. For transient, caller must update this.
-                warnings.append(f"{context}: $abstime used - defaults to 0.0 (DC). For transient, update input array.")
+                warnings.append(
+                    f"{context}: $abstime used - defaults to 0.0 (DC). For transient, update input array."
+                )
                 value = 0.0
             else:
                 # Regular param - check user params first
@@ -501,26 +514,32 @@ class OpenVAFToJAX:
                 else:
                     # Check for default from OSDI info
                     info = param_info.get(name) or param_info.get(name.upper())
-                    if info and info['default'] is not None:
-                        value = float(info['default'])
+                    if info and info["default"] is not None:
+                        value = float(info["default"])
                     else:
                         # Special handling for TEMP/TNOM
-                        if name_lower in ('temp', 'tnom'):
+                        if name_lower in ("temp", "tnom"):
                             value = SENTINEL
-                        elif kind == 'unknown':
-                            warnings.append(f"{context}: '{name}' (kind={kind}) has no value, using 0.0")
+                        elif kind == "unknown":
+                            warnings.append(
+                                f"{context}: '{name}' (kind={kind}) has no value, using 0.0"
+                            )
                             value = 0.0
-                        elif kind == 'sysfun':
+                        elif kind == "sysfun":
                             # Other system functions default to appropriate values
-                            if 'scale' in name_lower:
+                            if "scale" in name_lower:
                                 value = 1.0
-                            elif 'shrink' in name_lower:
+                            elif "shrink" in name_lower:
                                 value = 0.0
                             else:
-                                warnings.append(f"{context}: sysfun '{name}' has no handler, using 0.0")
+                                warnings.append(
+                                    f"{context}: sysfun '{name}' has no handler, using 0.0"
+                                )
                                 value = 0.0
                         else:
-                            warnings.append(f"{context}: param '{name}' (kind={kind}) has no value or default, using 0.0")
+                            warnings.append(
+                                f"{context}: param '{name}' (kind={kind}) has no value or default, using 0.0"
+                            )
                             value = 0.0
 
             assert value is not None, f"Failed to compute value for {name}"
@@ -577,34 +596,46 @@ class OpenVAFToJAX:
 
         # Build validated inputs
         init_inputs, warnings = self._build_param_inputs(
-            init_param_names, init_param_kinds,
-            params, temperature, mfactor, param_info,
-            context="init"
+            init_param_names,
+            init_param_kinds,
+            params,
+            temperature,
+            mfactor,
+            param_info,
+            context="init",
         )
 
         # Build detailed param info list for metadata
         detailed_param_info = []
         for i, (name, kind) in enumerate(zip(init_param_names, init_param_kinds)):
             info = param_info.get(name) or param_info.get(name.upper()) or {}
-            detailed_param_info.append({
-                'name': name,
-                'kind': kind,
-                'type': info.get('type', 'real'),
-                'default': info.get('default'),
-                'value': init_inputs[i],
-                'units': info.get('units', ''),
-                'description': info.get('description', ''),
-            })
+            detailed_param_info.append(
+                {
+                    "name": name,
+                    "kind": kind,
+                    "type": info.get("type", "real"),
+                    "default": info.get("default"),
+                    "value": init_inputs[i],
+                    "units": info.get("units", ""),
+                    "description": info.get("description", ""),
+                }
+            )
 
         # Debug output
         if debug:
             print(f"\n=== Init Parameters ({len(init_param_names)}) ===")
-            print(f"{'Name':<20} {'Kind':<15} {'Type':<6} {'Default':<12} {'Value':<12} {'Units':<8} Description")
+            print(
+                f"{'Name':<20} {'Kind':<15} {'Type':<6} {'Default':<12} {'Value':<12} {'Units':<8} Description"
+            )
             print("-" * 100)
             for p in detailed_param_info:
-                default_str = f"{p['default']:.4g}" if p['default'] is not None else "None"
-                value_str = f"{p['value']:.4g}" if isinstance(p['value'], float) else str(p['value'])
-                print(f"{p['name']:<20} {p['kind']:<15} {p['type']:<6} {default_str:<12} {value_str:<12} {p['units']:<8} {p['description'][:30]}")
+                default_str = f"{p['default']:.4g}" if p["default"] is not None else "None"
+                value_str = (
+                    f"{p['value']:.4g}" if isinstance(p["value"], float) else str(p["value"])
+                )
+                print(
+                    f"{p['name']:<20} {p['kind']:<15} {p['type']:<6} {default_str:<12} {value_str:<12} {p['units']:<8} {p['description'][:30]}"
+                )
             if warnings:
                 print(f"\nWarnings: {len(warnings)}")
                 for w in warnings:
@@ -618,9 +649,7 @@ class OpenVAFToJAX:
         all_indices = list(range(n_init_params))
 
         builder = InitFunctionBuilder(
-            self.init_mir,
-            self.cache_mapping,
-            self.collapse_decision_outputs
+            self.init_mir, self.cache_mapping, self.collapse_decision_outputs
         )
         fn_name, code_lines = builder.build_simple(all_indices)
 
@@ -628,28 +657,30 @@ class OpenVAFToJAX:
         warnings.extend(builder.codegen_warnings)
 
         t1 = time.perf_counter()
-        logger.info(f"    translate_init: code generated ({len(code_lines)} lines) in {t1-t0:.1f}s")
+        logger.info(
+            f"    translate_init: code generated ({len(code_lines)} lines) in {t1 - t0:.1f}s"
+        )
 
-        code = '\n'.join(code_lines)
+        code = "\n".join(code_lines)
 
         # Compile with caching
         logger.info("    translate_init: exec()...")
         init_fn = exec_with_cache(code, fn_name)
         t2 = time.perf_counter()
-        logger.info(f"    translate_init: exec() done in {t2-t1:.1f}s")
+        logger.info(f"    translate_init: exec() done in {t2 - t1:.1f}s")
 
         metadata = {
-            'param_names': init_param_names,
-            'param_kinds': init_param_kinds,
-            'init_inputs': init_inputs,
-            'param_info': detailed_param_info,
-            'cache_size': len(self.cache_mapping),
-            'cache_mapping': self.cache_mapping,
-            'collapsible_pairs': self.collapsible_pairs,
-            'collapse_decision_outputs': self.collapse_decision_outputs,
-            'temperature': temperature,
-            'mfactor': mfactor,
-            'warnings': warnings,
+            "param_names": init_param_names,
+            "param_kinds": init_param_kinds,
+            "init_inputs": init_inputs,
+            "param_info": detailed_param_info,
+            "cache_size": len(self.cache_mapping),
+            "cache_mapping": self.cache_mapping,
+            "collapsible_pairs": self.collapsible_pairs,
+            "collapse_decision_outputs": self.collapse_decision_outputs,
+            "temperature": temperature,
+            "mfactor": mfactor,
+            "warnings": warnings,
         }
 
         return init_fn, metadata
@@ -726,21 +757,22 @@ class OpenVAFToJAX:
 
         # Compute voltage and shared indices
         # Both 'voltage' and 'implicit_unknown' are node voltages provided at runtime
-        voltage_kinds = ('voltage', 'implicit_unknown')
+        voltage_kinds = ("voltage", "implicit_unknown")
         voltage_indices = [i for i, k in enumerate(eval_param_kinds) if k in voltage_kinds]
 
         # Identify params that should come from simparams array instead of shared_params
         # These are runtime environment values: $abstime, mfactor
         simparam_params: Dict[int, str] = {}
         for i, (name, kind) in enumerate(zip(eval_param_names, eval_param_kinds)):
-            if kind == 'abstime':
-                simparam_params[i] = '$abstime'
-            elif kind == 'sysfun' and name == 'mfactor':
-                simparam_params[i] = '$mfactor'
+            if kind == "abstime":
+                simparam_params[i] = "$abstime"
+            elif kind == "sysfun" and name == "mfactor":
+                simparam_params[i] = "$mfactor"
 
         # shared_indices excludes voltage params AND simparam params
         shared_indices = [
-            i for i, k in enumerate(eval_param_kinds)
+            i
+            for i, k in enumerate(eval_param_kinds)
             if k not in voltage_kinds and i not in simparam_params
         ]
 
@@ -750,9 +782,13 @@ class OpenVAFToJAX:
         shared_param_kinds = [eval_param_kinds[i] for i in shared_indices]
 
         shared_inputs, warnings = self._build_param_inputs(
-            shared_param_names, shared_param_kinds,
-            params, temperature, mfactor, param_info,
-            context="eval"
+            shared_param_names,
+            shared_param_kinds,
+            params,
+            temperature,
+            mfactor,
+            param_info,
+            context="eval",
         )
 
         # Build detailed param info list
@@ -767,15 +803,17 @@ class OpenVAFToJAX:
             else:
                 shared_idx = shared_indices.index(i)
                 value = shared_inputs[shared_idx]
-            detailed_param_info.append({
-                'name': name,
-                'kind': kind,
-                'type': info.get('type', 'real'),
-                'default': info.get('default'),
-                'value': value,
-                'units': info.get('units', ''),
-                'description': info.get('description', ''),
-            })
+            detailed_param_info.append(
+                {
+                    "name": name,
+                    "kind": kind,
+                    "type": info.get("type", "real"),
+                    "default": info.get("default"),
+                    "value": value,
+                    "units": info.get("units", ""),
+                    "description": info.get("description", ""),
+                }
+            )
 
         # Debug output
         if debug:
@@ -784,14 +822,16 @@ class OpenVAFToJAX:
             print(f"\n{'Name':<25} {'Kind':<15} {'Type':<6} {'Default':<12} {'Value':<12}")
             print("-" * 80)
             for p in detailed_param_info:
-                default_str = f"{p['default']:.4g}" if p['default'] is not None else "None"
-                if p['value'] is None:
+                default_str = f"{p['default']:.4g}" if p["default"] is not None else "None"
+                if p["value"] is None:
                     value_str = "(runtime)"
-                elif isinstance(p['value'], float):
+                elif isinstance(p["value"], float):
                     value_str = f"{p['value']:.4g}"
                 else:
-                    value_str = str(p['value'])
-                print(f"{p['name']:<25} {p['kind']:<15} {p['type']:<6} {default_str:<12} {value_str:<12}")
+                    value_str = str(p["value"])
+                print(
+                    f"{p['name']:<25} {p['kind']:<15} {p['type']:<6} {default_str:<12} {value_str:<12}"
+                )
             if warnings:
                 print(f"\nWarnings: {len(warnings)}")
                 for w in warnings:
@@ -839,38 +879,41 @@ class OpenVAFToJAX:
             self.dae_data,
             self.cache_mapping,
             self.param_idx_to_val,
-            sccp_known_values=effective_sccp_values
+            sccp_known_values=effective_sccp_values,
+            eval_param_names=eval_param_names,
         )
         fn_name, code_lines = builder.build_with_cache_split(
-            shared_indices, voltage_indices,
-            shared_cache_indices, varying_cache_indices,
-            simparam_params=simparam_params
+            shared_indices,
+            voltage_indices,
+            shared_cache_indices,
+            varying_cache_indices,
+            simparam_params=simparam_params,
         )
 
         # Collect codegen warnings (unknown $simparam, $discontinuity, etc.)
         warnings.extend(builder.codegen_warnings)
 
         t1 = time.perf_counter()
-        logger.info(f"    translate_eval: code generated ({len(code_lines)} lines) in {t1-t0:.1f}s")
+        logger.info(
+            f"    translate_eval: code generated ({len(code_lines)} lines) in {t1 - t0:.1f}s"
+        )
 
-        code = '\n'.join(code_lines)
+        code = "\n".join(code_lines)
 
         # Compile with caching
         logger.info("    translate_eval: exec()...")
         eval_fn = exec_with_cache(code, fn_name)
         t2 = time.perf_counter()
-        logger.info(f"    translate_eval: exec() done in {t2-t1:.1f}s")
+        logger.info(f"    translate_eval: exec() done in {t2 - t1:.1f}s")
 
         # Build metadata
-        node_names = [res['node_name'] for res in self.dae_data['residuals']]
-        node_indices = [res['node_idx'] for res in self.dae_data['residuals']]
+        node_names = [res["node_name"] for res in self.dae_data["residuals"]]
+        node_indices = [res["node_idx"] for res in self.dae_data["residuals"]]
         jacobian_keys = [
-            (entry['row_node_name'], entry['col_node_name'])
-            for entry in self.dae_data['jacobian']
+            (entry["row_node_name"], entry["col_node_name"]) for entry in self.dae_data["jacobian"]
         ]
         jacobian_indices = [
-            (entry['row_node_idx'], entry['col_node_idx'])
-            for entry in self.dae_data['jacobian']
+            (entry["row_node_idx"], entry["col_node_idx"]) for entry in self.dae_data["jacobian"]
         ]
 
         # Get simparam metadata from builder (dynamically tracked during codegen)
@@ -878,24 +921,24 @@ class OpenVAFToJAX:
 
         # Build simparams_layout from tracked simparams for documentation
         simparams_layout = {}
-        for name, idx in simparam_meta.get('simparam_indices', {}).items():
+        for name, idx in simparam_meta.get("simparam_indices", {}).items():
             # Add description for known simparams
             descriptions = {
-                '$analysis_type': '0=DC, 1=AC, 2=transient, 3=noise',
-                'gmin': 'minimum conductance for convergence (S)',
-                'abstol': 'absolute current tolerance (A)',
-                'vntol': 'absolute voltage tolerance (V)',
-                'reltol': 'relative tolerance',
-                'tnom': 'nominal temperature (K)',
-                'scale': 'scale factor',
-                'shrink': 'shrink factor',
-                'imax': 'branch current limit (A)',
-                '$abstime': 'absolute simulation time (s)',
-                '$mfactor': 'device multiplicity factor',
+                "$analysis_type": "0=DC, 1=AC, 2=transient, 3=noise",
+                "gmin": "minimum conductance for convergence (S)",
+                "abstol": "absolute current tolerance (A)",
+                "vntol": "absolute voltage tolerance (V)",
+                "reltol": "relative tolerance",
+                "tnom": "nominal temperature (K)",
+                "scale": "scale factor",
+                "shrink": "shrink factor",
+                "imax": "branch current limit (A)",
+                "$abstime": "absolute simulation time (s)",
+                "$mfactor": "device multiplicity factor",
             }
             simparams_layout[idx] = {
-                'name': name,
-                'description': descriptions.get(name, f'$simparam("{name}")'),
+                "name": name,
+                "description": descriptions.get(name, f'$simparam("{name}")'),
             }
 
         # Collect SCCP statistics if available
@@ -904,55 +947,57 @@ class OpenVAFToJAX:
             sccp = builder.sccp
             total_constants = sum(1 for v in sccp.lattice.values() if v.is_constant())
             mir_constants = (
-                len(self.eval_mir.constants) +
-                len(self.eval_mir.int_constants) +
-                len(self.eval_mir.bool_constants)
+                len(self.eval_mir.constants)
+                + len(self.eval_mir.int_constants)
+                + len(self.eval_mir.bool_constants)
             )
             # Constants discovered through propagation (not from MIR or known_values)
             builtin_count = len(sccp.BUILTIN_CONSTANTS)
             known_count = len(effective_sccp_values) if effective_sccp_values else 0
             computed_constants = total_constants - mir_constants - builtin_count - known_count
             sccp_stats = {
-                'total_blocks': len(self.eval_mir.blocks),
-                'reachable_blocks': len(sccp.visited_blocks),
-                'dead_blocks': len(sccp.get_dead_blocks()),
-                'total_constants': total_constants,
-                'mir_constants': mir_constants,
-                'param_constants': known_count,
-                'computed_constants': max(0, computed_constants),
+                "total_blocks": len(self.eval_mir.blocks),
+                "reachable_blocks": len(sccp.visited_blocks),
+                "dead_blocks": len(sccp.get_dead_blocks()),
+                "total_constants": total_constants,
+                "mir_constants": mir_constants,
+                "param_constants": known_count,
+                "computed_constants": max(0, computed_constants),
             }
             if debug and sccp_stats:
                 print(f"\n=== SCCP Results ===")
-                print(f"  Blocks: {sccp_stats['reachable_blocks']}/{sccp_stats['total_blocks']} reachable, {sccp_stats['dead_blocks']} dead")
+                print(
+                    f"  Blocks: {sccp_stats['reachable_blocks']}/{sccp_stats['total_blocks']} reachable, {sccp_stats['dead_blocks']} dead"
+                )
                 print(f"  Constants: {sccp_stats['total_constants']} total")
                 print(f"    MIR constants: {sccp_stats['mir_constants']}")
                 print(f"    Param constants: {sccp_stats['param_constants']}")
                 print(f"    Computed (propagated): {sccp_stats['computed_constants']}")
 
         metadata = {
-            'param_names': eval_param_names,
-            'param_kinds': eval_param_kinds,
-            'shared_inputs': shared_inputs,
-            'shared_indices': shared_indices,
-            'voltage_indices': voltage_indices,
-            'param_info': detailed_param_info,
-            'node_names': node_names,
-            'node_indices': node_indices,
-            'jacobian_keys': jacobian_keys,
-            'jacobian_indices': jacobian_indices,
-            'terminals': self.dae_data['terminals'],
-            'internal_nodes': self.dae_data['internal_nodes'],
-            'num_terminals': self.dae_data['num_terminals'],
-            'num_internal': self.dae_data['num_internal'],
-            'temperature': temperature,
-            'mfactor': mfactor,
-            'simparams_layout': simparams_layout,
+            "param_names": eval_param_names,
+            "param_kinds": eval_param_kinds,
+            "shared_inputs": shared_inputs,
+            "shared_indices": shared_indices,
+            "voltage_indices": voltage_indices,
+            "param_info": detailed_param_info,
+            "node_names": node_names,
+            "node_indices": node_indices,
+            "jacobian_keys": jacobian_keys,
+            "jacobian_indices": jacobian_indices,
+            "terminals": self.dae_data["terminals"],
+            "internal_nodes": self.dae_data["internal_nodes"],
+            "num_terminals": self.dae_data["num_terminals"],
+            "num_internal": self.dae_data["num_internal"],
+            "temperature": temperature,
+            "mfactor": mfactor,
+            "simparams_layout": simparams_layout,
             # Simparam metadata for building simparams array
-            'simparams_used': simparam_meta.get('simparams_used', ['$analysis_type']),
-            'simparam_indices': simparam_meta.get('simparam_indices', {'$analysis_type': 0}),
-            'simparam_count': simparam_meta.get('simparam_count', 1),
-            'sccp_stats': sccp_stats,
-            'warnings': warnings,
+            "simparams_used": simparam_meta.get("simparams_used", ["$analysis_type"]),
+            "simparam_indices": simparam_meta.get("simparam_indices", {"$analysis_type": 0}),
+            "simparam_count": simparam_meta.get("simparam_count", 1),
+            "sccp_stats": sccp_stats,
+            "warnings": warnings,
         }
 
         return eval_fn, metadata
@@ -989,9 +1034,7 @@ class OpenVAFToJAX:
             params = {}
 
         # Pre-compile with propagate_constants=False so params can change at runtime
-        init_fn, init_meta = self.translate_init(
-            params=params, temperature=temperature
-        )
+        init_fn, init_meta = self.translate_init(params=params, temperature=temperature)
         eval_fn, eval_meta = self.translate_eval(
             params=params, temperature=temperature, propagate_constants=False
         )
@@ -1012,11 +1055,11 @@ class OpenVAFToJAX:
         init_indices_arr = jnp.array(init_indices, dtype=jnp.int32) if init_indices else None
 
         # Store metadata for the wrapper
-        shared_indices = eval_meta['shared_indices']
-        voltage_indices = eval_meta['voltage_indices']
-        node_names = eval_meta['node_names']
-        jacobian_keys = eval_meta['jacobian_keys']
-        default_init_inputs = jnp.array(init_meta['init_inputs'])
+        shared_indices = eval_meta["shared_indices"]
+        voltage_indices = eval_meta["voltage_indices"]
+        node_names = eval_meta["node_names"]
+        jacobian_keys = eval_meta["jacobian_keys"]
+        default_init_inputs = jnp.array(init_meta["init_inputs"])
         param_names = self.module.param_names
         param_kinds = self.module.param_kinds
 
@@ -1027,7 +1070,7 @@ class OpenVAFToJAX:
             # Extract mfactor for simparams
             mfactor = 1.0
             for i, (name, kind) in enumerate(zip(param_names, param_kinds)):
-                if kind == 'sysfun' and name == 'mfactor':
+                if kind == "sysfun" and name == "mfactor":
                     mfactor = float(inputs[i])
                     break
 
@@ -1041,8 +1084,12 @@ class OpenVAFToJAX:
             cache, _ = init_fn(init_inputs)
 
             # Build eval inputs
-            shared_params = inputs_arr[jnp.array(shared_indices)] if shared_indices else jnp.array([])
-            varying_params = inputs_arr[jnp.array(voltage_indices)] if voltage_indices else jnp.array([])
+            shared_params = (
+                inputs_arr[jnp.array(shared_indices)] if shared_indices else jnp.array([])
+            )
+            varying_params = (
+                inputs_arr[jnp.array(voltage_indices)] if voltage_indices else jnp.array([])
+            )
 
             # Run eval with simparams [analysis_type, mfactor, gmin]
             simparams = jnp.array([0.0, mfactor, 1e-12])
@@ -1052,7 +1099,15 @@ class OpenVAFToJAX:
             # Cache split: shared_cache is empty, all cache in device_cache
             shared_cache = jnp.array([])
             device_cache = cache
-            result = eval_fn(shared_params, varying_params, shared_cache, device_cache, simparams, limit_state_in, limit_funcs)
+            result = eval_fn(
+                shared_params,
+                varying_params,
+                shared_cache,
+                device_cache,
+                simparams,
+                limit_state_in,
+                limit_funcs,
+            )
             res_resist, res_react, jac_resist, jac_react = result[:4]
 
             # Convert to dicts (NumPy for performance)
@@ -1062,11 +1117,11 @@ class OpenVAFToJAX:
             jac_react_np = np.asarray(jac_react)
 
             residuals = {
-                name: {'resist': res_resist_np[i], 'react': res_react_np[i]}
+                name: {"resist": res_resist_np[i], "react": res_react_np[i]}
                 for i, name in enumerate(node_names)
             }
             jacobian = {
-                key: {'resist': jac_resist_np[i], 'react': jac_react_np[i]}
+                key: {"resist": jac_resist_np[i], "react": jac_react_np[i]}
                 for i, key in enumerate(jacobian_keys)
             }
             return residuals, jacobian
@@ -1102,46 +1157,43 @@ class OpenVAFToJAX:
         all_indices = list(range(n_init_params))
 
         builder = InitFunctionBuilder(
-            self.init_mir,
-            self.cache_mapping,
-            self.collapse_decision_outputs
+            self.init_mir, self.cache_mapping, self.collapse_decision_outputs
         )
         fn_name, code_lines = builder.build_simple(all_indices)
 
         t1 = time.perf_counter()
-        logger.info(f"    translate_init_array: code generated ({len(code_lines)} lines) in {t1-t0:.1f}s")
+        logger.info(
+            f"    translate_init_array: code generated ({len(code_lines)} lines) in {t1 - t0:.1f}s"
+        )
 
-        code = '\n'.join(code_lines)
+        code = "\n".join(code_lines)
         logger.info(f"    translate_init_array: code size = {len(code)} chars")
 
         # Compile with caching
         logger.info("    translate_init_array: exec()...")
         init_fn = exec_with_cache(code, fn_name)
         t2 = time.perf_counter()
-        logger.info(f"    translate_init_array: exec() done in {t2-t1:.1f}s")
+        logger.info(f"    translate_init_array: exec() done in {t2 - t1:.1f}s")
 
         # Build metadata
         param_defaults = {}
-        if hasattr(self.module, 'get_param_defaults'):
+        if hasattr(self.module, "get_param_defaults"):
             param_defaults = dict(self.module.get_param_defaults())
 
         metadata = {
-            'param_names': list(self.module.init_param_names),
-            'param_kinds': list(self.module.init_param_kinds),
-            'cache_size': len(self.cache_mapping),
-            'cache_mapping': self.cache_mapping,
-            'param_defaults': param_defaults,
-            'collapsible_pairs': self.collapsible_pairs,
-            'collapse_decision_outputs': self.collapse_decision_outputs,
+            "param_names": list(self.module.init_param_names),
+            "param_kinds": list(self.module.init_param_kinds),
+            "cache_size": len(self.cache_mapping),
+            "cache_mapping": self.cache_mapping,
+            "param_defaults": param_defaults,
+            "collapsible_pairs": self.collapsible_pairs,
+            "collapse_decision_outputs": self.collapse_decision_outputs,
         }
 
         return init_fn, metadata
 
     def translate_init_array_split(
-        self,
-        shared_indices: List[int],
-        varying_indices: List[int],
-        init_to_eval: List[int]
+        self, shared_indices: List[int], varying_indices: List[int], init_to_eval: List[int]
     ) -> Tuple[Callable, Dict]:
         """Generate a vmappable init function with split shared/device params (internal API).
 
@@ -1176,42 +1228,40 @@ class OpenVAFToJAX:
 
         # Build the init function
         builder = InitFunctionBuilder(
-            self.init_mir,
-            self.cache_mapping,
-            self.collapse_decision_outputs
+            self.init_mir, self.cache_mapping, self.collapse_decision_outputs
         )
-        fn_name, code_lines = builder.build_split(
-            shared_indices, varying_indices, init_to_eval
-        )
+        fn_name, code_lines = builder.build_split(shared_indices, varying_indices, init_to_eval)
 
         t1 = time.perf_counter()
-        logger.info(f"    translate_init_array_split: code generated ({len(code_lines)} lines) in {t1-t0:.1f}s")
+        logger.info(
+            f"    translate_init_array_split: code generated ({len(code_lines)} lines) in {t1 - t0:.1f}s"
+        )
 
-        code = '\n'.join(code_lines)
+        code = "\n".join(code_lines)
         logger.info(f"    translate_init_array_split: code size = {len(code)} chars")
 
         # Compile with caching
         logger.info("    translate_init_array_split: exec()...")
         init_fn, code_hash = exec_with_cache(code, fn_name, return_hash=True)
         t2 = time.perf_counter()
-        logger.info(f"    translate_init_array_split: exec() done in {t2-t1:.1f}s")
+        logger.info(f"    translate_init_array_split: exec() done in {t2 - t1:.1f}s")
 
         # Build metadata
         param_defaults = {}
-        if hasattr(self.module, 'get_param_defaults'):
+        if hasattr(self.module, "get_param_defaults"):
             param_defaults = dict(self.module.get_param_defaults())
 
         metadata = {
-            'param_names': list(self.module.init_param_names),
-            'param_kinds': list(self.module.init_param_kinds),
-            'cache_size': len(self.cache_mapping),
-            'cache_mapping': self.cache_mapping,
-            'param_defaults': param_defaults,
-            'collapsible_pairs': self.collapsible_pairs,
-            'collapse_decision_outputs': self.collapse_decision_outputs,
-            'shared_indices': shared_indices,
-            'varying_indices': varying_indices,
-            'code_hash': code_hash,
+            "param_names": list(self.module.init_param_names),
+            "param_kinds": list(self.module.init_param_kinds),
+            "cache_size": len(self.cache_mapping),
+            "cache_mapping": self.cache_mapping,
+            "param_defaults": param_defaults,
+            "collapsible_pairs": self.collapsible_pairs,
+            "collapse_decision_outputs": self.collapse_decision_outputs,
+            "shared_indices": shared_indices,
+            "varying_indices": varying_indices,
+            "code_hash": code_hash,
         }
 
         return init_fn, metadata
@@ -1266,36 +1316,45 @@ class OpenVAFToJAX:
         assert self.dae_data is not None, "dae_data released, call before release_mir_data()"
 
         t0 = time.perf_counter()
-        logger.info(f"    translate_eval_array_with_cache_split: generating code (limit_funcs={use_limit_functions})...")
+        logger.info(
+            f"    translate_eval_array_with_cache_split: generating code (limit_funcs={use_limit_functions})..."
+        )
 
         # Build the eval function
+        eval_param_names = list(self.module.param_names)
         builder = EvalFunctionBuilder(
             self.eval_mir,
             self.dae_data,
             self.cache_mapping,
-            self.param_idx_to_val
+            self.param_idx_to_val,
+            eval_param_names=eval_param_names,
         )
         fn_name, code_lines = builder.build_with_cache_split(
-            shared_indices, varying_indices,
-            shared_cache_indices, varying_cache_indices,
+            shared_indices,
+            varying_indices,
+            shared_cache_indices,
+            varying_cache_indices,
             use_limit_functions=use_limit_functions,
             limit_param_map=limit_param_map,
         )
 
         t1 = time.perf_counter()
-        logger.info(f"    translate_eval_array_with_cache_split: code generated ({len(code_lines)} lines) in {t1-t0:.1f}s")
+        logger.info(
+            f"    translate_eval_array_with_cache_split: code generated ({len(code_lines)} lines) in {t1 - t0:.1f}s"
+        )
 
-        code = '\n'.join(code_lines)
+        code = "\n".join(code_lines)
         logger.info(f"    translate_eval_array_with_cache_split: code size = {len(code)} chars")
 
         # Dump generated code when OPENVAF_JAX_DUMP_CODE=1 is set
         if os.environ.get("OPENVAF_JAX_DUMP_CODE"):
             import hashlib
+
             dump_dir = os.path.expanduser("~/.cache/jax_spice/openvaf_codegen_dump")
             os.makedirs(dump_dir, exist_ok=True)
             code_hash = hashlib.sha256(code.encode()).hexdigest()[:8]
             dump_path = os.path.join(dump_dir, f"{fn_name}_{code_hash}_{len(code_lines)}lines.py")
-            with open(dump_path, 'w') as df:
+            with open(dump_path, "w") as df:
                 df.write(f"# limit_param_map={limit_param_map}\n")
                 df.write(f"# use_limit_functions={use_limit_functions}\n")
                 df.write(f"# shared_indices={shared_indices}\n")
@@ -1307,64 +1366,63 @@ class OpenVAFToJAX:
         logger.info("    translate_eval_array_with_cache_split: exec()...")
         eval_fn = exec_with_cache(code, fn_name)
         t2 = time.perf_counter()
-        logger.info(f"    translate_eval_array_with_cache_split: exec() done in {t2-t1:.1f}s")
+        logger.info(f"    translate_eval_array_with_cache_split: exec() done in {t2 - t1:.1f}s")
 
         # Build metadata using v2 API for clean node names
-        node_names = [res['node_name'] for res in self.dae_data['residuals']]
-        node_indices = [res['node_idx'] for res in self.dae_data['residuals']]
+        node_names = [res["node_name"] for res in self.dae_data["residuals"]]
+        node_indices = [res["node_idx"] for res in self.dae_data["residuals"]]
         jacobian_keys = [
-            (entry['row_node_name'], entry['col_node_name'])
-            for entry in self.dae_data['jacobian']
+            (entry["row_node_name"], entry["col_node_name"]) for entry in self.dae_data["jacobian"]
         ]
         jacobian_indices = [
-            (entry['row_node_idx'], entry['col_node_idx'])
-            for entry in self.dae_data['jacobian']
+            (entry["row_node_idx"], entry["col_node_idx"]) for entry in self.dae_data["jacobian"]
         ]
-        cache_to_param = [m['eval_param'] for m in self.cache_mapping]
+        cache_to_param = [m["eval_param"] for m in self.cache_mapping]
 
         # Get simparam metadata from builder
         simparam_meta = builder.simparam_metadata
 
         metadata = {
-            'node_names': node_names,
-            'node_indices': node_indices,
-            'jacobian_keys': jacobian_keys,
-            'jacobian_indices': jacobian_indices,
-            'terminals': self.dae_data['terminals'],
-            'internal_nodes': self.dae_data['internal_nodes'],
-            'num_terminals': self.dae_data['num_terminals'],
-            'num_internal': self.dae_data['num_internal'],
-            'cache_to_param_mapping': cache_to_param,
-            'uses_simparam_gmin': self.uses_simparam_gmin,
-            'uses_analysis': self.uses_analysis,
-            'analysis_type_map': self.analysis_type_map,
-            'shared_indices': shared_indices,
-            'varying_indices': varying_indices,
-            'shared_cache_indices': shared_cache_indices,
-            'varying_cache_indices': varying_cache_indices,
-            'use_limit_functions': use_limit_functions,
-            'limit_metadata': builder.limit_metadata if use_limit_functions else None,
+            "node_names": node_names,
+            "node_indices": node_indices,
+            "jacobian_keys": jacobian_keys,
+            "jacobian_indices": jacobian_indices,
+            "terminals": self.dae_data["terminals"],
+            "internal_nodes": self.dae_data["internal_nodes"],
+            "num_terminals": self.dae_data["num_terminals"],
+            "num_internal": self.dae_data["num_internal"],
+            "cache_to_param_mapping": cache_to_param,
+            "uses_simparam_gmin": self.uses_simparam_gmin,
+            "uses_analysis": self.uses_analysis,
+            "analysis_type_map": self.analysis_type_map,
+            "shared_indices": shared_indices,
+            "varying_indices": varying_indices,
+            "shared_cache_indices": shared_cache_indices,
+            "varying_cache_indices": varying_cache_indices,
+            "use_limit_functions": use_limit_functions,
+            "limit_metadata": builder.limit_metadata if use_limit_functions else None,
             # Simparam metadata for building the simparams array
-            'simparams_used': simparam_meta.get('simparams_used', ['$analysis_type']),
-            'simparam_indices': simparam_meta.get('simparam_indices', {'$analysis_type': 0}),
-            'simparam_count': simparam_meta.get('simparam_count', 1),
+            "simparams_used": simparam_meta.get("simparams_used", ["$analysis_type"]),
+            "simparam_indices": simparam_meta.get("simparam_indices", {"$analysis_type": 0}),
+            "simparam_count": simparam_meta.get("simparam_count", 1),
         }
 
         return eval_fn, metadata
 
+
 __all__ = [
-    'OpenVAFToJAX',
-    'MIRFunction',
-    'MIRInstruction',
-    'Block',
-    'PhiOperand',
-    'CFGAnalyzer',
-    'LoopInfo',
-    'SSAAnalyzer',
-    'PHIResolution',
-    'parse_mir_function',
-    'exec_with_cache',
-    'get_vmapped_jit',
-    'clear_cache',
-    'cache_stats',
+    "OpenVAFToJAX",
+    "MIRFunction",
+    "MIRInstruction",
+    "Block",
+    "PhiOperand",
+    "CFGAnalyzer",
+    "LoopInfo",
+    "SSAAnalyzer",
+    "PHIResolution",
+    "parse_mir_function",
+    "exec_with_cache",
+    "get_vmapped_jit",
+    "clear_cache",
+    "cache_stats",
 ]

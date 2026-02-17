@@ -41,72 +41,87 @@ class InstructionTranslator:
 
     # Binary arithmetic operators: opcode -> ast operator class
     BINARY_ARITH_OPS: Dict[str, type] = {
-        'fadd': ast.Add,
-        'fsub': ast.Sub,
-        'fmul': ast.Mult,
-        'frem': ast.Mod,  # Float remainder
-        'iadd': ast.Add,
-        'isub': ast.Sub,
-        'imul': ast.Mult,
-        'idiv': ast.FloorDiv,
-        'irem': ast.Mod,
+        "fadd": ast.Add,
+        "fsub": ast.Sub,
+        "fmul": ast.Mult,
+        "frem": ast.Mod,  # Float remainder
+        "iadd": ast.Add,
+        "isub": ast.Sub,
+        "imul": ast.Mult,
+        "idiv": ast.FloorDiv,
+        "irem": ast.Mod,
     }
 
     # Bitwise operators
     BITWISE_OPS: Dict[str, type] = {
-        'iand': ast.BitAnd,
-        'ior': ast.BitOr,
-        'ixor': ast.BitXor,
-        'ishl': ast.LShift,
-        'ishr': ast.RShift,
+        "iand": ast.BitAnd,
+        "ior": ast.BitOr,
+        "ixor": ast.BitXor,
+        "ishl": ast.LShift,
+        "ishr": ast.RShift,
     }
 
     # Comparison operators
     COMPARE_OPS: Dict[str, type] = {
-        'feq': ast.Eq,
-        'fne': ast.NotEq,
-        'flt': ast.Lt,
-        'fgt': ast.Gt,
-        'fle': ast.LtE,
-        'fge': ast.GtE,
-        'ieq': ast.Eq,
-        'ine': ast.NotEq,
-        'ilt': ast.Lt,
-        'igt': ast.Gt,
-        'ile': ast.LtE,
-        'ige': ast.GtE,
-        'beq': ast.Eq,
-        'bne': ast.NotEq,
-        'seq': ast.Eq,   # String equal
-        'sne': ast.NotEq,  # String not equal
+        "feq": ast.Eq,
+        "fne": ast.NotEq,
+        "flt": ast.Lt,
+        "fgt": ast.Gt,
+        "fle": ast.LtE,
+        "fge": ast.GtE,
+        "ieq": ast.Eq,
+        "ine": ast.NotEq,
+        "ilt": ast.Lt,
+        "igt": ast.Gt,
+        "ile": ast.LtE,
+        "ige": ast.GtE,
+        "beq": ast.Eq,
+        "bne": ast.NotEq,
+        "seq": ast.Eq,  # String equal
+        "sne": ast.NotEq,  # String not equal
     }
 
     # Unary jnp functions with same name
-    UNARY_JNP_SAME = {'exp', 'floor', 'ceil', 'sin', 'cos', 'tan',
-                      'sinh', 'cosh', 'tanh', 'hypot', 'abs'}
+    UNARY_JNP_SAME = {
+        "exp",
+        "floor",
+        "ceil",
+        "sin",
+        "cos",
+        "tan",
+        "sinh",
+        "cosh",
+        "tanh",
+        "hypot",
+        "abs",
+    }
 
     # Unary jnp functions with different name
     UNARY_JNP_MAP = {
-        'asin': 'arcsin',
-        'acos': 'arccos',
-        'atan': 'arctan',
-        'asinh': 'arcsinh',
-        'acosh': 'arccosh',
-        'atanh': 'arctanh',
-        'fabs': 'abs',
+        "asin": "arcsin",
+        "acos": "arccos",
+        "atan": "arctan",
+        "asinh": "arcsinh",
+        "acosh": "arccosh",
+        "atanh": "arctanh",
+        "fabs": "abs",
     }
 
     # Binary jnp functions
     BINARY_JNP_MAP = {
-        'pow': 'power',
-        'atan2': 'arctan2',
-        'hypot': 'hypot',
-        'fmin': 'minimum',
-        'fmax': 'maximum',
+        "pow": "power",
+        "atan2": "arctan2",
+        "hypot": "hypot",
+        "fmin": "minimum",
+        "fmax": "maximum",
     }
 
-    def __init__(self, ctx: CodeGenContext, ssa: Optional[SSAAnalyzer] = None,
-                 emit_debug_prints: bool = False):
+    def __init__(
+        self,
+        ctx: CodeGenContext,
+        ssa: Optional[SSAAnalyzer] = None,
+        emit_debug_prints: bool = False,
+    ):
         """Initialize instruction translator.
 
         Args:
@@ -129,15 +144,16 @@ class InstructionTranslator:
 
         # Analysis type codes
         self.analysis_type_map = {
-            'dc': 0, 'static': 0,
-            'ac': 1,
-            'tran': 2, 'transient': 2,
-            'noise': 3,
-            'nodeset': 4,
+            "dc": 0,
+            "static": 0,
+            "ac": 1,
+            "tran": 2,
+            "transient": 2,
+            "noise": 3,
+            "nodeset": 4,
         }
 
-    def translate(self, inst: MIRInstruction,
-                  loop_info=None) -> Optional[ast.expr]:
+    def translate(self, inst: MIRInstruction, loop_info=None) -> Optional[ast.expr]:
         """Translate a MIR instruction to AST expression.
 
         Args:
@@ -170,37 +186,37 @@ class InstructionTranslator:
             return self._translate_compare(inst)
 
         # Division (special handling for safety)
-        if opcode == 'fdiv':
+        if opcode == "fdiv":
             return self._translate_fdiv(inst)
 
         # Unary negation
-        if opcode == 'fneg':
+        if opcode == "fneg":
             return self._translate_fneg(inst)
-        if opcode == 'ineg':
+        if opcode == "ineg":
             return self._translate_ineg(inst)
 
         # Boolean not
-        if opcode == 'bnot':
+        if opcode == "bnot":
             return self._translate_bnot(inst)
 
         # Integer bitwise not
-        if opcode == 'inot':
+        if opcode == "inot":
             return self._translate_inot(inst)
 
         # Square root (safe)
-        if opcode == 'sqrt':
+        if opcode == "sqrt":
             return self._translate_sqrt(inst)
 
         # Natural log (safe)
-        if opcode == 'ln':
+        if opcode == "ln":
             return self._translate_ln(inst)
 
         # Base-10 log
-        if opcode == 'log':
+        if opcode == "log":
             return self._translate_log10(inst)
 
         # Ceiling log base 2
-        if opcode == 'clog2':
+        if opcode == "clog2":
             return self._translate_clog2(inst)
 
         # Unary jnp functions
@@ -214,40 +230,39 @@ class InstructionTranslator:
             return self._translate_binary_jnp(inst, self.BINARY_JNP_MAP[opcode])
 
         # Type casts
-        if opcode == 'ifcast':  # int to float
+        if opcode == "ifcast":  # int to float
             return self._translate_ifcast(inst)
-        if opcode == 'ficast':  # float to int
+        if opcode == "ficast":  # float to int
             return self._translate_ficast(inst)
-        if opcode == 'fbcast':  # float to bool
+        if opcode == "fbcast":  # float to bool
             return self._translate_fbcast(inst)
-        if opcode == 'ibcast':  # int to bool
+        if opcode == "ibcast":  # int to bool
             return self._translate_ibcast(inst)
-        if opcode == 'bfcast':  # bool to float
+        if opcode == "bfcast":  # bool to float
             return self._translate_bfcast(inst)
-        if opcode == 'bicast':  # bool to int
+        if opcode == "bicast":  # bool to int
             return self._translate_bicast(inst)
 
         # Optimization barrier (pass through)
-        if opcode == 'optbarrier':
+        if opcode == "optbarrier":
             return self._translate_optbarrier(inst)
 
         # Select (conditional)
-        if opcode == 'select':
+        if opcode == "select":
             return self._translate_select(inst)
 
         # Function calls
-        if opcode == 'call':
+        if opcode == "call":
             return self._translate_call(inst)
 
         # Copy (simple assignment)
-        if opcode == 'copy':
+        if opcode == "copy":
             return self._translate_copy(inst)
 
         # Unknown opcode - raise error
         raise ValueError(f"Unknown opcode: {inst.opcode}")
 
-    def _translate_phi(self, inst: MIRInstruction,
-                       loop_info=None) -> ast.expr:
+    def _translate_phi(self, inst: MIRInstruction, loop_info=None) -> ast.expr:
         """Translate a PHI node using SSA analysis."""
         if self.ssa is None or inst.phi_operands is None:
             # Fallback: use first operand
@@ -267,9 +282,8 @@ class InstructionTranslator:
             assert res.condition is not None
             # Handle potentially negated conditions
             cond_str = res.condition
-            if cond_str.startswith('!'):
-                cond = jnp_call('logical_not',
-                                self.ctx.get_operand(cond_str[1:]))
+            if cond_str.startswith("!"):
+                cond = jnp_call("logical_not", self.ctx.get_operand(cond_str[1:]))
             else:
                 cond = self.ctx.get_operand(cond_str)
 
@@ -295,9 +309,8 @@ class InstructionTranslator:
             cases = []
             for cond_str, val_str in res.cases:
                 # Handle negated conditions
-                if cond_str.startswith('!'):
-                    cond = jnp_call('logical_not',
-                                    self.ctx.get_operand(cond_str[1:]))
+                if cond_str.startswith("!"):
+                    cond = jnp_call("logical_not", self.ctx.get_operand(cond_str[1:]))
                 else:
                     cond = self.ctx.get_operand(cond_str)
                 val = self.ctx.get_operand(val_str)
@@ -353,7 +366,7 @@ class InstructionTranslator:
     def _translate_bnot(self, inst: MIRInstruction) -> ast.expr:
         """Translate boolean not (use jnp.logical_not for JIT)."""
         operand = self.ctx.get_operand(inst.operands[0])
-        return jnp_call('logical_not', operand)
+        return jnp_call("logical_not", operand)
 
     def _translate_inot(self, inst: MIRInstruction) -> ast.expr:
         """Translate integer bitwise NOT."""
@@ -364,24 +377,24 @@ class InstructionTranslator:
         """Translate sqrt with safe clamping for negative inputs."""
         operand = self.ctx.get_operand(inst.operands[0])
         # Clamp to zero to avoid NaN
-        clamped = jnp_call('maximum', operand, self.ctx.zero())
-        return jnp_call('sqrt', clamped)
+        clamped = jnp_call("maximum", operand, self.ctx.zero())
+        return jnp_call("sqrt", clamped)
 
     def _translate_ln(self, inst: MIRInstruction) -> ast.expr:
         """Translate natural log with safe clamping."""
         operand = self.ctx.get_operand(inst.operands[0])
         # Clamp to small epsilon to avoid -inf
         small_eps = ast_const(1e-300)
-        clamped = jnp_call('maximum', operand, small_eps)
-        return jnp_call('log', clamped)
+        clamped = jnp_call("maximum", operand, small_eps)
+        return jnp_call("log", clamped)
 
     def _translate_log10(self, inst: MIRInstruction) -> ast.expr:
         """Translate base-10 log with safe clamping."""
         operand = self.ctx.get_operand(inst.operands[0])
         # Clamp to small epsilon to avoid -inf
         small_eps = ast_const(1e-300)
-        clamped = jnp_call('maximum', operand, small_eps)
-        return jnp_call('log10', clamped)
+        clamped = jnp_call("maximum", operand, small_eps)
+        return jnp_call("log10", clamped)
 
     def _translate_clog2(self, inst: MIRInstruction) -> ast.expr:
         """Translate ceiling of log base 2.
@@ -392,18 +405,16 @@ class InstructionTranslator:
         # log2(x) = log(x) / log(2)
         # Then ceil the result
         small_eps = ast_const(1e-300)
-        clamped = jnp_call('maximum', operand, small_eps)
-        log2_val = jnp_call('log2', clamped)
-        return jnp_call('ceil', log2_val)
+        clamped = jnp_call("maximum", operand, small_eps)
+        log2_val = jnp_call("log2", clamped)
+        return jnp_call("ceil", log2_val)
 
-    def _translate_unary_jnp(self, inst: MIRInstruction,
-                              func_name: str) -> ast.expr:
+    def _translate_unary_jnp(self, inst: MIRInstruction, func_name: str) -> ast.expr:
         """Translate unary jnp function."""
         operand = self.ctx.get_operand(inst.operands[0])
         return jnp_call(func_name, operand)
 
-    def _translate_binary_jnp(self, inst: MIRInstruction,
-                               func_name: str) -> ast.expr:
+    def _translate_binary_jnp(self, inst: MIRInstruction, func_name: str) -> ast.expr:
         """Translate binary jnp function."""
         left = self.ctx.get_operand(inst.operands[0])
         right = self.ctx.get_operand(inst.operands[1])
@@ -412,13 +423,13 @@ class InstructionTranslator:
     def _translate_ifcast(self, inst: MIRInstruction) -> ast.expr:
         """Translate int to float cast."""
         operand = self.ctx.get_operand(inst.operands[0])
-        return jnp_call('float64', operand)
+        return jnp_call("float64", operand)
 
     def _translate_ficast(self, inst: MIRInstruction) -> ast.expr:
         """Translate float to int cast."""
         operand = self.ctx.get_operand(inst.operands[0])
-        floored = jnp_call('floor', operand)
-        return ast_call(attr(ast_name('jnp'), 'int32'), [floored])
+        floored = jnp_call("floor", operand)
+        return ast_call(attr(ast_name("jnp"), "int32"), [floored])
 
     def _translate_fbcast(self, inst: MIRInstruction) -> ast.expr:
         """Translate float to bool cast."""
@@ -438,7 +449,7 @@ class InstructionTranslator:
     def _translate_bicast(self, inst: MIRInstruction) -> ast.expr:
         """Translate bool to int cast."""
         operand = self.ctx.get_operand(inst.operands[0])
-        return ast_call(attr(ast_name('jnp'), 'int32'), [operand])
+        return ast_call(attr(ast_name("jnp"), "int32"), [operand])
 
     def _translate_optbarrier(self, inst: MIRInstruction) -> ast.expr:
         """Translate optimization barrier (pass through)."""
@@ -470,7 +481,7 @@ class InstructionTranslator:
         - CollapseHint: node collapse -> no-op (handled at build time)
         - SetRetFlag: $finish/$stop -> no-op
         """
-        func_name = inst.func_name or ''
+        func_name = inst.func_name or ""
 
         # Empty func_name indicates an inlined or optimized-away function
         # This can happen when function declarations don't resolve
@@ -479,7 +490,7 @@ class InstructionTranslator:
 
         # $simparam - access via simparams array using dynamic registry
         # Supported simparams (VAMS-LRM Table 9-27): gmin, abstol, vntol, reltol, tnom, scale, shrink, imax
-        if 'simparam' in func_name.lower():
+        if "simparam" in func_name.lower():
             if inst.operands and inst.operands[0] in self.ctx.str_constants:
                 param_name = self.ctx.str_constants[inst.operands[0]]
 
@@ -487,15 +498,15 @@ class InstructionTranslator:
                 simparam_idx = self.ctx.register_simparam(param_name)
 
                 # Backward compatibility flag
-                if param_name == 'gmin':
+                if param_name == "gmin":
                     self.uses_simparam_gmin = True
 
                 # Return simparams[idx]
-                return subscript(ast_name('simparams'), ast_const(simparam_idx))
+                return subscript(ast_name("simparams"), ast_const(simparam_idx))
             return self.ctx.zero()
 
         # $discontinuity (LRM 9.17.1) - hint for timestep control
-        if 'discontinuity' in func_name.lower():
+        if "discontinuity" in func_name.lower():
             # Get the discontinuity order if provided
             order = -1
             if inst.operands:
@@ -503,21 +514,23 @@ class InstructionTranslator:
                 if isinstance(op, (int, float)):
                     order = int(op)
             if not self.discontinuity_warnings:
-                self.discontinuity_warnings.append(f"$discontinuity({order}) used - ignored for DC analysis")
+                self.discontinuity_warnings.append(
+                    f"$discontinuity({order}) used - ignored for DC analysis"
+                )
             return self.ctx.zero()  # No-op, but return something
 
         # $display / $strobe / $write / $debug - check if this is a display function
         # Only treat as display if func_name explicitly indicates it, or if first operand
         # is a format string WITH format specifiers (contains %)
         is_display_func = func_name and any(
-            x in func_name.lower() for x in ('display', 'strobe', 'write', 'debug')
+            x in func_name.lower() for x in ("display", "strobe", "write", "debug")
         )
         if inst.operands and inst.operands[0] in self.ctx.str_constants:
             fmt_str = self.ctx.str_constants[inst.operands[0]]
             # Only treat as display call if:
             # 1. Function name indicates display/strobe/write/debug, OR
             # 2. Format string contains % (likely a format specifier)
-            has_format_specifiers = '%' in fmt_str
+            has_format_specifiers = "%" in fmt_str
             if is_display_func or has_format_specifiers:
                 self.uses_display = True
 
@@ -538,8 +551,8 @@ class InstructionTranslator:
                 # Use regex to handle format specifiers with width/precision like %12.5e, %18.10g
                 # Pattern matches: % followed by optional width.precision, then type specifier
                 # Types: g, e, f, E, G (float), d, i (int), s (string)
-                py_fmt = re.sub(r'%[-+0 #]*(\d+)?(\.\d+)?[gGeEfFdis]', '{}', fmt_str)
-                py_fmt = py_fmt.rstrip('\n')  # jax.debug.print adds newline
+                py_fmt = re.sub(r"%[-+0 #]*(\d+)?(\.\d+)?[gGeEfFdis]", "{}", fmt_str)
+                py_fmt = py_fmt.rstrip("\n")  # jax.debug.print adds newline
 
                 # Build jax.debug.print(fmt, val1, val2, ...)
                 fmt_const = ast.Constant(value=py_fmt)
@@ -547,73 +560,70 @@ class InstructionTranslator:
 
                 debug_print = ast.Call(
                     func=ast.Attribute(
-                        value=ast.Attribute(
-                            value=ast_name('jax'),
-                            attr='debug',
-                            ctx=ast.Load()
-                        ),
-                        attr='print',
-                        ctx=ast.Load()
+                        value=ast.Attribute(value=ast_name("jax"), attr="debug", ctx=ast.Load()),
+                        attr="print",
+                        ctx=ast.Load(),
                     ),
                     args=args,
-                    keywords=[ast.keyword(arg='ordered', value=ast.Constant(value=True))]
+                    keywords=[ast.keyword(arg="ordered", value=ast.Constant(value=True))],
                 )
 
                 # jax.debug.print returns None, so we use 'or' to execute it
                 # and return 0.0: (jax.debug.print(...) or 0.0)
                 # None is falsy, so this evaluates print, gets None, then returns 0.0
-                return ast.BoolOp(
-                    op=ast.Or(),
-                    values=[debug_print, self.ctx.zero()]
-                )
+                return ast.BoolOp(op=ast.Or(), values=[debug_print, self.ctx.zero()])
 
         # analysis() - access via simparams array using registered $analysis_type
         # $analysis_type: 0=DC, 1=AC, 2=transient, 3=noise
-        if 'analysis' in func_name.lower():
+        if "analysis" in func_name.lower():
             self.uses_analysis = True
             if inst.operands and inst.operands[0] in self.ctx.str_constants:
                 analysis_name = self.ctx.str_constants[inst.operands[0]]
                 type_code = self.analysis_type_map.get(analysis_name.lower(), 0)
                 # $analysis_type is pre-registered at index 0
-                analysis_idx = self.ctx.get_simparam_index('$analysis_type')
+                analysis_idx = self.ctx.get_simparam_index("$analysis_type")
                 # Return (simparams[analysis_idx] == type_code)
-                analysis_input = subscript(ast_name('simparams'), ast_const(analysis_idx))
+                analysis_input = subscript(ast_name("simparams"), ast_const(analysis_idx))
                 return compare(analysis_input, ast.Eq(), ast_const(type_code))
             return jnp_bool(ast_const(False))
 
         # ddt() - time derivative
-        if 'ddt' in func_name.lower():
+        if "ddt" in func_name.lower():
             # Return the charge directly - transient integration handles dQ/dt
             if inst.operands:
                 return self.ctx.get_operand(inst.operands[0])
             return self.ctx.zero()
 
         # ddx() - spatial derivative (not supported)
-        if 'ddx' in func_name.lower():
+        if "ddx" in func_name.lower():
             return self.ctx.zero()
 
         # noise functions - return 0
-        noise_funcs = {'white_noise', 'flicker_noise', 'noise_table'}
+        noise_funcs = {"white_noise", "flicker_noise", "noise_table"}
         if any(nf in func_name.lower() for nf in noise_funcs):
             return self.ctx.zero()
 
         # abs function
-        if func_name.lower() == 'abs':
+        if func_name.lower() == "abs":
             if inst.operands:
-                return jnp_call('abs', self.ctx.get_operand(inst.operands[0]))
+                return jnp_call("abs", self.ctx.get_operand(inst.operands[0]))
             return self.ctx.zero()
 
         # min/max functions
-        if func_name.lower() == 'min':
+        if func_name.lower() == "min":
             if len(inst.operands) >= 2:
-                return jnp_call('minimum',
-                                self.ctx.get_operand(inst.operands[0]),
-                                self.ctx.get_operand(inst.operands[1]))
-        if func_name.lower() == 'max':
+                return jnp_call(
+                    "minimum",
+                    self.ctx.get_operand(inst.operands[0]),
+                    self.ctx.get_operand(inst.operands[1]),
+                )
+        if func_name.lower() == "max":
             if len(inst.operands) >= 2:
-                return jnp_call('maximum',
-                                self.ctx.get_operand(inst.operands[0]),
-                                self.ctx.get_operand(inst.operands[1]))
+                return jnp_call(
+                    "maximum",
+                    self.ctx.get_operand(inst.operands[0]),
+                    self.ctx.get_operand(inst.operands[1]),
+                )
 
         # $limit related functions - StoreLimit, LoadLimit, BuiltinLimit
         # These are used for Newton-Raphson convergence help.
@@ -626,7 +636,7 @@ class InstructionTranslator:
         #
         # When use_limit_functions is False (default):
         #   - All limit operations pass through the input voltage unchanged
-        if 'storelimit' in func_name.lower():
+        if "storelimit" in func_name.lower():
             if self.ctx.use_limit_functions:
                 return self._translate_store_limit(func_name, inst)
             # Pass through the input voltage when limiting disabled
@@ -634,7 +644,7 @@ class InstructionTranslator:
                 return self.ctx.get_operand(inst.operands[0])
             return self.ctx.zero()
 
-        if 'loadlimit' in func_name.lower():
+        if "loadlimit" in func_name.lower():
             if self.ctx.use_limit_functions:
                 return self._translate_load_limit(func_name, inst)
             # Pass through the input voltage when limiting disabled
@@ -644,7 +654,7 @@ class InstructionTranslator:
 
         # $limit[pnjlim], $limit[fetlim], etc. - BuiltinLimit callbacks
         # These implement NR convergence algorithms (SPICE pnjlim/fetlim).
-        if '$limit' in func_name.lower() or 'builtinlimit' in func_name.lower():
+        if "$limit" in func_name.lower() or "builtinlimit" in func_name.lower():
             if inst.operands:
                 # Check if we should generate limit function calls
                 if self.ctx.use_limit_functions:
@@ -654,40 +664,41 @@ class InstructionTranslator:
             return self.ctx.zero()
 
         # SimParamOpt - $simparam("name", default) - with optional default
-        if 'simparam_opt' in func_name.lower():
+        if "simparam_opt" in func_name.lower():
             if inst.operands and inst.operands[0] in self.ctx.str_constants:
                 param_name = self.ctx.str_constants[inst.operands[0]]
                 simparam_idx = self.ctx.register_simparam(param_name)
-                return subscript(ast_name('simparams'), ast_const(simparam_idx))
+                return subscript(ast_name("simparams"), ast_const(simparam_idx))
             # If param name unknown, return default (second operand) if available
             if len(inst.operands) >= 2:
                 return self.ctx.get_operand(inst.operands[1])
             return self.ctx.zero()
 
         # SimParamStr - string $simparam (rare)
-        if 'simparam_str' in func_name.lower():
+        if "simparam_str" in func_name.lower():
             # String simparams not supported - return 0
             return self.ctx.zero()
 
         # CollapseHint - node collapse hints (handled at model build time)
-        if 'collapse' in func_name.lower():
+        if "collapse" in func_name.lower():
             # No-op for eval - node collapse is structural
             return self.ctx.zero()
 
         # ParamInfo - parameter bounds validation (set_MinInclusive, etc.)
-        if func_name.lower().startswith('set_'):
+        if func_name.lower().startswith("set_"):
             # No-op for eval - parameter validation is done at model build
             return self.ctx.zero()
 
         # SetRetFlag - $finish, $stop, $abort
         # These should terminate simulation but for eval we just continue
-        if 'setretflag' in func_name.lower():
+        if "setretflag" in func_name.lower():
             # TODO: Track these and potentially stop iteration
             return self.ctx.zero()
 
         # Unknown function - log warning and return zero
         # This helps identify new CallbackKind values we need to handle
         import warnings
+
         warnings.warn(f"Unknown MIR function '{func_name}' - returning zero", stacklevel=2)
         return self.ctx.zero()
 
@@ -715,36 +726,42 @@ class InstructionTranslator:
         # Parse limit function name from MIR func_name
         # Format: "BuiltinLimit { name: Spur(N), num_args: M }"
         # The actual name (pnjlim, fetlim) is stored in str_constants
-        limit_name = 'pnjlim'  # Default
+        limit_name = "pnjlim"  # Default
 
         # Try to extract the interned string reference
         # Look for patterns like "Spur(1)" or just the limit name directly
         import re
-        spur_match = re.search(r'Spur\((\d+)\)', func_name)
+
+        spur_match = re.search(r"Spur\((\d+)\)", func_name)
         if spur_match:
             spur_idx = int(spur_match.group(1))
             # Look up in string constants (the index is the string ID)
             for str_id, str_val in self.ctx.str_constants.items():
                 # String IDs are like 's1', 's2', etc.
-                if str_id.startswith('s') and str_id[1:].isdigit():
+                if str_id.startswith("s") and str_id[1:].isdigit():
                     if int(str_id[1:]) == spur_idx:
                         limit_name = str_val.lower()
                         break
 
         # Also check for direct name match
-        for known_limit in ['pnjlim', 'fetlim', 'limexp', 'limvds']:
+        for known_limit in ["pnjlim", "fetlim", "limexp", "limvds"]:
             if known_limit in func_name.lower():
                 limit_name = known_limit
                 break
 
         # Build the function call
         # limit_funcs['pnjlim'](vnew, vold, vt, vcrit)
-        limit_func = subscript(ast_name('limit_funcs'), ast_const(limit_name))
+        limit_func = subscript(ast_name("limit_funcs"), ast_const(limit_name))
 
         # Get operands
         # For pnjlim: (vnew, vold, vt, vcrit)
         # For fetlim: (vnew, vold, vto)
         args = [self.ctx.get_operand(op) for op in inst.operands]
+
+        # Track which V_raw feeds into this BuiltinLimit result
+        # Used by StoreLimit to build limit_state_idx -> V_raw mapping
+        if inst.result and inst.operands:
+            self.ctx.builtin_limit_raw[str(inst.result)] = str(inst.operands[0])
 
         return ast_call(limit_func, args)
 
@@ -762,12 +779,13 @@ class InstructionTranslator:
             Limit state index (0, 1, 2, ...), or 0 as default
         """
         import re
+
         # Look for LimState(N) pattern
-        match = re.search(r'LimState\((\d+)\)', func_name)
+        match = re.search(r"LimState\((\d+)\)", func_name)
         if match:
             return int(match.group(1))
         # Fallback: look for any number
-        match = re.search(r'(\d+)', func_name)
+        match = re.search(r"(\d+)", func_name)
         if match:
             return int(match.group(1))
         return 0
@@ -788,7 +806,7 @@ class InstructionTranslator:
         idx = self._parse_limit_state_index(func_name)
 
         # Register this limit state
-        state_name = f'lim_state{idx}'
+        state_name = f"lim_state{idx}"
         self.ctx.register_limit(state_name)
 
         # Get the value to store (first operand)
@@ -799,6 +817,14 @@ class InstructionTranslator:
         # We store the MIR operand ID so we can reference it in function_builder
         operand_id = inst.operands[0]
         self.ctx.limit_store_operands[idx] = operand_id
+
+        # Link this LimState to the raw voltage that was limited
+        # The operand to StoreLimit is V_lim (result of BuiltinLimit).
+        # Look up the V_raw that was the first operand to BuiltinLimit.
+        v_lim_id = str(operand_id)
+        v_raw_id = self.ctx.builtin_limit_raw.get(v_lim_id)
+        if v_raw_id:
+            self.ctx.limit_to_raw_operand[idx] = v_raw_id
 
         # Get and return the value expression (StoreLimit passes through)
         value_expr = self.ctx.get_operand(operand_id)
@@ -820,11 +846,11 @@ class InstructionTranslator:
         idx = self._parse_limit_state_index(func_name)
 
         # Register this limit state
-        state_name = f'lim_state{idx}'
+        state_name = f"lim_state{idx}"
         self.ctx.register_limit(state_name)
 
         # Return limit_state_in[idx]
-        return subscript(ast_name('limit_state_in'), ast_const(idx))
+        return subscript(ast_name("limit_state_in"), ast_const(idx))
 
     def _translate_copy(self, inst: MIRInstruction) -> ast.expr:
         """Translate copy (simple value forwarding)."""

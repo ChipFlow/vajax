@@ -212,7 +212,22 @@ class TestTranslateEval:
         # Build simparams array
         simparams = jnp.array(build_simparams(eval_meta))
 
-        result = eval_fn(shared_inputs, voltage_inputs, cache, simparams)
+        # eval_fn signature: (shared_params, device_params, shared_cache, device_cache,
+        #                     simparams, limit_state_in, limit_funcs)
+        # With default cache_split=None, shared_cache is empty and device_cache is full cache
+        shared_cache = jnp.array([])
+        limit_state_in = jnp.array([])
+        limit_funcs = {}
+
+        result = eval_fn(
+            shared_inputs,
+            voltage_inputs,
+            shared_cache,
+            cache,
+            simparams,
+            limit_state_in,
+            limit_funcs,
+        )
         res_resist = result[0]
 
         # Current should be V/R = 1/1000 = 1mA
