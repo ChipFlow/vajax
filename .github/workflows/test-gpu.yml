@@ -40,6 +40,9 @@ jobs:
       - name: Install LLVM 18
         run: |
           if ! llvm-config-18 --version 2>/dev/null; then
+            # Import LLVM GPG key explicitly (llvm.sh key handling fails on some runners)
+            wget -qO- https://apt.llvm.org/llvm-snapshot.gpg.key | sudo tee /etc/apt/trusted.gpg.d/apt.llvm.org.asc > /dev/null
+            sudo chmod a+r /etc/apt/trusted.gpg.d/apt.llvm.org.asc
             wget -q https://apt.llvm.org/llvm.sh
             chmod +x llvm.sh
             sudo ./llvm.sh 18
