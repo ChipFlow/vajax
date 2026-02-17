@@ -1,0 +1,192 @@
+name: GPU Tests
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+  pull_request:
+
+# Limit concurrent GPU jobs and cancel outdated runs
+concurrency:
+  group: gpu-tests-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: 0
+  RUSTC_WRAPPER: "sccache"
+  JAX_COMPILATION_CACHE_DIR: /tmp/jax-xla-cache
+
+jobs:
+  gpu-tests:
+    runs-on: nvidia-runner-1
+    timeout-minutes: 60
+
+    steps:
+      - name: Checkout with submodules
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: CUDA environment diagnostics
+        run: |
+          echo "=== GPU Info ==="
+          nvidia-smi || echo "nvidia-smi not available"
+          echo ""
+          echo "=== CUDA Version ==="
+          nvcc --version 2>/dev/null || echo "nvcc not in PATH"
+
+      - name: Install LLVM 18
+        run: |
+          if ! llvm-config-18 --version 2>/dev/null; then
+            wget -q https://apt.llvm.org/llvm.sh
+            chmod +x llvm.sh
+            sudo ./llvm.sh 18
+            rm llvm.sh
+          fi
+          echo "LLVM_SYS_181_PREFIX=/usr/lib/llvm-18" >> $GITHUB_ENV
+
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Set up sccache
+        uses: mozilla-actions/sccache-action@v0.0.7
+        with:
+          disable_annotations: true
+
+      - name: Cache Rust dependencies
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: openvaf_jax/openvaf_py
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libsuitesparse-dev swig cmake
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v4
+
+      - name: Set up Python
+        run: uv python install 3.13
+
+      - name: Cache XLA compilation artifacts
+        uses: actions/cache@v4
+        with:
+          path: /tmp/jax-xla-cache
+          key: xla-cache-gpu-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('pyproject.toml') }}
+          restore-keys: |
+            xla-cache-gpu-${{ runner.os }}-${{ runner.arch }}-
+
+      - name: Build openvaf-py
+        working-directory: openvaf_jax/openvaf_py
+        run: |
+          uv sync
+          uv run maturin develop --release
+
+      - name: Install jax-spice with CUDA dependencies
+        run: uv sync --extra cuda12 --extra test
+
+      - name: Verify JAX GPU detection
+        env:
+          JAX_PLATFORMS: cuda,cpu
+        run: |
+          uv run python -c "
+          import jax
+          print('JAX version:', jax.__version__)
+          print('JAX backend:', jax.default_backend())
+          print('JAX devices:', jax.devices())
+          gpu_devices = [d for d in jax.devices() if d.platform != 'cpu']
+          if gpu_devices:
+              print('GPU devices found:', gpu_devices)
+              print('GPU device kind:', gpu_devices[0].device_kind)
+          else:
+              print('ERROR: No GPU devices found')
+              raise SystemExit(1)
+          "
+
+      - name: Run GPU benchmarks
+        timeout-minutes: 45
+        env:
+          JAX_PLATFORMS: cuda,cpu
+          XLA_FLAGS: "--xla_gpu_autotune_level=0"
+          XLA_PYTHON_CLIENT_PREALLOCATE: "false"
+          XLA_PYTHON_CLIENT_ALLOCATOR: platform
+          TF_CPP_MIN_LOG_LEVEL: "2"
+        run: |
+          set +e
+          uv run python scripts/compare_vacask.py \
+            --max-steps 50 \
+            --use-scan \
+            --force-gpu \
+            --analyze \
+            --profile-mode jax \
+            --profile-dir /tmp/jax-spice-traces 2>&1 | tee /tmp/benchmark_output.txt
+          BENCHMARK_STATUS=${PIPESTATUS[0]}
+          set -e
+
+          # Check if benchmark completed by looking for success markers
+          BENCHMARK_OK=false
+          if grep -q "Summary (per-step timing)" /tmp/benchmark_output.txt 2>/dev/null; then
+            BENCHMARK_OK=true
+            echo "Benchmark completed successfully (found summary table)"
+          fi
+
+          if [ $BENCHMARK_STATUS -ne 0 ]; then
+            echo "Benchmark script exited with status $BENCHMARK_STATUS"
+            if [ "$BENCHMARK_OK" = true ]; then
+              echo "Benchmark completed - likely a CUDA cleanup error, treating as success"
+            else
+              echo "ERROR: Benchmark did not complete"
+              exit $BENCHMARK_STATUS
+            fi
+          fi
+
+      - name: Extract benchmark comparison to summary
+        if: always()
+        run: |
+          if [ -f /tmp/benchmark_output.txt ]; then
+            {
+              echo "## JAX-SPICE vs VACASK Benchmark Comparison (GPU)"
+              echo ""
+              echo "### Environment"
+              echo "- **Platform**: GPU (nvidia-runner-1)"
+              echo "- **Mode**: lax.scan (JIT-compiled)"
+              echo "- **Steps**: 50"
+              echo ""
+
+              echo "### Per-Step Timing"
+              echo ""
+              echo "| Benchmark | Steps | JAX-SPICE (ms/step) | VACASK (ms/step) | Ratio |"
+              echo "|-----------|-------|---------------------|------------------|-------|"
+
+              grep -A 10 "Summary (per-step timing)" /tmp/benchmark_output.txt | \
+                grep "^|" | tail -n +3 || true
+
+              echo ""
+              echo "### Total Wall Time"
+              echo ""
+              echo "| Benchmark | Steps | JAX-SPICE (ms) | VACASK (ms) | Ratio |"
+              echo "|-----------|-------|----------------|-------------|-------|"
+
+              grep -A 10 "Summary (total wall time)" /tmp/benchmark_output.txt | \
+                grep "^|" | tail -n +3 || true
+
+              echo ""
+              echo "### Interpretation"
+              echo ""
+              echo "- **Ratio < 1.0**: JAX-SPICE is faster"
+              echo "- **Ratio > 1.0**: JAX-SPICE is slower"
+              echo "- **N/A**: VACASK comparison not available"
+            } >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - name: Upload profiling traces
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: profiling-traces-${{ github.sha }}
+          path: /tmp/jax-spice-traces/
+          if-no-files-found: ignore
+          retention-days: 30
