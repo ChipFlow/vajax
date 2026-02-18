@@ -162,9 +162,10 @@ class TestVACASKBenchmarks:
 
             # Run transient analysis
             start = time.perf_counter()
-            result = engine.run_transient(
+            engine.prepare(
                 t_stop=t_stop, dt=dt, max_steps=max_steps, use_sparse=use_sparse
             )
+            result = engine.run_transient()
             elapsed = time.perf_counter() - start
 
             timesteps = result.num_steps

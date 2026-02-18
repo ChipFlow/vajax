@@ -187,7 +187,8 @@ def run_jaxspice(
 
             max_steps = int(t_stop / dt) + 100
 
-            result = engine.run_transient(t_stop=t_stop, dt=dt, max_steps=max_steps)
+            engine.prepare(t_stop=t_stop, dt=dt, max_steps=max_steps)
+            result = engine.run_transient()
 
             results: Dict[str, Array] = {"time": result.times}
             for node_name, voltage in result.voltages.items():
@@ -461,7 +462,8 @@ class TestVacaskBenchmarksWithNgspice:
             if t_stop > max_sim_time:
                 t_stop = max_sim_time
 
-            result = engine.run_transient(t_stop=t_stop, dt=dt)
+            engine.prepare(t_stop=t_stop, dt=dt)
+            result = engine.run_transient()
 
             # Get output voltage - try various node names
             jax_v2 = None

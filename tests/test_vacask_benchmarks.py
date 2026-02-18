@@ -126,11 +126,8 @@ class TestBenchmarkTransient:
         t_stop = info.t_stop if has_comparison else info.dt * 10
 
         logger.info(f"running transient dense (t_stop={t_stop:.2e})")
-        result = engine.run_transient(
-            t_stop=t_stop,
-            dt=info.dt,
-            use_sparse=False,
-        )
+        engine.prepare(t_stop=t_stop, dt=info.dt, use_sparse=False)
+        result = engine.run_transient()
         logger.info("transient finished")
 
         # Cache result for VACASK comparison
@@ -167,7 +164,8 @@ class TestBenchmarkTransient:
         t_stop = info.t_stop if has_comparison else info.dt * 10
 
         logger.info(f"running transient sparse (t_stop={t_stop:.2e})")
-        result = engine.run_transient(t_stop=t_stop, dt=info.dt, use_sparse=True)
+        engine.prepare(t_stop=t_stop, dt=info.dt, use_sparse=True)
+        result = engine.run_transient()
         logger.info("transient finished")
 
         # Cache result for VACASK comparison
@@ -203,7 +201,8 @@ class TestRCTimeConstant:
 
         engine = CircuitEngine(info.sim_path)
         engine.parse()
-        result = engine.run_transient(t_stop=t_stop, dt=dt, use_sparse=False)
+        engine.prepare(t_stop=t_stop, dt=dt, use_sparse=False)
+        result = engine.run_transient()
 
         # Get capacitor voltage (node '2')
         v_cap = result.voltage("2") if "2" in result.voltages else None
@@ -697,7 +696,8 @@ class TestVACASKResultComparison:
 
                 use_sparse = solver_type == "sparse"
                 sim_start = time.perf_counter()
-                result = engine.run_transient(t_stop=t_stop, dt=dt, use_sparse=use_sparse)
+                engine.prepare(t_stop=t_stop, dt=dt, use_sparse=use_sparse)
+                result = engine.run_transient()
                 sim_time = time.perf_counter() - sim_start
                 logger.info(
                     f"[{time.perf_counter() - test_start:.1f}s] {solver_type} done: {result.num_steps} steps in {sim_time:.1f}s"
@@ -773,7 +773,8 @@ class TestTbDpBenchmark:
         engine = CircuitEngine(info.sim_path)
         engine.parse()
 
-        result = engine.run_transient(t_stop=info.dt * 5, dt=info.dt, use_sparse=True)
+        engine.prepare(t_stop=info.dt * 5, dt=info.dt, use_sparse=True)
+        result = engine.run_transient()
 
         logger.info(
             f"\ntb_dp512x8: {result.num_steps} steps, {result.stats.get('convergence_rate', 0) * 100:.1f}% converged"

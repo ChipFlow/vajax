@@ -124,12 +124,8 @@ def cmd_run(args: argparse.Namespace) -> int:
 def _run_transient(engine: CircuitEngine, dt: float, t_stop: float, args: argparse.Namespace):
     """Run transient analysis."""
     try:
-        result = engine.run_transient(
-            t_stop=t_stop,
-            dt=dt,
-            use_scan=not args.no_scan,
-            use_sparse=args.sparse,
-        )
+        engine.prepare(t_stop=t_stop, dt=dt, use_sparse=args.sparse)
+        result = engine.run_transient()
         print(f"Transient: {len(result.times)} time points, t_stop={t_stop:.2e}s")
         return result
     except Exception as e:
@@ -223,12 +219,8 @@ def cmd_benchmark(args: argparse.Namespace) -> int:
 
             start = time.perf_counter()
 
-        result = engine.run_transient(
-            t_stop=bench.t_stop,
-            dt=bench.dt,
-            use_scan=True,
-            use_sparse=args.sparse,
-        )
+        engine.prepare(t_stop=bench.t_stop, dt=bench.dt, use_sparse=args.sparse)
+        result = engine.run_transient()
 
         if args.profile:
             elapsed = time.perf_counter() - start
@@ -337,9 +329,6 @@ Examples:
 
     # Solver options
     run_parser.add_argument("--sparse", action="store_true", help="Force sparse solver")
-    run_parser.add_argument(
-        "--no-scan", action="store_true", help="Disable lax.scan (use Python loop)"
-    )
 
     # Backend options
     run_parser.add_argument("--gpu", action="store_true", help="Force GPU backend")

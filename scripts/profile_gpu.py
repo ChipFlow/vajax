@@ -171,13 +171,14 @@ class GPUProfiler:
                 sys.stdout.flush()
                 sys.stderr.flush()
                 warmup_start = time.perf_counter()
-                engine.run_transient(
+                engine.prepare(
                     t_stop=dt * warmup_steps,
                     dt=dt,
                     max_steps=warmup_steps,
                     use_sparse=use_sparse,
                     backend=selected_backend,
                 )
+                engine.run_transient()
                 warmup_time = time.perf_counter() - warmup_start
                 logger.info(f"      warmup done ({warmup_time:.1f}s)")
             else:
@@ -185,18 +186,20 @@ class GPUProfiler:
 
             # Timed run (optionally with tracing)
             # This is the measurement comparable to VACASK benchmark.py "Runtime"
+            # Re-prepare with actual t_stop (may differ from warmup)
+            engine.prepare(
+                t_stop=t_stop,
+                dt=dt,
+                max_steps=expected_steps * 2,
+                use_sparse=use_sparse,
+                backend=selected_backend,
+            )
             ctx = trace_ctx if trace_ctx else nullcontext()
             logger.info(f"      timed run: t_stop={t_stop:.2e}s, dt={dt:.2e}s...")
             sys.stdout.flush()
             with ctx:
                 start = time.perf_counter()
-                result = engine.run_transient(
-                    t_stop=t_stop,
-                    dt=dt,
-                    max_steps=expected_steps * 2,  # Allow some margin
-                    use_sparse=use_sparse,
-                    backend=selected_backend,
-                )
+                result = engine.run_transient()
                 elapsed = time.perf_counter() - start
 
             actual_steps = result.num_steps

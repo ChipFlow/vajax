@@ -13,7 +13,6 @@ from typing import Any, Dict, Optional
 
 # Re-export CircuitEngine for convenience
 from jax_spice.analysis.engine import CircuitEngine
-from jax_spice.profiling import ProfileConfig
 
 
 class BenchmarkRunner:
@@ -46,8 +45,6 @@ class BenchmarkRunner:
         warmup_runs: int = 1,
         timed_runs: int = 1,
         use_sparse: Optional[bool] = None,
-        use_scan: bool = True,
-        profile_config: Optional[ProfileConfig] = None,
     ) -> Dict[str, Any]:
         """Run a benchmark with warmup and timing.
 
@@ -58,8 +55,6 @@ class BenchmarkRunner:
             warmup_runs: Number of warmup runs (for JIT compilation)
             timed_runs: Number of timed runs to average
             use_sparse: Use sparse solver (auto-detect if None)
-            use_scan: Use lax.scan solver
-            profile_config: Optional profiling configuration
 
         Returns:
             Dict with:
@@ -76,31 +71,19 @@ class BenchmarkRunner:
         self._engine = CircuitEngine(Path(circuit_path))
         self._engine.parse()
 
-        max_steps = int(t_stop / dt) + 10
+        # Prepare once — max_steps auto-computed with 10% headroom
+        self._engine.prepare(t_stop=t_stop, dt=dt, use_sparse=use_sparse)
 
         # Warmup runs
         for _ in range(warmup_runs):
-            self._engine.run_transient(
-                t_stop=t_stop,
-                dt=dt,
-                max_steps=max_steps,
-                use_sparse=use_sparse,
-                use_while_loop=use_scan,
-            )
+            self._engine.run_transient()
 
         # Timed runs
         run_times = []
         result = None
         for _ in range(timed_runs):
             start = time.perf_counter()
-            result = self._engine.run_transient(
-                t_stop=t_stop,
-                dt=dt,
-                max_steps=max_steps,
-                use_sparse=use_sparse,
-                use_while_loop=use_scan,
-                profile_config=profile_config,
-            )
+            result = self._engine.run_transient()
             elapsed = time.perf_counter() - start
             run_times.append(elapsed)
 

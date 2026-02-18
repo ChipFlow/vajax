@@ -175,12 +175,13 @@ class TestRingPeriodWithAdaptive:
         # max_dt must be less than the oscillation period (~3.5ns)
         config = AdaptiveConfig(max_dt=100e-12)  # 100ps max allows ~35 samples/period
 
-        result = engine.run_transient(
+        engine.prepare(
             t_stop=50e-9,
             dt=10e-12,
             use_sparse=False,
             adaptive_config=config,
         )
+        result = engine.run_transient()
 
         time = np.array(result.times)
         # Node '1' in JAX-SPICE corresponds to node '2' in VACASK
@@ -222,12 +223,13 @@ class TestRingPeriodWithAdaptive:
             grow_factor=1.5,
         )
 
-        result = engine.run_transient(
+        engine.prepare(
             t_stop=50e-9,
             dt=10e-12,  # Initial timestep
             use_sparse=False,
             adaptive_config=config,
         )
+        result = engine.run_transient()
 
         time = np.array(result.times)
         voltage = np.array(result.voltages.get("1", []))
@@ -274,12 +276,13 @@ class TestRingPeriodWithAdaptive:
             max_dt=20e-12,
         )
 
-        result = engine.run_transient(
+        engine.prepare(
             t_stop=50e-9,
             dt=10e-12,
             use_sparse=False,
             adaptive_config=config,
         )
+        result = engine.run_transient()
 
         stats = result.stats
         min_dt = stats.get("min_dt_used", 0)
@@ -335,12 +338,13 @@ class TestAdaptiveVsVACASK:
             max_dt=20e-12,
         )
 
-        result = engine.run_transient(
+        engine.prepare(
             t_stop=50e-9,
             dt=10e-12,
             use_sparse=False,
             adaptive_config=config,
         )
+        result = engine.run_transient()
 
         jax_time = np.array(result.times)
         jax_voltage = np.array(result.voltages.get("1", []))

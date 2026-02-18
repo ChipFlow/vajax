@@ -64,19 +64,22 @@ n_steps = int(t_stop / dt)
 if n_steps > max_steps:
     t_stop = dt * max_steps
 
+# Prepare once (auto-computes max_steps)
+engine.prepare(t_stop=t_stop, dt=dt)
+
 # First run (includes JIT compilation)
 t0 = time.perf_counter()
-result1 = engine.run_transient(t_stop=t_stop, dt=dt, use_scan=True)
+result1 = engine.run_transient()
 t_first_run = time.perf_counter() - t0
 
 # Second run (cached JIT)
 t0 = time.perf_counter()
-result2 = engine.run_transient(t_stop=t_stop, dt=dt, use_scan=True)
+result2 = engine.run_transient()
 t_second_run = time.perf_counter() - t0
 
 # Third run to confirm
 t0 = time.perf_counter()
-result3 = engine.run_transient(t_stop=t_stop, dt=dt, use_scan=True)
+result3 = engine.run_transient()
 t_third_run = time.perf_counter() - t0
 
 import json

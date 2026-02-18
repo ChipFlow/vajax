@@ -320,7 +320,7 @@ def run_jax_spice(
         # Use max_dt = 10x the initial dt to allow some adaptation but not grow unbounded
         adaptive_config = AdaptiveConfig(max_dt=config.dt * 10, min_dt=1e-15)
         startup_start = time.perf_counter()
-        engine.run_transient(
+        engine.prepare(
             t_stop=t_stop,
             dt=config.dt,
             max_steps=num_steps,
@@ -328,6 +328,7 @@ def run_jax_spice(
             backend=backend,
             adaptive_config=adaptive_config,
         )
+        engine.run_transient()
         startup_time = time.perf_counter() - startup_start
 
         # Run analysis on compiled scan function if requested
@@ -367,17 +368,10 @@ def run_jax_spice(
             print("\n  Warning: _cached_scan_fn not found - analysis skipped")
 
         # Timed run - print perf_counter for correlation with Perfetto traces
+        # prepare() already called above with same params, strategy is cached
         start = time.perf_counter()
         print(f"TIMED_RUN_START: {start:.6f}")
-        result = engine.run_transient(
-            t_stop=t_stop,
-            dt=config.dt,
-            max_steps=num_steps,
-            use_sparse=use_sparse,
-            backend=backend,
-            profile_config=sim_profile_config,
-            adaptive_config=adaptive_config,
-        )
+        result = engine.run_transient()
         after_transient = time.perf_counter()
         print(
             f"AFTER_RUN_TRANSIENT: {after_transient:.6f} (elapsed: {after_transient - start:.6f}s)"

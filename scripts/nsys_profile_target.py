@@ -97,25 +97,20 @@ def main():
     if not args.skip_warmup:
         # Warmup run (JIT compilation happens here, outside profiled region)
         print("Warmup run (JIT compilation)...")
-        _ = engine.run_transient(
-            t_stop=dt,
-            dt=dt,
-            max_steps=10,
-            use_sparse=args.sparse,
-            use_while_loop=True,  # use lax.scan for performance
-        )
+        engine.prepare(t_stop=dt, dt=dt, max_steps=10, use_sparse=args.sparse)
+        engine.run_transient()
         print("Warmup complete")
         print()
 
     # Profiled run - nsys-jax captures this automatically
     print(f"Starting profiled run ({args.timesteps} timesteps)...")
-    result = engine.run_transient(
+    engine.prepare(
         t_stop=args.timesteps * dt,
         dt=dt,
         max_steps=args.timesteps + 10,
         use_sparse=args.sparse,
-        use_while_loop=True,
     )
+    result = engine.run_transient()
 
     print()
     print(f"Completed: {result.num_steps} timesteps")

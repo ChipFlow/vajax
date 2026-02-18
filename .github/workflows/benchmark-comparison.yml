@@ -15,8 +15,26 @@ env:
   JAX_COMPILATION_CACHE_DIR: /tmp/jax-xla-cache
 
 jobs:
-  benchmark-comparison:
+  benchmark:
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: standard
+            benchmarks: "rc,graetz,mul,ring,tb_dp"
+            # Must be >= 1M for rc/graetz (fixed timestep, step=maxstep=1u)
+            max_steps: 1100000
+            run_tests: true
+            timeout: 60
+          - name: c6288
+            benchmarks: "c6288"
+            # c6288 has max 1000 steps (t_stop=2ns, dt=2ps)
+            max_steps: 2000
+            run_tests: false
+            timeout: 30
+    name: benchmark (${{ matrix.name }})
+    timeout-minutes: ${{ matrix.timeout }}
     steps:
       - name: Checkout with submodules
         uses: actions/checkout@v4
@@ -80,8 +98,9 @@ jobs:
         uses: actions/cache@v4
         with:
           path: /tmp/jax-xla-cache
-          key: xla-cache-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('pyproject.toml') }}
+          key: xla-cache-${{ runner.os }}-${{ runner.arch }}-${{ matrix.name }}-${{ hashFiles('pyproject.toml') }}
           restore-keys: |
+            xla-cache-${{ runner.os }}-${{ runner.arch }}-${{ matrix.name }}-
             xla-cache-${{ runner.os }}-${{ runner.arch }}-
 
       - name: Build openvaf-py
@@ -102,6 +121,7 @@ jobs:
         run: uv sync --extra dev
 
       - name: Run JAX-SPICE tests
+        if: matrix.run_tests
         env:
           JAX_PLATFORMS: cpu
         run: uv run pytest tests/test_vacask_suite.py tests/test_vacask_jax.py -v --tb=short
@@ -165,10 +185,11 @@ jobs:
           echo "=== ccache stats ==="
           ccache -s
 
-      # Run automated VACASK result comparison tests
+      # Run automated VACASK result comparison tests (standard benchmarks only)
       # These tests compare simulation waveforms between JAX-SPICE and VACASK
       # Tests marked with xfail are expected to fail and won't break CI
       - name: Run VACASK result comparison tests
+        if: matrix.run_tests
         timeout-minutes: 90
         env:
           JAX_PLATFORMS: cpu
@@ -193,7 +214,7 @@ jobs:
 
       # Summarize XLA compilation times for CI debugging
       - name: Summarize XLA compilation times
-        if: always()
+        if: always() && matrix.run_tests
         run: |
           echo "=== XLA Compilation Summary ==="
           echo "Top 20 slowest XLA compilations:"
@@ -204,6 +225,23 @@ jobs:
           echo "Total compilations: $(grep -c "Finished XLA compilation" /tmp/vacask-result-tests.log 2>/dev/null || echo 0)"
           echo "Cache hits: $(grep -c "Persistent compilation cache hit" /tmp/vacask-result-tests.log 2>/dev/null || echo 0)"
           echo "Cache misses: $(grep -c "PERSISTENT COMPILATION CACHE MISS" /tmp/vacask-result-tests.log 2>/dev/null || echo 0)"
+
+      # Run benchmark performance comparison
+      - name: Run benchmark performance comparison
+        env:
+          JAX_PLATFORMS: cpu
+          JAX_ENABLE_X64: "1"
+          JAX_SPICE_NO_PROGRESS: "1"
+          JAX_LOG_COMPILES: "1"
+          JAX_EXPLAIN_CACHE_MISSES: "1"
+        run: |
+          echo "Running JAX-SPICE vs VACASK comparison (${{ matrix.name }})..."
+          echo "Benchmarks: ${{ matrix.benchmarks }}, max_steps: ${{ matrix.max_steps }}"
+          uv run python scripts/compare_vacask.py \
+            --benchmark ${{ matrix.benchmarks }} \
+            --max-steps ${{ matrix.max_steps }} \
+            --use-scan \
+            --use-sparse 2>&1 | tee /tmp/benchmark-comparison.log || true
 
       - name: Check for JIT recompilation
         if: always()
@@ -231,91 +269,62 @@ jobs:
           fi
 
       # Report XLA compilation cache status
-      # Cache is keyed by OS-arch-pyproject hash for binary compatibility
       - name: Report XLA cache status
+        if: always()
         env:
           JAX_PLATFORMS: cpu
           JAX_ENABLE_X64: "1"
         run: |
           echo "=== XLA Compilation Cache Status ==="
           echo "Cache directory: ${JAX_COMPILATION_CACHE_DIR}"
-          echo "Cache key: xla-cache-${{ runner.os }}-${{ runner.arch }}-<pyproject-hash>"
 
           if [ -d "${JAX_COMPILATION_CACHE_DIR}" ]; then
             CACHE_SIZE=$(du -sh "${JAX_COMPILATION_CACHE_DIR}" 2>/dev/null | cut -f1 || echo "empty")
             CACHE_FILES=$(find "${JAX_COMPILATION_CACHE_DIR}" -type f 2>/dev/null | wc -l || echo 0)
             echo "Cache size: ${CACHE_SIZE}"
             echo "Cached artifacts: ${CACHE_FILES}"
-            echo "CACHE_SIZE=${CACHE_SIZE}" >> /tmp/cache-metrics.env
-            echo "CACHE_FILES=${CACHE_FILES}" >> /tmp/cache-metrics.env
-
-            # List largest cached artifacts
-            echo ""
-            echo "Largest cached artifacts:"
-            find "${JAX_COMPILATION_CACHE_DIR}" -type f -exec du -h {} \; 2>/dev/null | sort -rh | head -5 || true
           else
             echo "Cache directory not found (first run or cache miss)"
-            echo "CACHE_SIZE=0" >> /tmp/cache-metrics.env
-            echo "CACHE_FILES=0" >> /tmp/cache-metrics.env
           fi
-
-      # Run benchmark performance comparison
-      # NOTE: VACASK benchmarks require OSDI device files compiled by openvaf-r
-      # This currently crashes on Linux/LLVM18, so VACASK results may not be available
-      - name: Run benchmark performance comparison
-        env:
-          JAX_PLATFORMS: cpu
-          JAX_ENABLE_X64: "1"
-          JAX_SPICE_NO_PROGRESS: "1"
-        timeout-minutes: 30
-        run: |
-          echo "Running JAX-SPICE vs VACASK comparison..."
-          # Benchmarks are auto-discovered from jax_spice.benchmarks.registry
-          # Includes: rc, graetz, mul, ring, c6288, tb_dp (if available)
-          uv run python scripts/compare_vacask.py \
-            --max-steps 200 \
-            --use-scan \
-            --use-sparse 2>&1 | tee /tmp/benchmark-comparison.log || true
 
       # Generate comparison summary for GitHub step output
       - name: Generate comparison summary
+        if: always()
         run: |
           {
-            echo "## Benchmark Comparison: JAX-SPICE vs VACASK"
+            echo "## Benchmark Comparison: ${{ matrix.name }}"
             echo ""
             echo "### Environment"
             echo "- **Platform**: CPU (GitHub Actions runner)"
             echo "- **JAX Backend**: cpu"
             echo "- **Mode**: lax.scan (JIT-compiled)"
-            echo "- **Steps**: 200"
+            echo "- **Benchmarks**: ${{ matrix.benchmarks }}"
+            echo "- **Max steps**: ${{ matrix.max_steps }}"
             echo ""
 
-            # Report VACASK result comparison tests
-            echo "### Result Accuracy Tests"
-            echo ""
+            # Report VACASK result comparison tests (standard only)
             if [ -f "/tmp/vacask-result-tests.log" ]; then
+              echo "### Result Accuracy Tests"
+              echo ""
               echo "| Benchmark | Status | Details |"
               echo "|-----------|--------|---------|"
 
               # Extract test results for all benchmarks found in the log
               grep -oP 'test_transient_matches_vacask\[\K[^\]]+' /tmp/vacask-result-tests.log | sort -u | while read -r bench; do
                 if grep -q "test_transient_matches_vacask\[${bench}\].*PASSED" /tmp/vacask-result-tests.log; then
-                  echo "| ${bench} | ✅ PASSED | Waveform matches VACASK |"
+                  echo "| ${bench} | PASSED | Waveform matches VACASK |"
                 elif grep -q "test_transient_matches_vacask\[${bench}\].*XFAIL" /tmp/vacask-result-tests.log; then
                   reason=$(grep "test_transient_matches_vacask\[${bench}\]" /tmp/vacask-result-tests.log | head -1 | sed 's/.*reason=//' || echo "Expected failure")
-                  echo "| ${bench} | ⚠️ XFAIL | ${reason} |"
+                  echo "| ${bench} | XFAIL | ${reason} |"
                 elif grep -q "test_transient_matches_vacask\[${bench}\].*SKIPPED" /tmp/vacask-result-tests.log; then
-                  echo "| ${bench} | ⏭️ SKIPPED | VACASK binary not available |"
+                  echo "| ${bench} | SKIPPED | VACASK binary not available |"
                 elif grep -q "test_transient_matches_vacask\[${bench}\].*FAILED" /tmp/vacask-result-tests.log; then
-                  echo "| ${bench} | ❌ FAILED | Unexpected failure |"
+                  echo "| ${bench} | FAILED | Unexpected failure |"
                 fi
               done
 
               echo ""
               echo "_Tests marked XFAIL are known limitations being worked on._"
-              echo ""
-            else
-              echo "**Warning**: Result comparison tests log not found"
               echo ""
             fi
 
@@ -323,12 +332,12 @@ jobs:
             if [ -f "/tmp/benchmark-comparison.log" ]; then
               # Check if VACASK was available and working
               if grep -q "VACASK binary: NOT FOUND" /tmp/benchmark-comparison.log; then
-                echo "### ⚠️ VACASK Binary Not Found"
+                echo "### VACASK Binary Not Found"
                 echo ""
                 echo "VACASK simulator binary was not built. Check the Build VACASK step."
                 echo ""
               elif grep -q "\.osdi' not found" /tmp/benchmark-comparison.log; then
-                echo "### ⚠️ VACASK OSDI Files Missing"
+                echo "### VACASK OSDI Files Missing"
                 echo ""
                 echo "VACASK binary exists but OSDI device files are missing."
                 echo "openvaf-r OSDI compilation fails on Linux/LLVM18 (known upstream issue)."
@@ -370,28 +379,13 @@ jobs:
             else
               echo "**Error**: Benchmark comparison log not found"
             fi
-
-            # XLA Cache status
-            if [ -f "/tmp/cache-metrics.env" ]; then
-              source /tmp/cache-metrics.env
-              echo ""
-              echo "### XLA Compilation Cache"
-              echo ""
-              echo "| Metric | Value |"
-              echo "|--------|-------|"
-              echo "| Cache size | ${CACHE_SIZE:-N/A} |"
-              echo "| Cached artifacts | ${CACHE_FILES:-N/A} |"
-              echo "| Cache key | \`xla-cache-${{ runner.os }}-${{ runner.arch }}-...\` |"
-              echo ""
-              echo "_Cache is persisted between runs for faster compilation._"
-            fi
           } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Upload benchmark logs
         uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: benchmark-logs
+          name: benchmark-logs-${{ matrix.name }}
           path: |
             /tmp/benchmark-comparison.log
             /tmp/vacask-result-tests.log

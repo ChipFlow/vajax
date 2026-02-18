@@ -315,6 +315,9 @@ class CircuitEngine:
         # in the OpenVAF JAX codegen, ensuring NR consistency when limiting is active.
         self.use_device_limiting: bool = True
 
+        # Prepared state for run_transient()
+        self._prepared = False
+
         # Unified simulation options (replaces scattered analysis_params)
         self.options = SimulationOptions()
 
@@ -347,9 +350,10 @@ class CircuitEngine:
         if hasattr(self, "_cached_solver_key"):
             del self._cached_solver_key
 
-        # Clear transient setup cache
+        # Clear transient setup cache and prepared state
         self._transient_setup_cache = None
         self._transient_setup_key = None
+        self._prepared = False
 
         # Clear JAX compilation caches
         jax.clear_caches()
@@ -401,6 +405,7 @@ class CircuitEngine:
         # Clear instance-specific caches when re-parsing (circuit may have changed)
         self._transient_setup_cache = None
         self._transient_setup_key = None
+        self._prepared = False
         self._model_params_cache.clear()
         self._device_type_cache.clear()
         # Note: _SPICE_NUMBER_CACHE is module-level and not cleared on re-parse
@@ -739,141 +744,97 @@ class CircuitEngine:
         """Build time-varying source function from device parameters."""
         return build_source_fn(self.devices, self.parse_spice_number)
 
-    @profile
-    def run_transient(
+    def prepare(
         self,
+        *,
         t_stop: Optional[float] = None,
         dt: Optional[float] = None,
-        max_steps: int = 1000000,
+        max_steps: Optional[int] = None,
         use_sparse: Optional[bool] = None,
         backend: Optional[str] = None,
-        use_scan: bool = False,
-        use_while_loop: bool = True,
-        profile_config: Optional["ProfileConfig"] = None,
         temperature: float = DEFAULT_TEMPERATURE_K,
         adaptive_config: Optional["AdaptiveConfig"] = None,
         checkpoint_interval: Optional[int] = None,
-    ) -> TransientResult:
-        """Run transient analysis using full Modified Nodal Analysis.
+    ) -> None:
+        """Prepare for transient analysis by configuring all parameters.
 
-        All computation is JIT-compiled. Automatically uses sparse matrices
-        for large circuits (>1000 nodes).
+        Reads t_stop, dt from netlist analysis params if not overridden.
+        Auto-computes max_steps with 10% headroom for LTE timestep reductions.
+        Builds and caches the FullMNAStrategy for JIT reuse.
 
-        Uses full MNA with explicit branch currents for voltage sources, providing:
-        - Better numerical conditioning (no G=1e12 high-G approximation)
-        - More accurate current extraction (branch currents are primary unknowns)
-        - Smoother dI/dt transitions
+        Call this once before run_transient(). If run_transient() is called
+        without prepare(), it will auto-prepare from netlist defaults.
 
         Args:
-            t_stop: Stop time (default: from analysis params or 1ms)
-            dt: Time step (default: from analysis params or 1µs). For adaptive mode,
-                this is the initial timestep which will be adjusted automatically.
-            max_steps: Maximum number of time steps (default: 1M)
-            use_sparse: Force sparse (True) or dense (False) solver. If None, auto-detect.
+            t_stop: Stop time (default: from netlist analysis params)
+            dt: Time step (default: from netlist analysis params). For adaptive
+                mode, this is the initial timestep.
+            max_steps: Maximum time steps. If None, auto-computed as
+                ``int(t_stop / dt * 1.1) + 10`` (10% headroom for LTE).
+            use_sparse: Force sparse (True) or dense (False) solver.
+                If None, defaults to False (dense).
             backend: 'gpu', 'cpu', or None (auto-select based on circuit size).
-                     For circuits >500 nodes with GPU available, uses GPU acceleration.
-            use_scan: DEPRECATED - ignored
-            use_while_loop: DEPRECATED - ignored
-            profile_config: If provided, profile just the core simulation (not setup)
-            temperature: Simulation temperature in Kelvin (default: 300.15K = 27°C)
-            adaptive_config: Configuration for adaptive timestep control. If None,
-                             uses default AdaptiveConfig with LTE-based timestep adjustment.
-            checkpoint_interval: If set, use GPU memory checkpointing with this many
-                steps per buffer. Results are periodically copied to CPU to avoid
-                GPU OOM on large circuits. Recommended for circuits with many nodes
-                (>1000) and long simulations (>10000 steps). Example: 10000.
-
-        Returns:
-            TransientResult with times, voltages, and stats
+            temperature: Simulation temperature in Kelvin (default: 300.15K).
+            adaptive_config: Configuration for adaptive timestep control.
+                If None, builds from netlist options.
+            checkpoint_interval: If set, use GPU memory checkpointing with
+                this many steps per buffer.
         """
+        from jax_spice.analysis.gpu_backend import select_backend
+        from jax_spice.analysis.transient import AdaptiveConfig, FullMNAStrategy
+
         # Update simulation temperature if changed (invalidates cached static inputs)
         if temperature != self._simulation_temperature:
             self._simulation_temperature = temperature
-            # Sync options.temp (Celsius) from internal Kelvin representation
             self.options.temp = temperature - 273.15
             self._transient_setup_cache = None
             self._transient_setup_key = None
             logger.info(f"Temperature changed to {temperature}K ({temperature - 273.15:.1f}°C)")
 
-        # Emit deprecation warnings for ignored parameters
-        if use_scan:
-            warnings.warn(
-                "use_scan parameter is deprecated and ignored. "
-                "Use adaptive_config for timestep control.",
-                DeprecationWarning,
-                stacklevel=2,
-            )
-        if use_while_loop is not True:  # Only warn if explicitly set to False
-            warnings.warn(
-                "use_while_loop parameter is deprecated and ignored. "
-                "Use adaptive_config for timestep control.",
-                DeprecationWarning,
-                stacklevel=2,
-            )
-
-        from jax_spice.analysis.gpu_backend import select_backend
-
+        # Read from netlist if not overridden
         if t_stop is None:
             t_stop = self.analysis_params.get("stop", 1e-3)
         if dt is None:
             dt = self.analysis_params.get("step", 1e-6)
 
-        # Limit number of steps if max_steps is specified
-        num_steps = int(t_stop / dt)
-        if num_steps > max_steps:
-            dt = t_stop / max_steps
-            logger.info(f"Limiting to {max_steps} steps, dt={dt:.2e}s")
+        # Auto-compute max_steps with 10% headroom for LTE timestep reductions
+        if max_steps is None:
+            max_steps = int(t_stop / dt * 1.1) + 10
+        else:
+            # Explicit max_steps: adjust dt if needed to fit within budget
+            num_steps = int(t_stop / dt)
+            if num_steps > max_steps:
+                dt = t_stop / max_steps
+                logger.info(f"Limiting to {max_steps} steps, dt={dt:.2e}s")
 
-        # Select backend if not specified
+        # Select backend
+        if use_sparse is None:
+            use_sparse = False
         if backend is None or backend == "auto":
             backend = select_backend(self.num_nodes)
 
-        logger.info(f"Running transient: t_stop={t_stop:.2e}s, dt={dt:.2e}s, backend={backend}")
-
-        # All non-source devices use OpenVAF
-        if not self._has_openvaf_devices:
-            # Only vsource/isource - trivial circuit
-            logger.warning("No OpenVAF devices found - circuit only has sources")
-
-        # Default to dense solver - sparse must be explicitly requested
-        if use_sparse is None:
-            use_sparse = False
-
-        from jax_spice.analysis.transient import AdaptiveConfig, FullMNAStrategy, extract_results
-
-        # Build config from analysis_params or use provided config
+        # Build AdaptiveConfig from netlist options if not provided
         if adaptive_config is None:
             kwargs = {}
 
-            # LTE options
             if "tran_lteratio" in self.analysis_params:
                 kwargs["lte_ratio"] = float(self.analysis_params["tran_lteratio"])
             if "tran_redofactor" in self.analysis_params:
                 kwargs["redo_factor"] = float(self.analysis_params["tran_redofactor"])
-
-            # NR options
             if "nr_convtol" in self.analysis_params:
                 kwargs["nr_convtol"] = float(self.analysis_params["nr_convtol"])
-
-            # GSHUNT options
             if "tran_gshunt" in self.analysis_params:
                 kwargs["gshunt_init"] = float(self.analysis_params["tran_gshunt"])
-
-            # Tolerance options
             if "reltol" in self.analysis_params:
                 kwargs["reltol"] = float(self.analysis_params["reltol"])
             if "abstol" in self.analysis_params:
                 kwargs["abstol"] = float(self.analysis_params["abstol"])
-
-            # Timestep control options
             if "tran_fs" in self.analysis_params:
                 kwargs["tran_fs"] = float(self.analysis_params["tran_fs"])
             if "tran_minpts" in self.analysis_params:
                 kwargs["tran_minpts"] = int(self.analysis_params["tran_minpts"])
             if "maxstep" in self.analysis_params:
                 kwargs["max_dt"] = float(self.analysis_params["maxstep"])
-
-            # Integration method
             if "tran_method" in self.analysis_params:
                 kwargs["integration_method"] = self.analysis_params["tran_method"]
 
@@ -882,8 +843,6 @@ class CircuitEngine:
             config = adaptive_config
 
         # Cache strategy instance for JIT reuse across calls
-        # Key includes all parameters that affect strategy construction
-        # max_steps is now part of the key since it affects JIT compilation
         cache_key = (
             use_sparse,
             backend,
@@ -907,7 +866,6 @@ class CircuitEngine:
             self._full_mna_strategy_cache = {}
 
         if cache_key not in self._full_mna_strategy_cache:
-            # LRU eviction: limit cache size to prevent unbounded growth
             MAX_STRATEGY_CACHE_SIZE = 8
             if len(self._full_mna_strategy_cache) >= MAX_STRATEGY_CACHE_SIZE:
                 oldest_key = next(iter(self._full_mna_strategy_cache))
@@ -926,6 +884,48 @@ class CircuitEngine:
         else:
             strategy = self._full_mna_strategy_cache[cache_key]
             logger.debug("Reusing cached FullMNAStrategy")
+
+        # Store prepared state
+        self._prepared_t_stop = t_stop
+        self._prepared_dt = dt
+        self._prepared_strategy = strategy
+        self._prepared_config = config
+        self._prepared_checkpoint_interval = checkpoint_interval
+        self._prepared = True
+
+        logger.info(
+            f"Prepared: t_stop={t_stop:.2e}s, dt={dt:.2e}s, "
+            f"max_steps={max_steps}, backend={backend}"
+        )
+
+    @profile
+    def run_transient(self) -> TransientResult:
+        """Run transient analysis. Call prepare() first, or will auto-prepare from netlist.
+
+        All computation is JIT-compiled. Uses full MNA with explicit branch
+        currents for voltage sources, providing:
+        - Better numerical conditioning (no G=1e12 high-G approximation)
+        - More accurate current extraction (branch currents are primary unknowns)
+        - Smoother dI/dt transitions
+
+        Returns:
+            TransientResult with times, voltages, and stats
+        """
+        if not getattr(self, "_prepared", False):
+            self.prepare()
+
+        # All non-source devices use OpenVAF
+        if not self._has_openvaf_devices:
+            logger.warning("No OpenVAF devices found - circuit only has sources")
+
+        from jax_spice.analysis.transient import extract_results
+
+        strategy = self._prepared_strategy
+        t_stop = self._prepared_t_stop
+        dt = self._prepared_dt
+        checkpoint_interval = self._prepared_checkpoint_interval
+
+        logger.info(f"Running transient: t_stop={t_stop:.2e}s, dt={dt:.2e}s")
 
         times_full, V_out, stats = strategy.run(t_stop, dt, checkpoint_interval)
 
@@ -1954,7 +1954,7 @@ class CircuitEngine:
     # =========================================================================
 
     def run_corners(
-        self, corners: List["CornerConfig"], analysis: str = "transient", **analysis_kwargs
+        self, corners: List["CornerConfig"], analysis: str = "transient", **prepare_kwargs
     ) -> "CornerSweepResult":
         """Run simulation across multiple PVT corners.
 
@@ -1964,8 +1964,8 @@ class CircuitEngine:
         Args:
             corners: List of CornerConfig specifying PVT conditions
             analysis: Analysis type ('transient', 'dc', 'ac')
-            **analysis_kwargs: Arguments passed to the analysis method
-                (e.g., t_stop, dt for transient)
+            **prepare_kwargs: Arguments passed to prepare() for transient
+                (e.g., t_stop, dt, use_sparse)
 
         Returns:
             CornerSweepResult containing results for all corners
@@ -1977,7 +1977,8 @@ class CircuitEngine:
                 processes=['FF', 'TT', 'SS'],
                 temperatures=['cold', 'room', 'hot']
             )
-            results = engine.run_corners(corners, t_stop=1e-3, dt=1e-6)
+            engine.prepare(t_stop=1e-3, dt=1e-6)
+            results = engine.run_corners(corners)
 
             for r in results.converged_results():
                 print(f"{r.corner.name}: max voltage = {r.result.voltages['out'].max()}")
@@ -2000,24 +2001,18 @@ class CircuitEngine:
                 apply_process_corner(self.devices, corner.process)
                 apply_voltage_corner(self.devices, corner.voltage)
 
-                # Set temperature (this invalidates cache)
-                if corner.temperature != self._simulation_temperature:
-                    self._simulation_temperature = corner.temperature
-                    self.options.temp = corner.temperature - 273.15
-                    self._transient_setup_cache = None
-                    self._transient_setup_key = None
-
                 logger.info(
                     f"Running corner: {corner.name} (T={corner.temperature - 273.15:.1f}°C)"
                 )
 
                 # Run analysis
                 if analysis == "transient":
-                    result = self.run_transient(temperature=corner.temperature, **analysis_kwargs)
+                    self.prepare(temperature=corner.temperature, **prepare_kwargs)
+                    result = self.run_transient()
                 elif analysis == "ac":
-                    result = self.run_ac(temperature=corner.temperature, **analysis_kwargs)
+                    result = self.run_ac(temperature=corner.temperature, **prepare_kwargs)
                 elif analysis == "noise":
-                    result = self.run_noise(temperature=corner.temperature, **analysis_kwargs)
+                    result = self.run_noise(temperature=corner.temperature, **prepare_kwargs)
                 else:
                     raise ValueError(f"Unsupported analysis type: {analysis}")
 

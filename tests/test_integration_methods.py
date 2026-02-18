@@ -263,7 +263,8 @@ endc
                 )
 
                 # Run transient analysis with larger timestep
-                result = engine.run_transient(t_stop=10e-6, dt=100e-9)
+                engine.prepare(t_stop=10e-6, dt=100e-9)
+                result = engine.run_transient()
                 results[method] = result.voltages.get("2", result.voltages.get(2))
             finally:
                 os.unlink(sim_path)

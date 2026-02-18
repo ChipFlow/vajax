@@ -164,11 +164,12 @@ def run_xyce_test(
             max_time = float(jnp.max(time_col))
             max_steps = int(max_time / dt) + 100
 
-            result = engine.run_transient(
+            engine.prepare(
                 t_stop=max_time,
                 dt=dt,
                 max_steps=max_steps,
             )
+            result = engine.run_transient()
         except Exception as e:
             pytest.skip(f"Simulation failed: {e}")
 
