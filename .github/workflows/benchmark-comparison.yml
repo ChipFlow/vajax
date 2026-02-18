@@ -28,7 +28,7 @@ jobs:
           - name: c6288
             benchmarks: "c6288"
             run_tests: false
-            timeout: 30
+            timeout: 60
     name: benchmark (${{ matrix.name }})
     timeout-minutes: ${{ matrix.timeout }}
     steps:
