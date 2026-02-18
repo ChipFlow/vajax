@@ -8,13 +8,13 @@ This module provides SSA-specific analysis including:
 
 from dataclasses import dataclass
 from enum import Enum
-from typing import Dict, FrozenSet, List, Optional, Set, Tuple
+
+# Import SCCP for type hints only (avoid circular import at runtime)
+from typing import TYPE_CHECKING, Dict, FrozenSet, List, Optional, Set, Tuple
 
 from .cfg import CFGAnalyzer, LoopInfo
 from .types import V_F_ZERO, BlockId, MIRFunction, MIRInstruction, PhiOperand, ValueId
 
-# Import SCCP for type hints only (avoid circular import at runtime)
-from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from .constprop import SCCP
 

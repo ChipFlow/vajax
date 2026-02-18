@@ -14,11 +14,19 @@ Reference: Wegman & Zadeck, "Constant Propagation with Conditional Branches"
 
 from dataclasses import dataclass
 from enum import Enum, auto
-from typing import Any, Dict, List, Optional, Set, Tuple, Union
+from typing import Any, Dict, List, Optional, Set, Tuple
 
 from .types import (
-    Block, BlockId, MIRFunction, MIRInstruction, PhiOperand, ValueId,
-    V_FALSE, V_TRUE, V_F_ZERO, V_ZERO, V_ONE, V_F_ONE, V_F_N_ONE,
+    V_F_N_ONE,
+    V_F_ONE,
+    V_F_ZERO,
+    V_FALSE,
+    V_ONE,
+    V_TRUE,
+    V_ZERO,
+    MIRFunction,
+    MIRInstruction,
+    ValueId,
 )
 
 

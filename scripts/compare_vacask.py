@@ -283,7 +283,6 @@ def run_jax_spice(
 
     # Create benchmark-specific profile config if profiling is enabled
     full_profile_config = None
-    sim_profile_config = None
     if profile_config:
         base_dir = Path(profile_config.trace_dir) / f"benchmark_{config.name}"
         if profile_full:
@@ -292,16 +291,6 @@ def run_jax_spice(
                 jax=profile_config.jax,
                 cuda=profile_config.cuda,
                 trace_dir=str(base_dir / "full_run"),
-                create_perfetto_link=profile_config.create_perfetto_link,
-            )
-        else:
-            # Profile just the simulation portion
-            # Use mode-specific directory name
-            sim_mode = "lax_scan" if use_scan else "python_loop"
-            sim_profile_config = ProfileConfig(
-                jax=profile_config.jax,
-                cuda=profile_config.cuda,
-                trace_dir=str(base_dir / f"{sim_mode}_simulation"),
                 create_perfetto_link=profile_config.create_perfetto_link,
             )
 
@@ -476,7 +465,7 @@ def main():
     print(f"Mode: {'lax.scan' if args.use_scan else 'Python loop'}")
     print(f"Solver: {'sparse' if args.use_sparse else 'dense'}")
     print(f"Backend: {'GPU (forced)' if args.force_gpu else 'auto-select'}")
-    print(f"Steps: full netlist duration")
+    print("Steps: full netlist duration")
 
     # Handle deprecated --profile flag
     profile_mode = args.profile_mode

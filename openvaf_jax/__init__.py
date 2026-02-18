@@ -392,7 +392,7 @@ class OpenVAFToJAX:
         # Show aliases if any
         aliases_found = [(p["name"], p["aliases"]) for p in params if p["aliases"]]
         if aliases_found:
-            print(f"\nAliases:")
+            print("\nAliases:")
             for name, aliases in aliases_found:
                 print(f"  {name}: {', '.join(aliases)}")
 
@@ -965,7 +965,7 @@ class OpenVAFToJAX:
                 "computed_constants": max(0, computed_constants),
             }
             if debug and sccp_stats:
-                print(f"\n=== SCCP Results ===")
+                print("\n=== SCCP Results ===")
                 print(
                     f"  Blocks: {sccp_stats['reachable_blocks']}/{sccp_stats['total_blocks']} reachable, {sccp_stats['dead_blocks']} dead"
                 )

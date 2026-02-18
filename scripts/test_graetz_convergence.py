@@ -50,7 +50,6 @@ try:
 
     # Check for common-mode drift
     if "inp" in result.voltages and "inn" in result.voltages:
-
         cm = (result.voltages["inp"] + result.voltages["inn"]) / 2
         print(f"  CM range: [{float(cm.min()):.4f}, {float(cm.max()):.4f}]")
 

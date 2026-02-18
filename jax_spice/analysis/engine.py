@@ -83,7 +83,7 @@ from jax_spice.analysis.sources import (
 )
 from jax_spice.config import DEFAULT_TEMPERATURE_K
 from jax_spice.netlist.parser import VACASKParser
-from jax_spice.profiling import ProfileConfig, profile
+from jax_spice.profiling import profile
 
 # Try to import OpenVAF support
 # openvaf_jax is at top level, openvaf_py is built from openvaf_jax/openvaf_py

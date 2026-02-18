@@ -9,6 +9,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent.parent.parent))
 
 # Configure JAX float64 precision directly (avoid full jax_spice import)
 import jax
+
 jax.config.update("jax_enable_x64", True)
 
 from typing import Dict, List, Tuple

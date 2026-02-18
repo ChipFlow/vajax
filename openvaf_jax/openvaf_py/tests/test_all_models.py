@@ -6,7 +6,7 @@ can be compiled and evaluated using their default parameters from the VA source.
 
 import numpy as np
 import pytest
-from conftest import INTEGRATION_MODELS, INTEGRATION_PATH, CompiledModel
+from conftest import INTEGRATION_MODELS, INTEGRATION_PATH
 
 # Models with known codegen issues (undefined SSA variables in complex control flow)
 # Fixed in commit a887f5d by pre-initializing output variables
