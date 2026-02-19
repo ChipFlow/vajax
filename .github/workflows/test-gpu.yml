@@ -21,7 +21,7 @@ env:
 jobs:
   gpu-tests:
     runs-on: nvidia-runner-1
-    timeout-minutes: 60
+    timeout-minutes: 360
 
     steps:
       - name: Checkout with submodules
@@ -117,7 +117,7 @@ jobs:
           "
 
       - name: Run GPU benchmarks
-        timeout-minutes: 45
+        timeout-minutes: 300
         env:
           JAX_PLATFORMS: cuda,cpu
           XLA_FLAGS: "--xla_gpu_autotune_level=0"

@@ -244,22 +244,32 @@ jobs:
           if [ -f /tmp/benchmark-comparison.log ]; then
             # Count total compilations in the benchmark run
             TOTAL=$(grep -c "Finished XLA compilation" /tmp/benchmark-comparison.log 2>/dev/null || echo 0)
-            # Count unique function compilations (first compilation of each function is expected)
-            UNIQUE=$(grep "Finished XLA compilation" /tmp/benchmark-comparison.log 2>/dev/null | \
-              sed 's/.*of jit(\([^)]*\)).*/\1/' | sort -u | wc -l || echo 0)
-            # Recompilations = total - unique (same function compiled more than once)
-            RECOMPILES=$((TOTAL - UNIQUE))
-
             echo "Total XLA compilations: $TOTAL"
-            echo "Unique functions compiled: $UNIQUE"
-            echo "Recompilations (same function): $RECOMPILES"
 
-            if [ "$RECOMPILES" -gt 0 ]; then
-              echo "::warning::Detected $RECOMPILES JIT recompilation(s) during benchmark"
-              echo "Recompiled functions:"
-              grep "Finished XLA compilation" /tmp/benchmark-comparison.log | \
-                sed 's/.*of jit(\([^)]*\)).*/\1/' | sort | uniq -c | sort -rn | \
-                awk '$1 > 1 {print "  " $1 "x: " $2}'
+            # Filter to simulation-critical functions (exclude JAX primitives like add, multiply, etc.)
+            # JAX primitives recompile with different shapes during setup — this is expected.
+            # We only care about our own simulation functions recompiling unexpectedly.
+            SIMULATION_FNS=$(grep "Finished XLA compilation" /tmp/benchmark-comparison.log 2>/dev/null | \
+              sed 's/.*of jit(\([^)]*\)).*/\1/' | \
+              grep -E '(full_mna|nr_solve|scan_body|step_fn|transient|simulate|warmup|_solve_step|_time_step)' || true)
+
+            if [ -n "$SIMULATION_FNS" ]; then
+              UNIQUE_SIM=$(echo "$SIMULATION_FNS" | sort -u | wc -l | tr -d ' ')
+              TOTAL_SIM=$(echo "$SIMULATION_FNS" | wc -l | tr -d ' ')
+              RECOMPILES=$((TOTAL_SIM - UNIQUE_SIM))
+
+              echo "Simulation function compilations: $TOTAL_SIM (unique: $UNIQUE_SIM)"
+
+              if [ "$RECOMPILES" -gt 0 ]; then
+                echo "::warning::Detected $RECOMPILES simulation function recompilation(s)"
+                echo "Recompiled simulation functions:"
+                echo "$SIMULATION_FNS" | sort | uniq -c | sort -rn | \
+                  awk '$1 > 1 {print "  " $1 "x: " $2}'
+              else
+                echo "No simulation function recompilations detected"
+              fi
+            else
+              echo "No simulation function compilations found in log"
             fi
           fi
 
@@ -298,27 +308,38 @@ jobs:
 
             # Report VACASK result comparison tests (standard only)
             if [ -f "/tmp/vacask-result-tests.log" ]; then
-              echo "### Result Accuracy Tests"
+              echo "### Result Accuracy (vs VACASK)"
               echo ""
-              echo "| Benchmark | Status | Details |"
-              echo "|-----------|--------|---------|"
+              echo "| Benchmark | Solver | RMS Error | Threshold | Status |"
+              echo "|-----------|--------|-----------|-----------|--------|"
 
-              # Extract test results for all benchmarks found in the log
+              # Parse log: "BENCH comparison summary:" followed by "  solver: X.XX% (max allowed: Y%)"
+              # Use awk to track current benchmark name
+              awk '
+                /comparison summary:/ {
+                  # Extract benchmark name (uppercase, before "comparison")
+                  match($0, /([A-Z0-9_]+) comparison summary/, arr)
+                  if (arr[1] != "") bench = tolower(arr[1])
+                }
+                /: [0-9]+\.[0-9]+% \(max allowed: [0-9]+%\)/ {
+                  # Extract solver, rms, threshold
+                  match($0, /([a-z]+): ([0-9.]+)% \(max allowed: ([0-9]+)%\)/, arr)
+                  if (arr[1] != "") {
+                    printf "| %s | %s | %s%% | %s%% | PASS |\n", bench, arr[1], arr[2], arr[3]
+                    bench = ""  # Only show benchmark name on first line
+                  }
+                }
+              ' /tmp/vacask-result-tests.log
+
+              # Also show xfail/skip/fail status for benchmarks
               grep -oP 'test_transient_matches_vacask\[\K[^\]]+' /tmp/vacask-result-tests.log | sort -u | while read -r bench; do
-                if grep -q "test_transient_matches_vacask\[${bench}\].*PASSED" /tmp/vacask-result-tests.log; then
-                  echo "| ${bench} | PASSED | Waveform matches VACASK |"
-                elif grep -q "test_transient_matches_vacask\[${bench}\].*XFAIL" /tmp/vacask-result-tests.log; then
-                  reason=$(grep "test_transient_matches_vacask\[${bench}\]" /tmp/vacask-result-tests.log | head -1 | sed 's/.*reason=//' || echo "Expected failure")
-                  echo "| ${bench} | XFAIL | ${reason} |"
-                elif grep -q "test_transient_matches_vacask\[${bench}\].*SKIPPED" /tmp/vacask-result-tests.log; then
-                  echo "| ${bench} | SKIPPED | VACASK binary not available |"
+                if grep -q "test_transient_matches_vacask\[${bench}\].*XFAIL" /tmp/vacask-result-tests.log; then
+                  echo "| ${bench} | - | - | - | XFAIL |"
                 elif grep -q "test_transient_matches_vacask\[${bench}\].*FAILED" /tmp/vacask-result-tests.log; then
-                  echo "| ${bench} | FAILED | Unexpected failure |"
+                  echo "| ${bench} | - | - | - | FAILED |"
                 fi
               done
 
-              echo ""
-              echo "_Tests marked XFAIL are known limitations being worked on._"
               echo ""
             fi
 

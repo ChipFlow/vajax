@@ -33,7 +33,7 @@ from jax_spice.benchmarks.registry import (
     BenchmarkInfo,
     get_benchmark,
 )
-from jax_spice.utils import find_vacask_binary, rawread
+from jax_spice.utils import compare_transient_waveforms, find_vacask_binary, rawread
 
 enable_performance_logging()
 
@@ -482,87 +482,8 @@ def run_vacask_simulation(vacask_bin: Path, info: BenchmarkInfo, t_stop: float, 
             raw_file.unlink()
 
 
-def find_rising_edge_time(
-    time, voltage, threshold: float, after_time: float = 0.0
-) -> Optional[float]:
-    """Find the time of the first rising edge through threshold after after_time."""
-    mask = time > after_time
-    t = time[mask]
-    v = voltage[mask]
-    if len(v) < 2:
-        return None
-    above = v > threshold
-    rising_indices = np.where(np.diff(above.astype(int)) == 1)[0]
-    if len(rising_indices) == 0:
-        return None
-    # Interpolate to find exact crossing time
-    idx = rising_indices[0]
-    t0, t1 = t[idx], t[idx + 1]
-    v0, v1 = v[idx], v[idx + 1]
-    if abs(v1 - v0) < 1e-12:
-        return t0
-    # Linear interpolation to threshold
-    t_cross = t0 + (threshold - v0) * (t1 - t0) / (v1 - v0)
-    return float(t_cross)
 
-
-def compare_waveforms(
-    vacask_time,
-    vacask_voltage,
-    jax_times,
-    jax_voltage,
-    align_on_rising_edge: bool = False,
-    align_threshold: float = 0.6,
-    align_after_time: float = 0.0,
-) -> dict:
-    """Compare two voltage waveforms.
-
-    Args:
-        vacask_time: Time array from VACASK
-        vacask_voltage: Voltage array from VACASK
-        jax_times: Time array from JAX-SPICE
-        jax_voltage: Voltage array from JAX-SPICE
-        align_on_rising_edge: If True, align waveforms on first rising edge before comparison
-        align_threshold: Voltage threshold for rising edge detection
-        align_after_time: Only consider edges after this time (to skip startup transients)
-    """
-    if len(jax_voltage) < 2 or len(vacask_voltage) < 2:
-        return {
-            "max_diff": float("inf"),
-            "rms_diff": float("inf"),
-            "rel_rms": float("inf"),
-            "v_range": 0,
-            "time_shift": 0.0,
-        }
-
-    time_shift = 0.0
-    if align_on_rising_edge:
-        # Find rising edge in both waveforms
-        vacask_edge = find_rising_edge_time(
-            vacask_time, vacask_voltage, align_threshold, align_after_time
-        )
-        jax_edge = find_rising_edge_time(jax_times, jax_voltage, align_threshold, align_after_time)
-
-        if vacask_edge is not None and jax_edge is not None:
-            time_shift = jax_edge - vacask_edge
-            # Shift JAX times to align with VACASK
-            jax_times_aligned = jax_times - time_shift
-        else:
-            jax_times_aligned = jax_times
-    else:
-        jax_times_aligned = jax_times
-
-    jax_interp = np.interp(vacask_time, jax_times_aligned, jax_voltage)
-    abs_diff = np.abs(jax_interp - vacask_voltage)
-
-    v_range = float(np.max(vacask_voltage) - np.min(vacask_voltage))
-    return {
-        "max_diff": float(np.max(abs_diff)),
-        "rms_diff": float(np.sqrt(np.mean(abs_diff**2))),
-        "rel_rms": float(np.sqrt(np.mean(abs_diff**2))) / max(v_range, 1e-12),
-        "v_range": v_range,
-        "time_shift": time_shift,
-    }
+# compare_waveforms and find_rising_edge_time are now in jax_spice.utils.waveform_compare
 
 
 def _compare_result_to_vacask(
@@ -594,7 +515,7 @@ def _compare_result_to_vacask(
         vacask_voltage = spec.node_transform(vacask_results["voltages"])
         jax_voltage = spec.node_transform({k: np.array(v) for k, v in result.voltages.items()})
 
-    comparison = compare_waveforms(
+    comparison = compare_transient_waveforms(
         vacask_time,
         vacask_voltage,
         np.array(result.times),

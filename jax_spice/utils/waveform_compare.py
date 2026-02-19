@@ -245,6 +245,104 @@ def compare_waveforms(
     )
 
 
+def find_rising_edge_time(
+    time: ArrayLike,
+    voltage: ArrayLike,
+    threshold: float,
+    after_time: float = 0.0,
+) -> Optional[float]:
+    """Find the time of the first rising edge through threshold.
+
+    Args:
+        time: Time array
+        voltage: Voltage array
+        threshold: Voltage threshold for edge detection
+        after_time: Only consider edges after this time
+
+    Returns:
+        Time of the rising edge crossing, or None if not found
+    """
+    mask = time > after_time
+    t = time[mask]
+    v = voltage[mask]
+    if len(v) < 2:
+        return None
+    above = v > threshold
+    rising_indices = np.where(np.diff(above.astype(int)) == 1)[0]
+    if len(rising_indices) == 0:
+        return None
+    # Interpolate to find exact crossing time
+    idx = rising_indices[0]
+    t0, t1 = t[idx], t[idx + 1]
+    v0, v1 = v[idx], v[idx + 1]
+    if abs(v1 - v0) < 1e-12:
+        return t0
+    # Linear interpolation to threshold
+    t_cross = t0 + (threshold - v0) * (t1 - t0) / (v1 - v0)
+    return float(t_cross)
+
+
+def compare_transient_waveforms(
+    ref_time: ArrayLike,
+    ref_voltage: ArrayLike,
+    sim_time: ArrayLike,
+    sim_voltage: ArrayLike,
+    align_on_rising_edge: bool = False,
+    align_threshold: float = 0.6,
+    align_after_time: float = 0.0,
+) -> dict:
+    """Compare two transient voltage waveforms with time-based interpolation.
+
+    Interpolates the simulation waveform onto the reference timebase using
+    np.interp. Optionally aligns waveforms by their first rising edge.
+
+    Args:
+        ref_time: Reference time array
+        ref_voltage: Reference voltage array
+        sim_time: Simulation time array
+        sim_voltage: Simulation voltage array
+        align_on_rising_edge: If True, align waveforms on first rising edge
+        align_threshold: Voltage threshold for rising edge detection
+        align_after_time: Only consider edges after this time
+
+    Returns:
+        Dict with keys: max_diff, rms_diff, rel_rms, v_range, time_shift
+    """
+    if len(sim_voltage) < 2 or len(ref_voltage) < 2:
+        return {
+            "max_diff": float("inf"),
+            "rms_diff": float("inf"),
+            "rel_rms": float("inf"),
+            "v_range": 0,
+            "time_shift": 0.0,
+        }
+
+    time_shift = 0.0
+    if align_on_rising_edge:
+        ref_edge = find_rising_edge_time(ref_time, ref_voltage, align_threshold, align_after_time)
+        sim_edge = find_rising_edge_time(sim_time, sim_voltage, align_threshold, align_after_time)
+
+        if ref_edge is not None and sim_edge is not None:
+            time_shift = sim_edge - ref_edge
+            sim_time_aligned = sim_time - time_shift
+        else:
+            sim_time_aligned = sim_time
+    else:
+        sim_time_aligned = sim_time
+
+    sim_interp = np.interp(ref_time, sim_time_aligned, sim_voltage)
+    abs_diff = np.abs(sim_interp - ref_voltage)
+
+    v_range = float(np.max(ref_voltage) - np.min(ref_voltage))
+    return {
+        "max_diff": float(np.max(abs_diff)),
+        "rms_diff": float(np.sqrt(np.mean(abs_diff**2))),
+        "rel_rms": float(np.sqrt(np.mean(abs_diff**2))) / max(v_range, 1e-12),
+        "v_range": v_range,
+        "time_shift": time_shift,
+    }
+
+
 def compare_transient(
     vacask_raw: RawFile,
     jaxspice_result: Dict[str, ArrayLike],
