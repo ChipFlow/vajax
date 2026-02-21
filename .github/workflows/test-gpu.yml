@@ -132,7 +132,6 @@ jobs:
             --force-gpu \
             --analyze \
             --profile-mode jax \
-            --profile-full \
             --profile-dir /tmp/jax-spice-traces 2>&1 | tee /tmp/benchmark_output.txt
           BENCHMARK_STATUS=${PIPESTATUS[0]}
           set -e
