@@ -563,18 +563,22 @@ class FullMNAStrategy(TransientStrategy):
         return V
 
     def warmup(self, dt: Optional[float] = None) -> float:
-        """Pre-compile the JIT function by running a minimal simulation.
+        """Pre-compile the JIT function with zero simulation steps.
 
-        This triggers JIT compilation so subsequent run() calls are fast.
-        Uses self.max_steps set at initialization.
+        Triggers JIT compilation by calling run() with t_stop=0. The
+        lax.while_loop body is traced and compiled by XLA regardless of
+        whether the loop condition is initially true, so setting t_stop=0
+        gives us full compilation with zero simulation overhead.
+
+        Previously warmup ran t_stop=dt which caused c6288 to burn through
+        all max_steps (26 min, 2215 rejections) due to LTE rejection cascades.
 
         Args:
             dt: Timestep to use. If None, uses 'step' from netlist.
 
         Returns:
-            Wall time for warmup (compilation + execution)
+            Wall time for warmup (JIT compilation only)
         """
-        # Use netlist step as default
         if dt is None:
             params = getattr(self.runner, "analysis_params", {})
             dt = params.get("step", 1e-12)
@@ -582,8 +586,10 @@ class FullMNAStrategy(TransientStrategy):
         logger.info(f"{self.name}: Starting warmup (max_steps={self.max_steps})")
 
         t_start = time_module.perf_counter()
-        # Run tiny simulation - just enough to trigger compilation
-        self.run(t_stop=dt, dt=dt)
+        # t_stop=0 means the while_loop condition (t < t_stop) is immediately
+        # false, so no simulation steps execute. JIT compilation still happens
+        # because XLA must trace the loop body to determine output shapes.
+        self.run(t_stop=0, dt=dt)
         wall_time = time_module.perf_counter() - t_start
 
         logger.info(f"{self.name}: Warmup complete in {wall_time:.2f}s")
