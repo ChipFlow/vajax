@@ -192,6 +192,33 @@ jobs:
             } >> "$GITHUB_STEP_SUMMARY"
           fi
 
+      - name: Capture LTE traces for solver comparison
+        timeout-minutes: 30
+        env:
+          JAX_PLATFORMS: cuda,cpu
+          XLA_FLAGS: "--xla_gpu_autotune_level=0"
+          XLA_PYTHON_CLIENT_PREALLOCATE: "false"
+          XLA_PYTHON_CLIENT_ALLOCATOR: platform
+          TF_CPP_MIN_LOG_LEVEL: "2"
+          JAX_SPICE_NO_PROGRESS: "1"
+        run: |
+          set +e
+          # Capture per-step LTE trace for ring benchmark on GPU (cuDSS)
+          uv run python scripts/compare_lte_solvers.py \
+            --benchmark ring --sparse \
+            --output /tmp/lte-traces/ring_cudss.json 2>&1 | tail -20
+          echo "Ring LTE trace exit status: $?"
+          set -e
+
+      - name: Upload LTE traces
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: lte-traces-${{ github.sha }}
+          path: /tmp/lte-traces/
+          if-no-files-found: ignore
+          retention-days: 30
+
       - name: Upload profiling traces
         if: always()
         uses: actions/upload-artifact@v4

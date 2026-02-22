@@ -1528,13 +1528,15 @@ def _make_full_mna_while_loop_fns(
                 residual,
                 can_pred,
                 lte_norm_val,
+                dt_lte_val,
                 lte_rej,
                 nr_rej,
                 accept,
+                converged_val,
             ):
                 t_ps = float(t_next_val) * 1e12
                 dt_ps = float(dt_val) * 1e12
-                float(dt_val / (dt_val / max(float(lte_norm_val), 1e-30)))  # Approximate
+                dt_lte_ps = float(dt_lte_val) * 1e12
                 if not can_pred:
                     lte_status = "Cannot estimate"
                 elif lte_rej:
@@ -1542,9 +1544,12 @@ def _make_full_mna_while_loop_fns(
                 else:
                     lte_status = f"LTE/tol={float(lte_norm_val):.2f}"
                 status = "REJECT" if not accept else "accept"
+                nr_status = "" if converged_val else " NR_FAIL"
                 print(
                     f"Step {int(step) + 1:3d}: t={t_ps:8.3f}ps dt={dt_ps:8.4f}ps "
-                    f"NR={int(nr_iters):2d} res={float(residual):.2e} {lte_status:<20} [{status}]"
+                    f"NR={int(nr_iters):2d} res={float(residual):.2e} "
+                    f"{lte_status:<20} dt_lte={dt_lte_ps:8.4f}ps "
+                    f"[{status}]{nr_status}"
                 )
 
             jax.debug.callback(
@@ -1556,9 +1561,11 @@ def _make_full_mna_while_loop_fns(
                 max_f,
                 can_predict,
                 lte_norm,
+                dt_lte,
                 lte_reject,
                 nr_reject,
                 accept_step,
+                converged,
             )
 
         # Compute new dt
