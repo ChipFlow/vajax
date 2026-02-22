@@ -129,18 +129,20 @@ def parse_debug_output(text: str) -> list[dict]:
             if "REJECT" in lte_info:
                 lte_reject = True
 
-        records.append({
-            "step": step,
-            "t_ps": t_ps,
-            "dt_ps": dt_ps,
-            "dt_lte_ps": dt_lte_ps,
-            "nr_iters": nr_iters,
-            "residual": residual,
-            "lte_norm": lte_norm,
-            "lte_reject": lte_reject,
-            "nr_failed": nr_failed,
-            "accepted": status == "accept",
-        })
+        records.append(
+            {
+                "step": step,
+                "t_ps": t_ps,
+                "dt_ps": dt_ps,
+                "dt_lte_ps": dt_lte_ps,
+                "nr_iters": nr_iters,
+                "residual": residual,
+                "lte_norm": lte_norm,
+                "lte_reject": lte_reject,
+                "nr_failed": nr_failed,
+                "accepted": status == "accept",
+            }
+        )
 
     return records
 
@@ -237,9 +239,7 @@ def run_simulation(benchmark_name: str, use_sparse: bool) -> tuple[list[dict], d
         "nr_stats": {
             "min_iters": min(r["nr_iters"] for r in records) if records else None,
             "max_iters": max(r["nr_iters"] for r in records) if records else None,
-            "mean_iters": (
-                sum(r["nr_iters"] for r in records) / len(records) if records else None
-            ),
+            "mean_iters": (sum(r["nr_iters"] for r in records) / len(records) if records else None),
         },
     }
 
@@ -290,16 +290,16 @@ def compare_traces(path_a: str, path_b: str) -> None:
     label_a = f"{summary_a['solver']} ({summary_a['backend']})"
     label_b = f"{summary_b['solver']} ({summary_b['backend']})"
 
-    print(f"\n{'='*80}")
+    print(f"\n{'=' * 80}")
     print(f"LTE Trace Comparison: {summary_a['benchmark']}")
-    print(f"{'='*80}")
+    print(f"{'=' * 80}")
     print(f"  A: {label_a} - {path_a}")
     print(f"  B: {label_b} - {path_b}")
     print()
 
     # Summary comparison
     print(f"{'Metric':<30} {'A':>15} {'B':>15} {'Diff':>15}")
-    print(f"{'-'*75}")
+    print(f"{'-' * 75}")
 
     for key in ["total_steps_attempted", "accepted_steps", "rejected_steps", "num_steps_result"]:
         va = summary_a.get(key, "N/A")
@@ -310,7 +310,7 @@ def compare_traces(path_a: str, path_b: str) -> None:
         print(f"{key:<30} {str(va):>15} {str(vb):>15} {diff:>15}")
 
     print(f"\n{'LTE Stats':<30} {'A':>15} {'B':>15}")
-    print(f"{'-'*60}")
+    print(f"{'-' * 60}")
     for key in ["min", "max", "mean"]:
         va = summary_a["lte_stats"].get(key)
         vb = summary_b["lte_stats"].get(key)
@@ -319,7 +319,7 @@ def compare_traces(path_a: str, path_b: str) -> None:
         print(f"  lte_{key:<26} {va_str:>15} {vb_str:>15}")
 
     print(f"\n{'dt Stats (ps)':<30} {'A':>15} {'B':>15}")
-    print(f"{'-'*60}")
+    print(f"{'-' * 60}")
     for key in ["min_ps", "max_ps"]:
         va = summary_a["dt_stats"].get(key)
         vb = summary_b["dt_stats"].get(key)
@@ -332,14 +332,14 @@ def compare_traces(path_a: str, path_b: str) -> None:
     accepted_b = [r for r in records_b if r["accepted"]]
 
     # Compare accepted steps side-by-side
-    print(f"\n{'='*80}")
+    print(f"\n{'=' * 80}")
     print("Step-by-step comparison (accepted steps only)")
-    print(f"{'='*80}")
+    print(f"{'=' * 80}")
     print(
         f"{'Step':>5} {'t_A (ps)':>12} {'t_B (ps)':>12} {'dt_A (ps)':>12} {'dt_B (ps)':>12} "
         f"{'LTE_A':>8} {'LTE_B':>8} {'NR_A':>5} {'NR_B':>5} {'t_diff':>12}"
     )
-    print(f"{'-'*100}")
+    print(f"{'-' * 100}")
 
     # Walk through accepted steps and find divergence
     max_compare = min(len(accepted_a), len(accepted_b))
@@ -392,9 +392,9 @@ def compare_traces(path_a: str, path_b: str) -> None:
         print(f"\nNo significant divergence found in {max_compare} compared steps")
 
     # Rejection analysis
-    print(f"\n{'='*80}")
+    print(f"\n{'=' * 80}")
     print("Rejection analysis")
-    print(f"{'='*80}")
+    print(f"{'=' * 80}")
 
     rejected_a = [r for r in records_a if not r["accepted"]]
     rejected_b = [r for r in records_b if not r["accepted"]]
@@ -447,9 +447,7 @@ def run_compare_local(benchmark_name: str) -> None:
 
 def main():
     parser = argparse.ArgumentParser(description="Compare per-step LTE between solvers")
-    parser.add_argument(
-        "--benchmark", "-b", default="ring", help="Benchmark name (default: ring)"
-    )
+    parser.add_argument("--benchmark", "-b", default="ring", help="Benchmark name (default: ring)")
     parser.add_argument("--output", "-o", help="Output JSON path for trace data")
     parser.add_argument(
         "--sparse",
