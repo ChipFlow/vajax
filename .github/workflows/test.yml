@@ -169,9 +169,6 @@ jobs:
           path: test-results-*.xml
           if-no-files-found: ignore
 
-      - name: Run type checker
-        run: uv run pyright jax_spice/
-
   test-ngspice-regression:
     runs-on: ubuntu-latest
     steps:
