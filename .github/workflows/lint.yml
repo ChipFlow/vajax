@@ -26,7 +26,7 @@ jobs:
         run: uv tool run ruff format --check jax_spice/ tests/ scripts/ benchmarks/
 
       - name: Install Python dependencies for type checking
-        run: uv sync --no-install-workspace --no-build-package openvaf-py --no-build-package osdi-py --no-build-package umfpack-jax
+        run: uv sync --extra dev --no-install-workspace --no-build-package openvaf-py --no-build-package osdi-py --no-build-package umfpack-jax
 
       - name: Run pyright
-        run: uv run pyright jax_spice/
+        run: .venv/bin/pyright jax_spice/
