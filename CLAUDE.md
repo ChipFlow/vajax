@@ -28,6 +28,19 @@ Use JAX (`jnp`) for simulation hot paths that run on GPU. NumPy/SciPy are accept
 - Test utilities and validation
 - Optional CPU-only solver backends (e.g., UMFPACK)
 
+### Performance Profile
+
+JAX-SPICE has a per-step fixed overhead of ~10-15 us from adaptive timestep
+machinery, `jnp.where` branching, vmap batching, and COO matrix assembly. This
+overhead dominates for small circuits (6-11x slower than VACASK on CPU) but
+becomes negligible for large circuits (c6288: 1.2x on CPU, **2.9x faster on GPU**).
+
+When optimizing simulation performance:
+- **Don't optimize for small-circuit CPU speed** unless it also helps GPU performance
+- **Focus on reducing per-NR-iteration cost** (Jacobian build, linear solve) — these scale with circuit size
+- **GPU threshold is 500 nodes** (`gpu_backend.py`) — circuits below this auto-route to CPU
+- See `docs/performance_analysis.md` for the full overhead breakdown
+
 ### Sparse Solver Strategy
 
 The simulator supports two solver modes:

@@ -17,11 +17,6 @@ JAX-SPICE is in active development as a proof-of-concept. All VACASK benchmark c
 
 **[Full benchmark results and test coverage →](https://chipflow.github.io/jax-spice/)**
 
-**Performance highlights:**
-- 34x speedup on ring oscillator via JIT-compiled vmap batching
-- Sparse matrix support auto-activates for circuits >1000 nodes
-- OpenVAF-compiled PSP103 MOSFETs validated against MIR interpreter
-
 ## Validation: Three-Way Comparison
 
 JAX-SPICE results are validated against VACASK (reference simulator) and ngspice.
@@ -47,6 +42,58 @@ Generate comparison plots:
 uv run scripts/plot_three_way_comparison.py --benchmark ring --output-dir docs/images
 uv run scripts/plot_three_way_comparison.py --benchmark c6288 --output-dir docs/images --skip-ngspice
 ```
+
+## Performance
+
+JAX-SPICE is designed for GPU acceleration of large circuits. The table below shows
+per-step timing against VACASK (C++ reference simulator) on CI runners.
+
+### CPU Performance (vs VACASK)
+
+| Benchmark | Nodes | Steps | JAX (ms/step) | VACASK (ms/step) | Ratio | RMS Error |
+|-----------|------:|------:|--------------:|-----------------:|------:|-----------|
+| rc        |     4 |    1M |         0.012 |            0.002 |  6.6x | 0.00%     |
+| graetz    |     6 |    1M |         0.020 |            0.004 |  5.4x | 0.00%     |
+| mul       |     8 |  500k |         0.041 |            0.004 | 10.9x | 0.00%     |
+| ring      |    47 |   20k |         0.511 |            0.109 |  4.7x | -         |
+| c6288     | ~5000 |    1k |        88.060 |           76.390 |  1.2x | 2.01%     |
+
+### GPU Performance
+
+| Benchmark | Nodes | JAX GPU (ms/step) | JAX CPU (ms/step) | GPU Speedup | vs VACASK CPU |
+|-----------|------:|-------------------:|-------------------:|------------:|--------------:|
+| c6288     | ~5000 |             19.81  |             88.06  |      4.4x   |   **2.9x faster** |
+| ring      |    47 |              1.49  |              0.51  |      0.3x   | below threshold |
+| rc        |     4 |              0.24  |              0.01  |      0.05x  | below threshold |
+
+GPU results for circuits below ~500 nodes are shown for completeness but are not
+meaningful performance comparisons — GPU kernel launch overhead dominates when the
+per-step computation is tiny. The GPU auto-threshold (`gpu_threshold=500` nodes)
+prevents this in normal usage.
+
+### Performance Characteristics
+
+**Where JAX-SPICE excels:** Large circuits (1000+ nodes) on GPU, where matrix
+operations dominate and GPU parallelism pays off. The c6288 benchmark (16-bit
+multiplier, ~5000 nodes) runs **2.9x faster than VACASK** on GPU.
+
+**Where VACASK is faster:** Small circuits on CPU. JAX-SPICE carries a per-step
+fixed overhead of ~5-12 microseconds from:
+
+- **Adaptive timestep machinery**: LTE estimation, voltage prediction, and
+  variable-step BDF2 coefficient computation run every step regardless of
+  circuit size.
+- **Functional array updates**: JAX requires `jnp.where` for conditional updates
+  inside `lax.while_loop`, which evaluates both branches. VACASK uses C++ runtime
+  branching that skips unused work.
+- **Vmap batching**: Device evaluation is vectorized with `jax.vmap` for GPU
+  parallelism, but this adds overhead when evaluating only 2-4 device instances.
+- **COO matrix assembly**: Jacobian construction from coordinate format adds
+  indirection that VACASK avoids with direct matrix stamping.
+
+This overhead is negligible for large circuits (c6288: 0.01% of step time) but
+dominates for small ones (rc: ~80% of step time). See `docs/performance_analysis.md`
+for the full analysis.
 
 ## Quick Start
 
@@ -306,8 +353,10 @@ JAX_PLATFORMS=cpu uv run pytest tests/test_vacask_suite.py -v
 - `docs/api_reference.md` - **API Reference** (CircuitEngine, result types, I/O)
 - `docs/cli_reference.md` - Command-line interface reference
 - `docs/architecture_overview.md` - System architecture and design
+- `docs/performance_analysis.md` - Performance analysis and overhead breakdown
 - `docs/gpu_solver_architecture.md` - Detailed solver design and optimization
 - `docs/gpu_solver_jacobian.md` - Jacobian computation details
+- `docs/debug_tools.md` - Debug utilities reference
 - `docs/vacask_osdi_inputs.md` - OpenVAF/OSDI input handling
 - `docs/vacask_sim_format.md` - VACASK simulation file format
 - `TODO.md` - Development roadmap and known issues
