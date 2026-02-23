@@ -634,11 +634,14 @@ def make_spineax_full_mna_solver(
         residual_conv_mask = None
 
     # Create Spineax solver with cached symbolic factorization
+    # mtype_id=0 (general) because MNA Jacobians are non-symmetric
+    # (transconductance terms create asymmetric off-diagonals).
+    # mview_id=0 (full) to pass the complete matrix to cuDSS.
     spineax_solver = CuDSSSolver(
         bcsr_indptr,
         bcsr_indices,
         device_id=0,
-        mtype_id=1,
+        mtype_id=0,
         mview_id=0,
     )
     logger.info("Created Spineax full MNA solver with cached symbolic factorization")
