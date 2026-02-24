@@ -877,17 +877,6 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#dc-with-source-stepping-for-difficult-circuits" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        DC with Source Stepping (for difficult circuits)
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
   <a href="#transient-analysis" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -904,21 +893,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#current-limitations" class="md-nav__link">
+  <a href="#current-state" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Current Limitations
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#future-work" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Future Work
+        Current State
       
     </span>
   </a>
@@ -1481,17 +1459,6 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#dc-with-source-stepping-for-difficult-circuits" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        DC with Source Stepping (for difficult circuits)
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
   <a href="#transient-analysis" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -1508,21 +1475,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#current-limitations" class="md-nav__link">
+  <a href="#current-state" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Current Limitations
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#future-work" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Future Work
+        Current State
       
     </span>
   </a>
@@ -1561,16 +1517,23 @@
 
 
 <h1 id="gpu-solver-architecture">GPU Solver Architecture<a class="headerlink" href="#gpu-solver-architecture" title="Permanent link">&para;</a></h1>
+<div class="admonition note">
+<p class="admonition-title">Historical document</p>
+<p>This document describes an early GPU solver architecture. The codebase has
+since been restructured: DC analysis is in <code>analysis/dc.py</code>, transient
+analysis is in <code>analysis/transient/</code>, and Jacobians are now computed
+analytically via OpenVAF. The design principles and trade-offs described
+here remain relevant.</p>
+</div>
 <p>This document describes the GPU-native solver architecture for VAJAX,
 including DC operating point and transient analysis implementations.</p>
 <h2 id="overview">Overview<a class="headerlink" href="#overview" title="Permanent link">&para;</a></h2>
 <p>VAJAX provides two complementary GPU-native solvers:</p>
 <ol>
-<li><strong>DC Solver</strong> (<code>dc_gpu.py</code>) - Computes steady-state operating point</li>
-<li><strong>Transient Solver</strong> (<code>transient_gpu.py</code>) - Time-domain simulation with backward Euler</li>
+<li><strong>DC Solver</strong> (<code>analysis/dc.py</code>) - Computes steady-state operating point</li>
+<li><strong>Transient Solver</strong> (<code>analysis/transient/</code>) - Time-domain simulation with adaptive BDF2</li>
 </ol>
-<p>Both use automatic differentiation via <code>sparsejac</code> for sparse Jacobian computation,
-eliminating the need for explicit analytical derivatives.</p>
+<p>Jacobians are computed analytically via OpenVAF-compiled Verilog-A models.</p>
 <h2 id="key-design-decisions">Key Design Decisions<a class="headerlink" href="#key-design-decisions" title="Permanent link">&para;</a></h2>
 <h3 id="why-transient-instead-of-dc-for-digital-circuits">Why Transient Instead of DC for Digital Circuits?<a class="headerlink" href="#why-transient-instead-of-dc-for-digital-circuits" title="Permanent link">&para;</a></h3>
 <p>For digital MOSFET circuits (like the C6288 multiplier), <strong>transient analysis with
@@ -1779,88 +1742,37 @@ contributes to Jacobian entries connecting its terminal nodes.</p>
 </code></pre></div>
 <h2 id="usage-examples">Usage Examples<a class="headerlink" href="#usage-examples" title="Permanent link">&para;</a></h2>
 <h3 id="dc-operating-point">DC Operating Point<a class="headerlink" href="#dc-operating-point" title="Permanent link">&para;</a></h3>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-9-1" name="__codelineno-9-1" href="#__codelineno-9-1"></a><span class="kn">from</span><span class="w"> </span><span class="nn">vajax.analysis.dc_gpu</span><span class="w"> </span><span class="kn">import</span> <span class="n">dc_operating_point_gpu_vectorized</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-9-1" name="__codelineno-9-1" href="#__codelineno-9-1"></a><span class="kn">from</span><span class="w"> </span><span class="nn">vajax</span><span class="w"> </span><span class="kn">import</span> <span class="n">CircuitEngine</span>
 <a id="__codelineno-9-2" name="__codelineno-9-2" href="#__codelineno-9-2"></a>
-<a id="__codelineno-9-3" name="__codelineno-9-3" href="#__codelineno-9-3"></a><span class="c1"># Build and prepare system</span>
-<a id="__codelineno-9-4" name="__codelineno-9-4" href="#__codelineno-9-4"></a><span class="n">system</span><span class="o">.</span><span class="n">build_device_groups</span><span class="p">()</span>
+<a id="__codelineno-9-3" name="__codelineno-9-3" href="#__codelineno-9-3"></a><span class="n">engine</span> <span class="o">=</span> <span class="n">CircuitEngine</span><span class="p">(</span><span class="s2">&quot;circuit.sim&quot;</span><span class="p">)</span>
+<a id="__codelineno-9-4" name="__codelineno-9-4" href="#__codelineno-9-4"></a><span class="n">engine</span><span class="o">.</span><span class="n">parse</span><span class="p">()</span>
 <a id="__codelineno-9-5" name="__codelineno-9-5" href="#__codelineno-9-5"></a>
-<a id="__codelineno-9-6" name="__codelineno-9-6" href="#__codelineno-9-6"></a><span class="c1"># Run GPU DC solver</span>
-<a id="__codelineno-9-7" name="__codelineno-9-7" href="#__codelineno-9-7"></a><span class="n">V</span><span class="p">,</span> <span class="n">info</span> <span class="o">=</span> <span class="n">dc_operating_point_gpu_vectorized</span><span class="p">(</span>
-<a id="__codelineno-9-8" name="__codelineno-9-8" href="#__codelineno-9-8"></a>    <span class="n">system</span><span class="p">,</span>
-<a id="__codelineno-9-9" name="__codelineno-9-9" href="#__codelineno-9-9"></a>    <span class="n">vdd</span><span class="o">=</span><span class="mf">1.2</span><span class="p">,</span>
-<a id="__codelineno-9-10" name="__codelineno-9-10" href="#__codelineno-9-10"></a>    <span class="n">max_iterations</span><span class="o">=</span><span class="mi">100</span><span class="p">,</span>
-<a id="__codelineno-9-11" name="__codelineno-9-11" href="#__codelineno-9-11"></a>    <span class="n">abstol</span><span class="o">=</span><span class="mf">1e-9</span><span class="p">,</span>
-<a id="__codelineno-9-12" name="__codelineno-9-12" href="#__codelineno-9-12"></a><span class="p">)</span>
-<a id="__codelineno-9-13" name="__codelineno-9-13" href="#__codelineno-9-13"></a>
-<a id="__codelineno-9-14" name="__codelineno-9-14" href="#__codelineno-9-14"></a><span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Converged: </span><span class="si">{</span><span class="n">info</span><span class="p">[</span><span class="s1">&#39;converged&#39;</span><span class="p">]</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
-<a id="__codelineno-9-15" name="__codelineno-9-15" href="#__codelineno-9-15"></a><span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Iterations: </span><span class="si">{</span><span class="n">info</span><span class="p">[</span><span class="s1">&#39;iterations&#39;</span><span class="p">]</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
-</code></pre></div>
-<h3 id="dc-with-source-stepping-for-difficult-circuits">DC with Source Stepping (for difficult circuits)<a class="headerlink" href="#dc-with-source-stepping-for-difficult-circuits" title="Permanent link">&para;</a></h3>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-10-1" name="__codelineno-10-1" href="#__codelineno-10-1"></a><span class="kn">from</span><span class="w"> </span><span class="nn">vajax.analysis.dc_gpu</span><span class="w"> </span><span class="kn">import</span> <span class="n">dc_operating_point_gpu_vectorized_source_stepping</span>
-<a id="__codelineno-10-2" name="__codelineno-10-2" href="#__codelineno-10-2"></a>
-<a id="__codelineno-10-3" name="__codelineno-10-3" href="#__codelineno-10-3"></a><span class="n">V</span><span class="p">,</span> <span class="n">info</span> <span class="o">=</span> <span class="n">dc_operating_point_gpu_vectorized_source_stepping</span><span class="p">(</span>
-<a id="__codelineno-10-4" name="__codelineno-10-4" href="#__codelineno-10-4"></a>    <span class="n">system</span><span class="p">,</span>
-<a id="__codelineno-10-5" name="__codelineno-10-5" href="#__codelineno-10-5"></a>    <span class="n">vdd_target</span><span class="o">=</span><span class="mf">1.2</span><span class="p">,</span>
-<a id="__codelineno-10-6" name="__codelineno-10-6" href="#__codelineno-10-6"></a>    <span class="n">vdd_steps</span><span class="o">=</span><span class="mi">10</span><span class="p">,</span>  <span class="c1"># Ramp VDD from 0 to 1.2V</span>
-<a id="__codelineno-10-7" name="__codelineno-10-7" href="#__codelineno-10-7"></a>    <span class="n">verbose</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>
-<a id="__codelineno-10-8" name="__codelineno-10-8" href="#__codelineno-10-8"></a><span class="p">)</span>
+<a id="__codelineno-9-6" name="__codelineno-9-6" href="#__codelineno-9-6"></a><span class="c1"># DC operating point is computed automatically before transient</span>
+<a id="__codelineno-9-7" name="__codelineno-9-7" href="#__codelineno-9-7"></a><span class="c1"># Or run DC explicitly:</span>
+<a id="__codelineno-9-8" name="__codelineno-9-8" href="#__codelineno-9-8"></a><span class="c1"># engine.run_dcinc()</span>
 </code></pre></div>
 <h3 id="transient-analysis">Transient Analysis<a class="headerlink" href="#transient-analysis" title="Permanent link">&para;</a></h3>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-11-1" name="__codelineno-11-1" href="#__codelineno-11-1"></a><span class="kn">from</span><span class="w"> </span><span class="nn">vajax.analysis.transient_gpu</span><span class="w"> </span><span class="kn">import</span> <span class="n">transient_analysis_gpu</span>
-<a id="__codelineno-11-2" name="__codelineno-11-2" href="#__codelineno-11-2"></a>
-<a id="__codelineno-11-3" name="__codelineno-11-3" href="#__codelineno-11-3"></a><span class="c1"># For digital circuits - use icmode=&#39;uic&#39; to skip DC</span>
-<a id="__codelineno-11-4" name="__codelineno-11-4" href="#__codelineno-11-4"></a><span class="n">times</span><span class="p">,</span> <span class="n">solutions</span><span class="p">,</span> <span class="n">info</span> <span class="o">=</span> <span class="n">transient_analysis_gpu</span><span class="p">(</span>
-<a id="__codelineno-11-5" name="__codelineno-11-5" href="#__codelineno-11-5"></a>    <span class="n">system</span><span class="p">,</span>
-<a id="__codelineno-11-6" name="__codelineno-11-6" href="#__codelineno-11-6"></a>    <span class="n">t_stop</span><span class="o">=</span><span class="mf">2e-9</span><span class="p">,</span>      <span class="c1"># 2ns</span>
-<a id="__codelineno-11-7" name="__codelineno-11-7" href="#__codelineno-11-7"></a>    <span class="n">t_step</span><span class="o">=</span><span class="mf">2e-12</span><span class="p">,</span>     <span class="c1"># 2ps</span>
-<a id="__codelineno-11-8" name="__codelineno-11-8" href="#__codelineno-11-8"></a>    <span class="n">icmode</span><span class="o">=</span><span class="s1">&#39;uic&#39;</span><span class="p">,</span>     <span class="c1"># Use Initial Conditions (like VACASK)</span>
-<a id="__codelineno-11-9" name="__codelineno-11-9" href="#__codelineno-11-9"></a>    <span class="n">vdd</span><span class="o">=</span><span class="mf">1.2</span><span class="p">,</span>
-<a id="__codelineno-11-10" name="__codelineno-11-10" href="#__codelineno-11-10"></a><span class="p">)</span>
-<a id="__codelineno-11-11" name="__codelineno-11-11" href="#__codelineno-11-11"></a>
-<a id="__codelineno-11-12" name="__codelineno-11-12" href="#__codelineno-11-12"></a><span class="c1"># For analog circuits - compute DC first</span>
-<a id="__codelineno-11-13" name="__codelineno-11-13" href="#__codelineno-11-13"></a><span class="n">times</span><span class="p">,</span> <span class="n">solutions</span><span class="p">,</span> <span class="n">info</span> <span class="o">=</span> <span class="n">transient_analysis_gpu</span><span class="p">(</span>
-<a id="__codelineno-11-14" name="__codelineno-11-14" href="#__codelineno-11-14"></a>    <span class="n">system</span><span class="p">,</span>
-<a id="__codelineno-11-15" name="__codelineno-11-15" href="#__codelineno-11-15"></a>    <span class="n">t_stop</span><span class="o">=</span><span class="mf">1e-6</span><span class="p">,</span>
-<a id="__codelineno-11-16" name="__codelineno-11-16" href="#__codelineno-11-16"></a>    <span class="n">t_step</span><span class="o">=</span><span class="mf">1e-9</span><span class="p">,</span>
-<a id="__codelineno-11-17" name="__codelineno-11-17" href="#__codelineno-11-17"></a>    <span class="n">icmode</span><span class="o">=</span><span class="s1">&#39;op&#39;</span><span class="p">,</span>      <span class="c1"># Compute DC operating point first</span>
-<a id="__codelineno-11-18" name="__codelineno-11-18" href="#__codelineno-11-18"></a>    <span class="n">vdd</span><span class="o">=</span><span class="mf">1.2</span><span class="p">,</span>
-<a id="__codelineno-11-19" name="__codelineno-11-19" href="#__codelineno-11-19"></a><span class="p">)</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-10-1" name="__codelineno-10-1" href="#__codelineno-10-1"></a><span class="kn">from</span><span class="w"> </span><span class="nn">vajax</span><span class="w"> </span><span class="kn">import</span> <span class="n">CircuitEngine</span>
+<a id="__codelineno-10-2" name="__codelineno-10-2" href="#__codelineno-10-2"></a>
+<a id="__codelineno-10-3" name="__codelineno-10-3" href="#__codelineno-10-3"></a><span class="n">engine</span> <span class="o">=</span> <span class="n">CircuitEngine</span><span class="p">(</span><span class="s2">&quot;circuit.sim&quot;</span><span class="p">)</span>
+<a id="__codelineno-10-4" name="__codelineno-10-4" href="#__codelineno-10-4"></a><span class="n">engine</span><span class="o">.</span><span class="n">parse</span><span class="p">()</span>
+<a id="__codelineno-10-5" name="__codelineno-10-5" href="#__codelineno-10-5"></a>
+<a id="__codelineno-10-6" name="__codelineno-10-6" href="#__codelineno-10-6"></a><span class="c1"># For digital circuits - use icmode=&#39;uic&#39; to skip DC</span>
+<a id="__codelineno-10-7" name="__codelineno-10-7" href="#__codelineno-10-7"></a><span class="n">engine</span><span class="o">.</span><span class="n">prepare</span><span class="p">(</span><span class="n">t_stop</span><span class="o">=</span><span class="mf">2e-9</span><span class="p">,</span> <span class="n">dt</span><span class="o">=</span><span class="mf">2e-12</span><span class="p">)</span>
+<a id="__codelineno-10-8" name="__codelineno-10-8" href="#__codelineno-10-8"></a><span class="n">result</span> <span class="o">=</span> <span class="n">engine</span><span class="o">.</span><span class="n">run_transient</span><span class="p">()</span>
+<a id="__codelineno-10-9" name="__codelineno-10-9" href="#__codelineno-10-9"></a>
+<a id="__codelineno-10-10" name="__codelineno-10-10" href="#__codelineno-10-10"></a><span class="c1"># For analog circuits with sparse solver</span>
+<a id="__codelineno-10-11" name="__codelineno-10-11" href="#__codelineno-10-11"></a><span class="n">engine</span><span class="o">.</span><span class="n">prepare</span><span class="p">(</span><span class="n">t_stop</span><span class="o">=</span><span class="mf">1e-6</span><span class="p">,</span> <span class="n">dt</span><span class="o">=</span><span class="mf">1e-9</span><span class="p">,</span> <span class="n">use_sparse</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+<a id="__codelineno-10-12" name="__codelineno-10-12" href="#__codelineno-10-12"></a><span class="n">result</span> <span class="o">=</span> <span class="n">engine</span><span class="o">.</span><span class="n">run_transient</span><span class="p">()</span>
 </code></pre></div>
-<h2 id="current-limitations">Current Limitations<a class="headerlink" href="#current-limitations" title="Permanent link">&para;</a></h2>
+<h2 id="current-state">Current State<a class="headerlink" href="#current-state" title="Permanent link">&para;</a></h2>
+<p>Since this document was written, major improvements have been made:</p>
 <ol>
-<li><strong>Linear solver:</strong> Currently uses dense solve on CPU, sparse solve on GPU</li>
-<li>GPU sparse solve via <code>jax.experimental.sparse.linalg.spsolve</code></li>
-<li>
-<p>For very large circuits, consider iterative methods (GMRES, BiCGSTAB)</p>
-</li>
-<li>
-<p><strong>Fixed timestep:</strong> No adaptive timestepping yet</p>
-</li>
-<li>Must choose dt based on fastest circuit dynamics</li>
-<li>
-<p>Too large: accuracy issues; too small: slow simulation</p>
-</li>
-<li>
-<p><strong>Model coverage:</strong></p>
-</li>
-<li>Transient: Level-1 MOSFETs only</li>
-<li>DC: BSIM-like model with more features</li>
-<li>
-<p>No capacitors in DC (would need AC analysis)</p>
-</li>
-<li>
-<p><strong>AND gate convergence:</strong> The AND gate test shows convergence issues with the
-   level-1 model in transient. More sophisticated models or relaxed tolerances
-   may be needed for complex logic gates.</p>
-</li>
-</ol>
-<h2 id="future-work">Future Work<a class="headerlink" href="#future-work" title="Permanent link">&para;</a></h2>
-<ol>
-<li><strong>Adaptive timestepping</strong> - Use LTE (Local Truncation Error) control</li>
-<li><strong>Unified MOSFET model</strong> - Same BSIM-like model for both DC and transient</li>
-<li><strong>Iterative linear solvers</strong> - For very large circuits</li>
-<li><strong>Parallel timesteps</strong> - Use <code>lax.scan</code> for GPU-resident time loops</li>
-<li><strong>Capacitor support in DC</strong> - For AC analysis</li>
+<li><strong>Adaptive timestepping</strong>: BDF2 with LTE control is implemented</li>
+<li><strong>Unified device models</strong>: All devices use OpenVAF-compiled Verilog-A (PSP103, etc.)</li>
+<li><strong>GPU-resident time loops</strong>: Transient uses <code>lax.scan</code> for full GPU execution</li>
+<li><strong>Sparse solver</strong>: BCOO/BCSR with <code>spsolve</code> for large circuits</li>
+<li><strong>AC and noise analysis</strong>: Frequency-domain analyses are available</li>
 </ol>
 <h2 id="references">References<a class="headerlink" href="#references" title="Permanent link">&para;</a></h2>
 <ol>

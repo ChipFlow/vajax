@@ -1561,6 +1561,13 @@
 
 
 <h1 id="gpu-solver-jacobian-autodiff-vs-analytical">GPU Solver Jacobian: Autodiff vs Analytical<a class="headerlink" href="#gpu-solver-jacobian-autodiff-vs-analytical" title="Permanent link">&para;</a></h1>
+<div class="admonition note">
+<p class="admonition-title">Historical document</p>
+<p>This documents a solved investigation. The files referenced below
+(<code>dc_gpu.py</code>, <code>transient_gpu.py</code>, <code>benchmarks/c6288.py</code>) no longer exist.
+DC analysis is now in <code>analysis/dc.py</code>, transient in <code>analysis/transient/</code>,
+and all device models use OpenVAF analytical Jacobians.</p>
+</div>
 <h2 id="status-solved">Status: SOLVED<a class="headerlink" href="#status-solved" title="Permanent link">&para;</a></h2>
 <p>The GPU solver has been fully migrated to analytical Jacobians, eliminating the convergence issues. This document describes the original problem and solution for reference.</p>
 <h2 id="the-original-problem">The Original Problem<a class="headerlink" href="#the-original-problem" title="Permanent link">&para;</a></h2>
@@ -1672,10 +1679,10 @@
 </code></pre></div></p>
 <h2 id="files-involved">Files Involved<a class="headerlink" href="#files-involved" title="Permanent link">&para;</a></h2>
 <ul>
-<li><code>vajax/analysis/dc_gpu.py</code> - GPU DC solver</li>
-<li><code>vajax/analysis/transient_gpu.py</code> - GPU transient solver</li>
-<li><code>vajax/benchmarks/c6288.py</code> - <code>create_simple_mosfet_eval()</code> at line 179</li>
-<li><code>openvaf-py/openvaf_jax.py</code> - OpenVAF→JAX translator</li>
+<li><code>vajax/analysis/dc.py</code> - DC operating point solver</li>
+<li><code>vajax/analysis/transient/</code> - Transient analysis (scan/loop strategies)</li>
+<li><code>vajax/analysis/solver.py</code> - Newton-Raphson with <code>lax.while_loop</code></li>
+<li><code>openvaf_jax/</code> - OpenVAF→JAX translator</li>
 <li><code>vajax/devices/verilog_a.py</code> - VerilogADevice wrapper</li>
 </ul>
 <h2 id="test-case">Test Case<a class="headerlink" href="#test-case" title="Permanent link">&para;</a></h2>
