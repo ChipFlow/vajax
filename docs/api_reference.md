@@ -290,10 +290,12 @@ Result of noise analysis.
 ```python
 @dataclass
 class NoiseResult:
-    frequencies: Array           # Frequency points (Hz)
-    input_noise: Array           # Input-referred noise spectral density
-    output_noise: Array          # Output noise spectral density
-    noise_figure: Array          # Noise figure (dB)
+    frequencies: Array                          # Frequency points (Hz)
+    output_noise: Array                         # Output noise spectral density
+    power_gain: Array                           # Power gain from input to output
+    contributions: Dict[str, Array]             # Per-device noise contributions
+    detailed_contributions: Dict[Tuple[str, str], Array]  # Per-device per-node contributions
+    dc_voltages: Optional[Array]                # DC operating point voltages
 ```
 
 ---

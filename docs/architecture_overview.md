@@ -18,7 +18,7 @@ VAJAX is built on three core principles:
 │   from vajax import CircuitEngine                               │
 │   engine = CircuitEngine("circuit.sim")                             │
 │   engine.parse()                                                     │
-│   result = engine.run_transient(...)                                │
+│   result = engine.run_transient()                                   │
 └─────────────────────────────────────────────────────────────────────┘
                                    │
                                    ▼
@@ -29,8 +29,8 @@ VAJAX is built on three core principles:
 │  │ (lax.scan)  │  │ (AC analysis)    │  │  (noise analysis)    │  │
 │  └─────────────┘  └──────────────────┘  └───────────────────────┘  │
 │  ┌─────────────┐  ┌──────────────────┐  ┌───────────────────────┐  │
-│  │ run_corners │  │   run_dcinc      │  │    run_hb            │  │
-│  │ (PVT sweep) │  │ (transfer funcs) │  │ (harmonic balance)   │  │
+│  │ run_corners │  │   run_dcinc      │  │  run_dcxf/run_acxf   │  │
+│  │ (PVT sweep) │  │ (transfer funcs) │  │ (transfer functions)  │  │
 │  └─────────────┘  └──────────────────┘  └───────────────────────┘  │
 └─────────────────────────────────────────────────────────────────────┘
                                    │
@@ -134,14 +134,14 @@ class CircuitEngine:
     def parse() -> None                # Parse netlist, compile models
 
     # Analysis methods
-    def run_transient(t_stop, dt, ...) -> TransientResult
-    def run_ac(fstart, fstop, ...) -> ACResult
-    def run_noise(fstart, fstop, ...) -> NoiseResult
-    def run_corners(corners) -> List[CornerResult]
-    def run_dcinc() -> DCINCResult
-    def run_dcxf(input_source, output_node) -> DCXFResult
-    def run_acxf(input_source, output_node) -> ACXFResult
-    def run_hb(...) -> HBResult
+    def prepare(t_stop, dt, ...) -> None
+    def run_transient() -> TransientResult
+    def run_ac(freq_start, freq_stop, ...) -> ACResult
+    def run_noise(out, input_source, ...) -> NoiseResult
+    def run_corners(corners) -> CornerSweepResult
+    def run_dcinc() -> DCIncResult
+    def run_dcxf(out) -> DCXFResult
+    def run_acxf(out, freq_start, freq_stop, ...) -> ACXFResult
 
     # Internal system building
     def _make_full_mna_build_system_fn() -> Callable
@@ -252,10 +252,11 @@ delta_V = spsolve(data, indices, indptr, -residual, tol=0)
 | < 1000 nodes | Dense | Lower overhead, `jax.scipy.linalg.solve()` |
 | ≥ 1000 nodes | Sparse | Memory efficiency, `spsolve()` |
 
-The switch is controlled by `use_sparse=True` in analysis methods:
+The switch is controlled by `use_sparse=True` in `prepare()`:
 
 ```python
-result = engine.run_transient(t_stop=1e-6, dt=1e-9, use_sparse=True)
+engine.prepare(t_stop=1e-6, dt=1e-9, use_sparse=True)
+result = engine.run_transient()
 ```
 
 ## OpenVAF Integration
@@ -403,13 +404,9 @@ from vajax import CircuitEngine
 engine = CircuitEngine("vendor/VACASK/sim/ring.sim")
 engine.parse()
 
-# Run transient analysis
-result = engine.run_transient(
-    t_stop=1e-6,
-    dt=1e-9,
-    use_scan=True,     # GPU-efficient
-    use_sparse=True,   # For large circuits
-)
+# Prepare and run transient analysis
+engine.prepare(t_stop=1e-6, dt=1e-9, use_sparse=True)
+result = engine.run_transient()
 ```
 
 ### Extracting Results
@@ -430,23 +427,24 @@ times = result.times
 
 ```python
 # Transient
-tran_result = engine.run_transient(t_stop=1e-6, dt=1e-9)
+engine.prepare(t_stop=1e-6, dt=1e-9)
+tran_result = engine.run_transient()
 
 # AC analysis
-ac_result = engine.run_ac(fstart=1e3, fstop=1e9, num_points=100)
+ac_result = engine.run_ac(freq_start=1e3, freq_stop=1e9, points=100)
 
 # Noise analysis
 noise_result = engine.run_noise(
-    fstart=1e3, fstop=1e9,
-    input_source="vin", output_node="vout"
+    freq_start=1e3, freq_stop=1e9,
+    input_source="vin", out="vout"
 )
 
 # PVT corners
-from vajax.analysis import create_pvt_corners
+from vajax.analysis.corners import create_pvt_corners
 corners = create_pvt_corners(
-    process=['tt', 'ff', 'ss'],
-    voltage=[0.9, 1.0, 1.1],
-    temperature=[233, 300, 398],
+    processes=['TT', 'FF', 'SS'],
+    voltages=[0.9, 1.0, 1.1],
+    temperatures=['cold', 'room', 'hot'],
 )
 corner_results = engine.run_corners(corners)
 ```

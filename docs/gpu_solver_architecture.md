@@ -1,5 +1,12 @@
 # GPU Solver Architecture
 
+!!! note "Historical document"
+    This document describes an early GPU solver architecture. The codebase has
+    since been restructured: DC analysis is in `analysis/dc.py`, transient
+    analysis is in `analysis/transient/`, and Jacobians are now computed
+    analytically via OpenVAF. The design principles and trade-offs described
+    here remain relevant.
+
 This document describes the GPU-native solver architecture for VAJAX,
 including DC operating point and transient analysis implementations.
 
@@ -7,11 +14,10 @@ including DC operating point and transient analysis implementations.
 
 VAJAX provides two complementary GPU-native solvers:
 
-1. **DC Solver** (`dc_gpu.py`) - Computes steady-state operating point
-2. **Transient Solver** (`transient_gpu.py`) - Time-domain simulation with backward Euler
+1. **DC Solver** (`analysis/dc.py`) - Computes steady-state operating point
+2. **Transient Solver** (`analysis/transient/`) - Time-domain simulation with adaptive BDF2
 
-Both use automatic differentiation via `sparsejac` for sparse Jacobian computation,
-eliminating the need for explicit analytical derivatives.
+Jacobians are computed analytically via OpenVAF-compiled Verilog-A models.
 
 ## Key Design Decisions
 
@@ -247,86 +253,42 @@ C6288 (5123 nodes, 10112 MOSFETs):
 ### DC Operating Point
 
 ```python
-from vajax.analysis.dc_gpu import dc_operating_point_gpu_vectorized
+from vajax import CircuitEngine
 
-# Build and prepare system
-system.build_device_groups()
+engine = CircuitEngine("circuit.sim")
+engine.parse()
 
-# Run GPU DC solver
-V, info = dc_operating_point_gpu_vectorized(
-    system,
-    vdd=1.2,
-    max_iterations=100,
-    abstol=1e-9,
-)
-
-print(f"Converged: {info['converged']}")
-print(f"Iterations: {info['iterations']}")
-```
-
-### DC with Source Stepping (for difficult circuits)
-
-```python
-from vajax.analysis.dc_gpu import dc_operating_point_gpu_vectorized_source_stepping
-
-V, info = dc_operating_point_gpu_vectorized_source_stepping(
-    system,
-    vdd_target=1.2,
-    vdd_steps=10,  # Ramp VDD from 0 to 1.2V
-    verbose=True,
-)
+# DC operating point is computed automatically before transient
+# Or run DC explicitly:
+# engine.run_dcinc()
 ```
 
 ### Transient Analysis
 
 ```python
-from vajax.analysis.transient_gpu import transient_analysis_gpu
+from vajax import CircuitEngine
+
+engine = CircuitEngine("circuit.sim")
+engine.parse()
 
 # For digital circuits - use icmode='uic' to skip DC
-times, solutions, info = transient_analysis_gpu(
-    system,
-    t_stop=2e-9,      # 2ns
-    t_step=2e-12,     # 2ps
-    icmode='uic',     # Use Initial Conditions (like VACASK)
-    vdd=1.2,
-)
+engine.prepare(t_stop=2e-9, dt=2e-12)
+result = engine.run_transient()
 
-# For analog circuits - compute DC first
-times, solutions, info = transient_analysis_gpu(
-    system,
-    t_stop=1e-6,
-    t_step=1e-9,
-    icmode='op',      # Compute DC operating point first
-    vdd=1.2,
-)
+# For analog circuits with sparse solver
+engine.prepare(t_stop=1e-6, dt=1e-9, use_sparse=True)
+result = engine.run_transient()
 ```
 
-## Current Limitations
+## Current State
 
-1. **Linear solver:** Currently uses dense solve on CPU, sparse solve on GPU
-   - GPU sparse solve via `jax.experimental.sparse.linalg.spsolve`
-   - For very large circuits, consider iterative methods (GMRES, BiCGSTAB)
+Since this document was written, major improvements have been made:
 
-2. **Fixed timestep:** No adaptive timestepping yet
-   - Must choose dt based on fastest circuit dynamics
-   - Too large: accuracy issues; too small: slow simulation
-
-3. **Model coverage:**
-   - Transient: Level-1 MOSFETs only
-   - DC: BSIM-like model with more features
-   - No capacitors in DC (would need AC analysis)
-
-4. **AND gate convergence:** The AND gate test shows convergence issues with the
-   level-1 model in transient. More sophisticated models or relaxed tolerances
-   may be needed for complex logic gates.
-
-## Future Work
-
-1. **Adaptive timestepping** - Use LTE (Local Truncation Error) control
-2. **Unified MOSFET model** - Same BSIM-like model for both DC and transient
-3. **Iterative linear solvers** - For very large circuits
-4. **Parallel timesteps** - Use `lax.scan` for GPU-resident time loops
-5. **Capacitor support in DC** - For AC analysis
+1. **Adaptive timestepping**: BDF2 with LTE control is implemented
+2. **Unified device models**: All devices use OpenVAF-compiled Verilog-A (PSP103, etc.)
+3. **GPU-resident time loops**: Transient uses `lax.scan` for full GPU execution
+4. **Sparse solver**: BCOO/BCSR with `spsolve` for large circuits
+5. **AC and noise analysis**: Frequency-domain analyses are available
 
 ## References
 

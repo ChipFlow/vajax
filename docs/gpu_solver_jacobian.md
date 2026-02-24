@@ -1,5 +1,11 @@
 # GPU Solver Jacobian: Autodiff vs Analytical
 
+!!! note "Historical document"
+    This documents a solved investigation. The files referenced below
+    (`dc_gpu.py`, `transient_gpu.py`, `benchmarks/c6288.py`) no longer exist.
+    DC analysis is now in `analysis/dc.py`, transient in `analysis/transient/`,
+    and all device models use OpenVAF analytical Jacobians.
+
 ## Status: SOLVED
 
 The GPU solver has been fully migrated to analytical Jacobians, eliminating the convergence issues. This document describes the original problem and solution for reference.
@@ -123,10 +129,10 @@ J_diag = jnp.where(jnp.abs(J_diag) < gds_min, jnp.sign(J_diag) * gds_min, J_diag
 
 ## Files Involved
 
-- `vajax/analysis/dc_gpu.py` - GPU DC solver
-- `vajax/analysis/transient_gpu.py` - GPU transient solver
-- `vajax/benchmarks/c6288.py` - `create_simple_mosfet_eval()` at line 179
-- `openvaf-py/openvaf_jax.py` - OpenVAF→JAX translator
+- `vajax/analysis/dc.py` - DC operating point solver
+- `vajax/analysis/transient/` - Transient analysis (scan/loop strategies)
+- `vajax/analysis/solver.py` - Newton-Raphson with `lax.while_loop`
+- `openvaf_jax/` - OpenVAF→JAX translator
 - `vajax/devices/verilog_a.py` - VerilogADevice wrapper
 
 ## Test Case
