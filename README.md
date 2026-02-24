@@ -1,9 +1,9 @@
 # VAJAX: GPU-Accelerated Analog Circuit Simulator
 
-[![Tests](https://github.com/ChipFlow/vajax/actions/workflows/test.yml/badge.svg)](https://github.com/ChipFlow/vajax/actions/workflows/test.yml)
-[![GPU Tests](https://github.com/ChipFlow/vajax/actions/workflows/test-gpu.yml/badge.svg)](https://github.com/ChipFlow/vajax/actions/workflows/test-gpu.yml)
-[![Lint](https://github.com/ChipFlow/vajax/actions/workflows/lint.yml/badge.svg)](https://github.com/ChipFlow/vajax/actions/workflows/lint.yml)
-[![Benchmark](https://github.com/ChipFlow/vajax/actions/workflows/benchmark-comparison.yml/badge.svg)](https://github.com/ChipFlow/vajax/actions/workflows/benchmark-comparison.yml)
+[![Tests](https://github.com/ChipFlow/jax-spice/actions/workflows/test.yml/badge.svg)](https://github.com/ChipFlow/jax-spice/actions/workflows/test.yml)
+[![GPU Tests](https://github.com/ChipFlow/jax-spice/actions/workflows/test-gpu.yml/badge.svg)](https://github.com/ChipFlow/jax-spice/actions/workflows/test-gpu.yml)
+[![Lint](https://github.com/ChipFlow/jax-spice/actions/workflows/lint.yml/badge.svg)](https://github.com/ChipFlow/jax-spice/actions/workflows/lint.yml)
+[![Benchmark](https://github.com/ChipFlow/jax-spice/actions/workflows/benchmark-comparison.yml/badge.svg)](https://github.com/ChipFlow/jax-spice/actions/workflows/benchmark-comparison.yml)
 
 A proof-of-concept GPU-accelerated analog circuit simulator built on JAX, demonstrating:
 - **Automatic differentiation** for computing device Jacobians without explicit derivatives
@@ -15,7 +15,7 @@ A proof-of-concept GPU-accelerated analog circuit simulator built on JAX, demons
 
 VAJAX is in active development as a proof-of-concept. All VACASK benchmark circuits are passing.
 
-**[Full benchmark results and test coverage →](https://chipflow.github.io/vajax/)**
+**[Documentation & benchmark results →](https://docs.chipflow.io/vajax/)**
 
 ## Validation: Three-Way Comparison
 
