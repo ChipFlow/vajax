@@ -115,7 +115,8 @@ vajax/analysis/
 └── sparse.py          # JAX sparse utilities (BCOO)
 
 vajax/devices/
-└── openvaf_device.py  # Batched OpenVAF device evaluation
+├── verilog_a.py     # OpenVAF Verilog-A device wrapper
+└── vsource.py       # Voltage/current source waveforms
 
 vajax/benchmarks/
 └── runner.py          # VACASK benchmark runner

@@ -167,8 +167,7 @@ Run DC transfer function analysis.
 
 ```python
 result = engine.run_dcxf(
-    input_source: str,  # Name of input source
-    output_node: str,   # Name of output node
+    out: str | int = 1,  # Output node (name or index)
 ) -> DCXFResult
 ```
 
@@ -182,11 +181,13 @@ Run AC transfer function analysis.
 
 ```python
 result = engine.run_acxf(
-    input_source: str,       # Name of input source
-    output_node: str,        # Name of output node
-    fstart: float = 1.0,     # Start frequency (Hz)
-    fstop: float = 1e9,      # Stop frequency (Hz)
-    num_points: int = 100,   # Number of frequency points
+    out: str | int = 1,              # Output node (name or index)
+    freq_start: float = 1.0,        # Start frequency (Hz)
+    freq_stop: float = 1e6,         # Stop frequency (Hz)
+    mode: str = 'dec',              # 'dec', 'lin', 'oct', or 'list'
+    points: int = 10,               # Points per decade/octave
+    step: float = None,             # Frequency step for 'lin' mode
+    values: List[float] = None,     # Explicit frequency list for 'list' mode
 ) -> ACXFResult
 ```
 

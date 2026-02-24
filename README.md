@@ -306,10 +306,10 @@ results = engine.run_corners(corners)
 dcinc_result = engine.run_dcinc()
 
 # DC transfer function
-dcxf_result = engine.run_dcxf(input_source="vin", output_node="vout")
+dcxf_result = engine.run_dcxf(out="vout")
 
 # AC transfer function
-acxf_result = engine.run_acxf(input_source="vin", output_node="vout")
+acxf_result = engine.run_acxf(out="vout", freq_start=1e3, freq_stop=1e9)
 ```
 
 ## Verilog-A Integration
