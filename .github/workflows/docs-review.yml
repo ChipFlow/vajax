@@ -44,6 +44,10 @@ jobs:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
           GH_TOKEN: ${{ github.token }}
         run: |
+          if [ -z "$ANTHROPIC_API_KEY" ]; then
+            echo "ANTHROPIC_API_KEY not set — skipping Claude review"
+            exit 0
+          fi
           claude -p --model sonnet --allowedTools 'Read,Glob,Grep,Bash' <<'PROMPT'
           You are reviewing the VAJAX documentation for quality and correctness.
           The docs are in the docs/ directory and the built site is in site/.
