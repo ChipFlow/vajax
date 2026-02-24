@@ -106,7 +106,7 @@ uv sync --extra test
 JAX_PLATFORMS=cpu uv run pytest tests/ -v
 
 # Run a benchmark
-JAX_PLATFORMS=cpu uv run python -m vajax.benchmarks.runner vendor/VACASK/sim/ring.sim
+JAX_PLATFORMS=cpu uv run vajax benchmark ring
 ```
 
 ### Installation Options
@@ -263,39 +263,40 @@ voltages = result.voltages     # Dict of node_name -> voltage array
 ```python
 # Small-signal frequency response
 ac_result = engine.run_ac(
-    fstart=1e3,       # Start frequency (Hz)
-    fstop=1e9,        # Stop frequency (Hz)
-    num_points=100,   # Number of frequency points
-    sweep_type='dec', # 'dec', 'lin', or 'oct'
+    freq_start=1e3,   # Start frequency (Hz)
+    freq_stop=1e9,    # Stop frequency (Hz)
+    points=100,       # Points per decade
+    mode='dec',       # 'dec', 'lin', 'oct', or 'list'
 )
 ```
 
 ### Noise Analysis
 
 ```python
-# Compute noise figure across frequency
+# Compute noise across frequency
 noise_result = engine.run_noise(
-    fstart=1e3,
-    fstop=1e9,
+    freq_start=1e3,
+    freq_stop=1e9,
     input_source="vin",
-    output_node="vout",
+    out="vout",
 )
 ```
 
 ### Corner Analysis (PVT Sweep)
 
 ```python
-from vajax.analysis import create_pvt_corners
+from vajax.analysis.corners import create_pvt_corners
 
-# Create PVT corners
+# Create PVT corners (3x3x3 = 27 combinations)
 corners = create_pvt_corners(
-    process=['tt', 'ff', 'ss'],
-    voltage=[0.9, 1.0, 1.1],
-    temperature=[233, 300, 398],  # Kelvin
+    processes=['FF', 'TT', 'SS'],
+    voltages=[0.9, 1.0, 1.1],
+    temperatures=['cold', 'room', 'hot'],
 )
 
 # Run across all corners
-corner_results = engine.run_corners(corners)
+engine.prepare(t_stop=1e-6, dt=1e-9)
+results = engine.run_corners(corners)
 ```
 
 ### Transfer Function Analysis
@@ -316,14 +317,14 @@ acxf_result = engine.run_acxf(input_source="vin", output_node="vout")
 VAJAX can use production PDK models via OpenVAF:
 
 ```python
-from vajax.devices import VerilogADevice, compile_va
+from vajax.devices.verilog_a import compile_va, VerilogADevice
 
-# Compile a Verilog-A model
+# Compile a Verilog-A model to a JAX-compatible function
 model = compile_va("psp103.va")
 
-# Create device with model card parameters
-m1 = VerilogADevice(model, params={"type": 1, "vth0": 0.4, ...})
-system.add_device("M1", m1, ["d", "g", "s", "b"])
+# Devices are typically instantiated via CircuitEngine from a .sim netlist,
+# but can also be created directly for testing:
+device = VerilogADevice(model, params={"type": 1, "vth0": 0.4, ...})
 ```
 
 See `docs/vacask_osdi_inputs.md` for details on the OpenVAF integration.
@@ -332,7 +333,7 @@ See `docs/vacask_osdi_inputs.md` for details on the OpenVAF integration.
 
 ```bash
 # Run specific benchmark
-JAX_PLATFORMS=cpu uv run python -m vajax.benchmarks.runner vendor/VACASK/sim/ring.sim
+JAX_PLATFORMS=cpu uv run vajax benchmark ring
 
 # Profile with GPU
 JAX_PLATFORMS=cuda uv run python scripts/profile_gpu.py --benchmark ring

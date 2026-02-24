@@ -87,18 +87,22 @@ Run AC (small-signal frequency response) analysis.
 
 ```python
 result = engine.run_ac(
-    fstart: float,            # Start frequency (Hz)
-    fstop: float,             # Stop frequency (Hz)
-    num_points: int = 100,    # Number of frequency points
-    sweep_type: str = 'dec',  # 'dec', 'lin', or 'oct'
+    freq_start: float = 1.0,      # Start frequency (Hz)
+    freq_stop: float = 1e6,       # Stop frequency (Hz)
+    mode: str = 'dec',            # 'dec', 'lin', 'oct', or 'list'
+    points: int = 10,             # Points per decade/octave
+    step: float = None,           # Frequency step for 'lin' mode
+    values: List[float] = None,   # Explicit frequency list for 'list' mode
 ) -> ACResult
 ```
 
 **Parameters:**
-- `fstart`: Start frequency in Hz
-- `fstop`: Stop frequency in Hz
-- `num_points`: Number of frequency points
-- `sweep_type`: Sweep type - `'dec'` (decade), `'lin'` (linear), or `'oct'` (octave)
+- `freq_start`: Start frequency in Hz
+- `freq_stop`: Stop frequency in Hz
+- `mode`: Sweep mode - `'dec'` (decade), `'lin'` (linear), `'oct'` (octave), or `'list'`
+- `points`: Points per decade/octave (for `'dec'`/`'oct'` modes)
+- `step`: Frequency step for `'lin'` mode
+- `values`: Explicit frequency list for `'list'` mode
 
 **Returns:** `ACResult`
 
@@ -110,12 +114,13 @@ Run noise analysis.
 
 ```python
 result = engine.run_noise(
-    fstart: float,           # Start frequency (Hz)
-    fstop: float,            # Stop frequency (Hz)
-    input_source: str,       # Name of input source (e.g., "vin")
-    output_node: str,        # Name of output node (e.g., "vout")
-    num_points: int = 100,   # Number of frequency points
-    sweep_type: str = 'dec', # 'dec', 'lin', or 'oct'
+    out: str | int = 1,          # Output node (name or index)
+    input_source: str = "",      # Name of input source (e.g., "vin")
+    freq_start: float = 1.0,    # Start frequency (Hz)
+    freq_stop: float = 1e6,     # Stop frequency (Hz)
+    mode: str = 'dec',          # 'dec', 'lin', 'oct', or 'list'
+    points: int = 10,           # Points per decade/octave
+    temperature: float = 300.15, # Temperature (Kelvin)
 ) -> NoiseResult
 ```
 
@@ -128,18 +133,19 @@ result = engine.run_noise(
 Run PVT (Process-Voltage-Temperature) corner analysis.
 
 ```python
-from vajax.analysis import create_pvt_corners
+from vajax.analysis.corners import create_pvt_corners
 
 corners = create_pvt_corners(
-    process=['tt', 'ff', 'ss'],
-    voltage=[0.9, 1.0, 1.1],
-    temperature=[233, 300, 398],
+    processes=['FF', 'TT', 'SS'],
+    voltages=[0.9, 1.0, 1.1],
+    temperatures=['cold', 'room', 'hot'],
 )
 
-results = engine.run_corners(corners) -> List[CornerResult]
+engine.prepare(t_stop=1e-6, dt=1e-9)
+results = engine.run_corners(corners)
 ```
 
-**Returns:** List of `CornerResult` objects, one per corner combination.
+**Returns:** `CornerSweepResult` containing results for all corners.
 
 ---
 
@@ -188,21 +194,6 @@ result = engine.run_acxf(
 
 ---
 
-##### run_hb()
-
-Run harmonic balance analysis.
-
-```python
-result = engine.run_hb(
-    freq: float,            # Fundamental frequency (Hz)
-    num_harmonics: int = 7, # Number of harmonics
-) -> HBResult
-```
-
-**Returns:** `HBResult` with harmonic amplitudes and phases.
-
----
-
 #### Properties
 
 ##### node_names
@@ -234,15 +225,18 @@ Result of transient simulation.
 class TransientResult:
     times: Array                    # Time points array
     voltages: Dict[str, Array]      # Node voltages over time
+    currents: Dict[str, Array]      # Source currents over time
     stats: Dict[str, Any]           # Simulation statistics
 ```
 
 **Properties:**
 - `num_steps`: Number of time steps
 - `node_names`: List of node names
+- `source_names`: List of voltage source names with current data
 
 **Methods:**
 - `voltage(node: str) -> Array`: Get voltage waveform at a specific node
+- `current(source: str) -> Array`: Get current waveform through a voltage source
 
 **Example:**
 ```python
@@ -278,7 +272,7 @@ class ACResult:
 
 **Example:**
 ```python
-result = engine.run_ac(fstart=1e3, fstop=1e9, num_points=100)
+result = engine.run_ac(freq_start=1e3, freq_stop=1e9, points=100)
 
 # Get transfer function magnitude
 vout = result.voltages["out"]
@@ -310,11 +304,10 @@ Result of a single PVT corner simulation.
 ```python
 @dataclass
 class CornerResult:
-    corner_name: str             # Corner identifier (e.g., "tt_1.0V_300K")
-    process: str                 # Process corner (tt, ff, ss, ...)
-    voltage: float               # Supply voltage
-    temperature: float           # Temperature (Kelvin)
-    result: TransientResult      # Simulation result for this corner
+    corner: CornerConfig         # Corner configuration used
+    result: Any                  # Simulation result (TransientResult, etc.) or None if failed
+    converged: bool              # Whether simulation converged successfully
+    stats: Dict[str, Any]        # Additional statistics and metadata
 ```
 
 ---
@@ -326,16 +319,16 @@ class CornerResult:
 Create PVT corner combinations for corner analysis.
 
 ```python
-from vajax.analysis import create_pvt_corners
+from vajax.analysis.corners import create_pvt_corners
 
 corners = create_pvt_corners(
-    process=['tt', 'ff', 'ss'],     # Process corners
-    voltage=[0.9, 1.0, 1.1],        # Supply voltages
-    temperature=[233, 300, 398],    # Temperatures (Kelvin)
+    processes=['FF', 'TT', 'SS'],          # Process corners
+    voltages=[0.9, 1.0, 1.1],             # VDD scale factors
+    temperatures=['cold', 'room', 'hot'],  # Temperature corners
 )
 ```
 
-**Returns:** List of `PVTCorner` objects for all combinations.
+**Returns:** List of `CornerConfig` objects for all combinations (default: 27 = 3x3x3).
 
 ---
 
@@ -451,12 +444,11 @@ tran = engine.run_transient()
 print(f"Transient: {tran.num_steps} steps, final Vout={tran.voltage('out')[-1]:.3f}V")
 
 # Run AC analysis
-ac = engine.run_ac(fstart=1e3, fstop=1e9, num_points=100)
+ac = engine.run_ac(freq_start=1e3, freq_stop=1e9, points=100)
 print(f"AC: {len(ac.frequencies)} frequency points")
 
 # Run noise analysis
-noise = engine.run_noise(fstart=1e3, fstop=1e9, input_source="vin", output_node="vout")
-print(f"Noise figure at 1MHz: {noise.noise_figure[50]:.2f} dB")
+noise = engine.run_noise(freq_start=1e3, freq_stop=1e9, input_source="vin", out="vout")
 
 # Save results
 write_rawfile(tran, "transient.raw")
