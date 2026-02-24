@@ -17,13 +17,13 @@ import jax.numpy as jnp
 import pytest
 from jax import Array
 
-from vajax.analysis.engine import CircuitEngine
-from vajax.io.prn_reader import get_column, read_prn
 from tests.xyce_test_registry import (
     XYCE_NETLISTS,
     XYCE_OUTPUT,
     discover_xyce_tests,
 )
+from vajax.analysis.engine import CircuitEngine
+from vajax.io.prn_reader import get_column, read_prn
 
 # Get ALL discovered tests at module load time for parametrization
 ALL_TESTS = {t.name: t for t in discover_xyce_tests()}

@@ -41,12 +41,12 @@ os.environ.setdefault("XLA_PYTHON_CLIENT_ALLOCATOR", "platform")
 
 import jax
 
+from scripts.benchmark_utils import BenchmarkResult, get_vacask_benchmarks
 from vajax._logging import enable_performance_logging, logger
 
 # Import vajax first to auto-configure precision based on backend
 # (Metal/TPU use f32, CPU/CUDA use f64)
 from vajax.analysis import CircuitEngine
-from scripts.benchmark_utils import BenchmarkResult, get_vacask_benchmarks
 
 # Enable verbose logging with flush and memory stats for profiling visibility
 enable_performance_logging()

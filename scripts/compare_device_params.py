@@ -26,6 +26,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 # Import vajax first to auto-configure precision based on backend
+from scripts.benchmark_utils import get_vacask_benchmarks, log
 from vajax.analysis import CircuitEngine
 from vajax.analysis.debug import (
     check_param_coverage,
@@ -35,7 +36,6 @@ from vajax.analysis.debug import (
     format_param_trace,
     format_stats,
 )
-from scripts.benchmark_utils import get_vacask_benchmarks, log
 
 
 def main():

@@ -30,10 +30,11 @@ os.environ["JAX_PLATFORMS"] = "cpu"
 
 import jax
 
+from scripts.benchmark_utils import BenchmarkResult, get_vacask_benchmarks, log
+
 # Import vajax first to auto-configure precision based on backend
 # (Metal/TPU use f32, CPU/CUDA use f64)
 from vajax.analysis import CircuitEngine
-from scripts.benchmark_utils import BenchmarkResult, get_vacask_benchmarks, log
 
 
 def run_benchmark(

@@ -21,6 +21,11 @@ import numpy as np
 import pytest
 from jax import Array
 
+from tests.ngspice_test_registry import (
+    PROJECT_ROOT,
+    NgspiceTestCase,
+    discover_ngspice_tests,
+)
 from vajax.analysis.engine import CircuitEngine
 from vajax.io.ngspice_out_reader import read_reference_file
 from vajax.netlist_converter import Converter
@@ -31,11 +36,6 @@ from vajax.utils.ngspice import (
     run_ngspice,
 )
 from vajax.utils.waveform_compare import WaveformComparison, compare_waveforms
-from tests.ngspice_test_registry import (
-    PROJECT_ROOT,
-    NgspiceTestCase,
-    discover_ngspice_tests,
-)
 
 # Get ALL discovered tests at module load time for parametrization
 # No device filtering - we want to see how we do against the full suite
