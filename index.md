@@ -1,8 +1,8 @@
 # VAJAX CI Summary
 
-_Last updated: 2026-02-24 02:07 UTC_
+_Last updated: 2026-02-24 02:08 UTC_
 
-_Commit: [2cb5651b](https://github.com/ChipFlow/vajax/commit/2cb5651be1331fcb08506718e91e5fb270ee4490)_
+_Commit: [ce571fd1](https://github.com/ChipFlow/vajax/commit/ce571fd10194fa1e408f621a1e218236c777cce2)_
 
 ## Test Coverage
 
@@ -24,11 +24,11 @@ _Commit: [2cb5651b](https://github.com/ChipFlow/vajax/commit/2cb5651be1331fcb085
 
 | Benchmark | Steps | VAJAX (ms/step) | VACASK (ms/step) | Ratio | Startup |
 |-----------|-------|---------------------|------------------|-------|---------|
-| rc | 1,000,000 | 0.0123 | 0.0019 | 6.49x | 3.7s |
-| graetz | 1,000,000 | 0.0218 | 0.0040 | 5.51x | 9.5s |
-| mul | 500,000 | 0.0351 | 0.0040 | 8.78x | 7.3s |
-| ring | 19,999 | 0.5265 | 0.1122 | 4.69x | 152.0s |
-| tb_dp | 299 | 0.0855 | N/A | N/A | 5.4s |
+| rc | 1,000,000 | 0.0135 | 0.0019 | 7.03x | 4.5s |
+| graetz | 1,000,000 | 0.0194 | 0.0038 | 5.17x | 10.4s |
+| mul | 500,000 | 0.0416 | 0.0038 | 11.03x | 7.5s |
+| ring | 19,999 | 0.5642 | 0.1086 | 5.19x | 165.1s |
+| tb_dp | 299 | 0.1048 | N/A | N/A | 5.5s |
 
 _No gpu benchmarks benchmark data available._
 
