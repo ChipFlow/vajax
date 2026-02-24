@@ -104,7 +104,7 @@ jobs:
             --commit-sha "${{ github.event.workflow_run.head_sha }}"
 
       - name: Build docs site
-        run: uv run mkdocs build --site-dir ./site
+        run: .venv/bin/mkdocs build --site-dir ./site
 
       - name: Deploy to GitHub Pages
         uses: peaceiris/actions-gh-pages@v4
