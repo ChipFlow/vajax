@@ -17,7 +17,7 @@ sys.path.insert(0, str(project_root / "openvaf_jax" / "openvaf_py"))
 
 import jax.numpy as jnp
 
-from jax_spice.analysis import ACConfig, ACResult, CircuitEngine, generate_frequencies
+from vajax.analysis import ACConfig, ACResult, CircuitEngine, generate_frequencies
 
 
 class TestFrequencyGeneration:

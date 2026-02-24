@@ -20,12 +20,12 @@ from jax import config
 
 from openvaf_jax import OpenVAFToJAX
 
-# Import jax_spice to auto-configure precision based on backend capabilities
+# Import vajax to auto-configure precision based on backend capabilities
 # This ensures Metal/TPU backends use f32 while CPU/CUDA use f64
 try:
-    import jax_spice  # noqa: F401
+    import vajax  # noqa: F401
 except ImportError:
-    # Fallback if jax_spice not installed - enable x64 for CPU/CUDA
+    # Fallback if vajax not installed - enable x64 for CPU/CUDA
     config.update("jax_enable_x64", True)
 
 # Base directories

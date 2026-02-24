@@ -37,7 +37,7 @@ CJ0 = 10e-9             # Junction capacitance [F]
 VCRIT = VT * log(VT / (sqrt(2) * IS))
 
 # Paths
-# Path: tests/test_osdi_methodology.py -> openvaf_py -> openvaf_jax -> jax-spice (root)
+# Path: tests/test_osdi_methodology.py -> openvaf_py -> openvaf_jax -> va-jax (root)
 PROJECT_ROOT = Path(__file__).parent.parent.parent.parent
 OSDI_TEST_DATA = PROJECT_ROOT / "vendor" / "OpenVAF" / "openvaf" / "test_data" / "osdi"
 

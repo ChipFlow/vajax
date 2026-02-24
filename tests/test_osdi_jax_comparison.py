@@ -26,8 +26,8 @@ import openvaf_py  # noqa: E402
 import osdi_py  # noqa: E402 - MUST be imported before openvaf_py/openvaf_jax
 
 import openvaf_jax  # noqa: E402
-from jax_spice import build_simparams, configure_precision
-from jax_spice.debug.jacobian import compare_jacobians
+from vajax import build_simparams, configure_precision
+from vajax.debug.jacobian import compare_jacobians
 
 # =============================================================================
 # VAMS-LRM Tolerances (Section 3.6.1.2)

@@ -3,7 +3,7 @@
 Tests the PVT (Process/Voltage/Temperature) corner sweep capabilities.
 """
 
-from jax_spice.analysis.corners import (
+from vajax.analysis.corners import (
     PROCESS_CORNERS,
     TEMPERATURE_CORNERS,
     CornerConfig,

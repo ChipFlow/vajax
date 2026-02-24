@@ -6,7 +6,7 @@ Tests noise analysis against known analytical solutions.
 import jax.numpy as jnp
 import pytest
 
-from jax_spice.analysis import (
+from vajax.analysis import (
     CircuitEngine,
     NoiseResult,
     compute_flicker_noise_psd,

@@ -1,4 +1,4 @@
-# JAX-SPICE Development Guidelines
+# VA-JAX Development Guidelines
 
 ## GPU Optimization
 
@@ -30,7 +30,7 @@ Use JAX (`jnp`) for simulation hot paths that run on GPU. NumPy/SciPy are accept
 
 ### Performance Profile
 
-JAX-SPICE has a per-step fixed overhead of ~10-15 us from adaptive timestep
+VA-JAX has a per-step fixed overhead of ~10-15 us from adaptive timestep
 machinery, `jnp.where` branching, vmap batching, and COO matrix assembly. This
 overhead dominates for small circuits (6-11x slower than VACASK on CPU) but
 becomes negligible for large circuits (c6288: 1.2x on CPU, **2.9x faster on GPU**).
@@ -86,38 +86,38 @@ uv run python scripts/profile_gpu.py --benchmark ring,c6288
 
 ## Precision Configuration
 
-Precision is auto-configured on import via `jax_spice/__init__.py`:
+Precision is auto-configured on import via `vajax/__init__.py`:
 - **CPU/CUDA**: Float64 enabled (`jax_enable_x64=True`) for numerical accuracy
 - **Metal/TPU**: Float32 (`jax_enable_x64=False`) since these backends don't support float64 natively
 
 To check or override precision:
 ```python
-import jax_spice
+import vajax
 
 # Check current settings
-info = jax_spice.get_precision_info()
+info = vajax.get_precision_info()
 print(f"x64 enabled: {info['x64_enabled']}, backend: {info['backend']}")
 
 # Force specific precision (after import, before computation)
-jax_spice.configure_precision(force_x64=True)   # Force float64
-jax_spice.configure_precision(force_x64=False)  # Force float32
-jax_spice.configure_precision()                  # Auto-detect again
+vajax.configure_precision(force_x64=True)   # Force float64
+vajax.configure_precision(force_x64=False)  # Force float32
+vajax.configure_precision()                  # Auto-detect again
 ```
 
 ## Key Architecture
 
 ```
-jax_spice/analysis/
+vajax/analysis/
 ├── solver.py          # Newton-Raphson with lax.while_loop
 ├── dc.py              # DC operating point analysis
 ├── transient.py       # Transient analysis (vectorized GPU path)
 ├── mna.py             # MNA system representation
 └── sparse.py          # JAX sparse utilities (BCOO)
 
-jax_spice/devices/
+vajax/devices/
 └── openvaf_device.py  # Batched OpenVAF device evaluation
 
-jax_spice/benchmarks/
+vajax/benchmarks/
 └── runner.py          # VACASK benchmark runner
 ```
 
@@ -137,9 +137,9 @@ All devices are routed through OpenVAF except voltage/current sources:
 ## Solver Architecture
 
 The simulation hot paths use JAX for GPU acceleration:
-- `jax_spice/analysis/sparse.py` - JAX BCOO/BCSR sparse matrix operations
-- `jax_spice/analysis/solver.py` - Newton-Raphson with `lax.while_loop`
-- `jax_spice/analysis/transient/scan.py` - Time-stepping with `lax.scan`
+- `vajax/analysis/sparse.py` - JAX BCOO/BCSR sparse matrix operations
+- `vajax/analysis/solver.py` - Newton-Raphson with `lax.while_loop`
+- `vajax/analysis/transient/scan.py` - Time-stepping with `lax.scan`
 
 NumPy/SciPy are used appropriately for:
 - File I/O (`rawfile.py`, `prn_reader.py`)
@@ -206,7 +206,7 @@ f_masked = jnp.where(residual_mask, f, 0.0)
 max_f = jnp.max(jnp.abs(f_masked))
 ```
 
-### VACASK vs JAX-SPICE Alignment Status
+### VACASK vs VA-JAX Alignment Status
 
 | Benchmark | Node Count Match | DC OP Match | Notes |
 |-----------|------------------|-------------|-------|
@@ -253,10 +253,10 @@ For a 4-terminal device with 2 internal nodes (6 total), OSDI returns ~20 entrie
 
 ### Mapping Between Formats
 
-Use `jax_spice.debug.jacobian` helpers for comparison:
+Use `vajax.debug.jacobian` helpers for comparison:
 
 ```python
-from jax_spice.debug.jacobian import (
+from vajax.debug.jacobian import (
     osdi_to_dense_jacobian,
     compare_jacobians,
 )
@@ -332,9 +332,9 @@ cd vendor/OpenVAF && cargo build --release -p openvaf-viz
 
 ---
 
-## Debug Tools (`jax_spice.debug`)
+## Debug Tools (`vajax.debug`)
 
-The `jax_spice.debug` module provides utilities for debugging OSDI vs JAX discrepancies.
+The `vajax.debug` module provides utilities for debugging OSDI vs JAX discrepancies.
 See `docs/debug_tools.md` for comprehensive documentation.
 
 ### When to Use Debug Tools
@@ -353,7 +353,7 @@ See `docs/debug_tools.md` for comprehensive documentation.
 ### Quick Start
 
 ```python
-from jax_spice.debug import quick_compare, ModelComparator, MIRInspector
+from vajax.debug import quick_compare, ModelComparator, MIRInspector
 
 # One-shot comparison
 result = quick_compare(va_path, osdi_path, params, voltages)
@@ -396,7 +396,7 @@ inspector.print_type_param_info()
 For runtime transient issues (step rejection, LTE behaviour, NR convergence):
 
 ```python
-from jax_spice.debug import capture_step_trace, convergence_sweep, parse_vacask_debug_output
+from vajax.debug import capture_step_trace, convergence_sweep, parse_vacask_debug_output
 
 # 1. Sweep t_stop to find where convergence degrades
 results = convergence_sweep("graetz", [1e-3, 5e-3, 7e-3, 10e-3])
@@ -460,7 +460,7 @@ models shows the following callback usage:
 **$simparam:**
 - Registered dynamically via `ctx.register_simparam(name)`
 - Caller builds `simparams` array using `build_simparams(eval_meta, values)`
-- See `jax_spice/__init__.py:build_simparams()` for helper
+- See `vajax/__init__.py:build_simparams()` for helper
 
 **$display/$strobe:**
 - Disabled by default (`emit_debug_prints=False`)

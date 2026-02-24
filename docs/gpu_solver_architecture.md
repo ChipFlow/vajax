@@ -1,11 +1,11 @@
 # GPU Solver Architecture
 
-This document describes the GPU-native solver architecture for JAX-SPICE,
+This document describes the GPU-native solver architecture for VA-JAX,
 including DC operating point and transient analysis implementations.
 
 ## Overview
 
-JAX-SPICE provides two complementary GPU-native solvers:
+VA-JAX provides two complementary GPU-native solvers:
 
 1. **DC Solver** (`dc_gpu.py`) - Computes steady-state operating point
 2. **Transient Solver** (`transient_gpu.py`) - Time-domain simulation with backward Euler
@@ -247,7 +247,7 @@ C6288 (5123 nodes, 10112 MOSFETs):
 ### DC Operating Point
 
 ```python
-from jax_spice.analysis.dc_gpu import dc_operating_point_gpu_vectorized
+from vajax.analysis.dc_gpu import dc_operating_point_gpu_vectorized
 
 # Build and prepare system
 system.build_device_groups()
@@ -267,7 +267,7 @@ print(f"Iterations: {info['iterations']}")
 ### DC with Source Stepping (for difficult circuits)
 
 ```python
-from jax_spice.analysis.dc_gpu import dc_operating_point_gpu_vectorized_source_stepping
+from vajax.analysis.dc_gpu import dc_operating_point_gpu_vectorized_source_stepping
 
 V, info = dc_operating_point_gpu_vectorized_source_stepping(
     system,
@@ -280,7 +280,7 @@ V, info = dc_operating_point_gpu_vectorized_source_stepping(
 ### Transient Analysis
 
 ```python
-from jax_spice.analysis.transient_gpu import transient_analysis_gpu
+from vajax.analysis.transient_gpu import transient_analysis_gpu
 
 # For digital circuits - use icmode='uic' to skip DC
 times, solutions, info = transient_analysis_gpu(

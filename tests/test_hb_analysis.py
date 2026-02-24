@@ -2,7 +2,7 @@
 
 import jax.numpy as jnp
 
-from jax_spice.analysis.hb import (
+from vajax.analysis.hb import (
     HBConfig,
     HBResult,
     build_apft_matrices,

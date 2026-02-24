@@ -1,11 +1,11 @@
 """Xyce regression test runner.
 
-Runs tests from the Xyce_Regression suite against JAX-SPICE.
+Runs tests from the Xyce_Regression suite against VA-JAX.
 Auto-discovers all tests and runs them without filtering.
 
 The test workflow:
 1. Convert SPICE .cir to VACASK .sim format
-2. Run JAX-SPICE simulator
+2. Run VA-JAX simulator
 3. Compare output with expected .prn file
 """
 
@@ -17,8 +17,8 @@ import jax.numpy as jnp
 import pytest
 from jax import Array
 
-from jax_spice.analysis.engine import CircuitEngine
-from jax_spice.io.prn_reader import get_column, read_prn
+from vajax.analysis.engine import CircuitEngine
+from vajax.io.prn_reader import get_column, read_prn
 from tests.xyce_test_registry import (
     XYCE_NETLISTS,
     XYCE_OUTPUT,
@@ -36,8 +36,8 @@ def convert_spice_to_vacask(cir_path: Path, sim_path: Path) -> None:
         cir_path: Input SPICE .cir file
         sim_path: Output VACASK .sim file
     """
-    from jax_spice.netlist_converter.ng2vclib.converter import Converter
-    from jax_spice.netlist_converter.ng2vclib.dfl import default_config
+    from vajax.netlist_converter.ng2vclib.converter import Converter
+    from vajax.netlist_converter.ng2vclib.dfl import default_config
 
     # Get default config and add source directory
     cfg = default_config()
@@ -127,7 +127,7 @@ def run_xyce_test(
         check_columns: Specific columns to check (None = all)
 
     Returns:
-        Dict of computed values from JAX-SPICE
+        Dict of computed values from VA-JAX
     """
     cir_path = XYCE_NETLISTS / test_name / cir_file
     prn_path = XYCE_OUTPUT / test_name / f"{cir_file}.prn"
@@ -231,7 +231,7 @@ class TestXyceRegression:
         ids=list(ALL_TESTS.keys()),
     )
     def test_xyce(self, test_name):
-        """Run auto-discovered Xyce test against JAX-SPICE."""
+        """Run auto-discovered Xyce test against VA-JAX."""
         test_case = ALL_TESTS[test_name]
 
         if not test_case.netlist_path.exists():

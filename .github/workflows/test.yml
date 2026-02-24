@@ -70,7 +70,7 @@ jobs:
           path: openvaf_jax/openvaf_py/test-results-openvaf-py.xml
           if-no-files-found: ignore
 
-  test-jax-spice:
+  test-va-jax:
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
@@ -85,7 +85,7 @@ jobs:
           - name: benchmark-sparse
             tests: "tests/test_vacask_benchmarks.py -k 'sparse'"
             timeout: 45
-    name: test-jax-spice (${{ matrix.test-group.name }})
+    name: test-va-jax (${{ matrix.test-group.name }})
     steps:
       - name: Checkout with submodules
         uses: actions/checkout@v4
@@ -138,27 +138,27 @@ jobs:
           uv sync
           uv run maturin develop --release
 
-      - name: Install jax-spice with dev dependencies
+      - name: Install va-jax with dev dependencies
         run: uv sync --extra dev
 
       - name: Build UMFPACK FFI extension
-        working-directory: jax_spice/sparse
+        working-directory: vajax/sparse
         run: |
           uv pip install scikit-build-core nanobind
           uv pip install --no-build-isolation .
 
-      - name: Run jax-spice tests (${{ matrix.test-group.name }})
+      - name: Run va-jax tests (${{ matrix.test-group.name }})
         timeout-minutes: ${{ matrix.test-group.timeout }}
         env:
           JAX_PLATFORMS: cpu
-          JAX_SPICE_NO_PROGRESS: "1"
+          VA_JAX_NO_PROGRESS: "1"
         run: uv run pytest ${{ matrix.test-group.tests }} -v --tb=short --junitxml=test-results-${{ matrix.test-group.name }}.xml
 
       - name: Run benchmark tests
         if: matrix.test-group.name == 'unit'
         env:
           JAX_PLATFORMS: cpu
-          JAX_SPICE_NO_PROGRESS: "1"
+          VA_JAX_NO_PROGRESS: "1"
         run: uv run pytest benchmarks/test_benchmarks.py -v --tb=short --junitxml=test-results-benchmarks.xml
 
       - name: Upload test results
@@ -214,7 +214,7 @@ jobs:
           uv sync
           uv run maturin develop --release
 
-      - name: Install jax-spice with dev dependencies
+      - name: Install va-jax with dev dependencies
         run: uv sync --extra dev
 
       # Cache XLA compiled artifacts to speed up JAX compilation
@@ -227,7 +227,7 @@ jobs:
             xla-cache-${{ runner.os }}-${{ runner.arch }}-
 
       - name: Build UMFPACK FFI extension
-        working-directory: jax_spice/sparse
+        working-directory: vajax/sparse
         run: |
           uv pip install scikit-build-core nanobind
           uv pip install --no-build-isolation .
@@ -236,7 +236,7 @@ jobs:
         id: ngspice-tests
         env:
           JAX_PLATFORMS: cpu
-          JAX_SPICE_NO_PROGRESS: "1"
+          VA_JAX_NO_PROGRESS: "1"
         run: |
           uv run pytest tests/test_ngspice_regression.py -v --tb=short --junitxml=ngspice-results.xml 2>&1 | tee ngspice-output.txt
           echo "exit_code=${PIPESTATUS[0]}" >> $GITHUB_OUTPUT
@@ -316,7 +316,7 @@ jobs:
           uv sync
           uv run maturin develop --release
 
-      - name: Install jax-spice with dev dependencies
+      - name: Install va-jax with dev dependencies
         run: uv sync --extra dev
 
       # Cache XLA compiled artifacts to speed up JAX compilation
@@ -329,7 +329,7 @@ jobs:
             xla-cache-${{ runner.os }}-${{ runner.arch }}-
 
       - name: Build UMFPACK FFI extension
-        working-directory: jax_spice/sparse
+        working-directory: vajax/sparse
         run: |
           uv pip install scikit-build-core nanobind
           uv pip install --no-build-isolation .
@@ -338,7 +338,7 @@ jobs:
         id: xyce-tests
         env:
           JAX_PLATFORMS: cpu
-          JAX_SPICE_NO_PROGRESS: "1"
+          VA_JAX_NO_PROGRESS: "1"
         run: |
           uv run pytest tests/test_xyce_regression.py -v --tb=short --junitxml=xyce-results.xml 2>&1 | tee xyce-output.txt
           echo "exit_code=${PIPESTATUS[0]}" >> $GITHUB_OUTPUT

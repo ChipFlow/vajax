@@ -14,7 +14,7 @@ CODEGEN_BROKEN_MODELS: set = set()  # Empty - all models should work now
 
 # Models that hang during evaluation (investigation needed)
 # These cause CI timeout - mark xfail until root cause is found
-# See: https://github.com/ChipFlow/jax-spice/issues/19
+# See: https://github.com/ChipFlow/va-jax/issues/19
 HANGING_MODELS: set = {"bsimsoi", "hisim2", "hisimhv"}  # Hang after XLA compilation completes
 
 

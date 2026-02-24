@@ -1,4 +1,4 @@
-"""Test VACASK benchmarks using JAX-SPICE CircuitEngine API.
+"""Test VACASK benchmarks using VA-JAX CircuitEngine API.
 
 This module tests VACASK benchmark circuits using OpenVAF-compiled device models.
 Benchmarks are auto-discovered from vendor/VACASK/benchmark/*/vacask/runme.sim.
@@ -21,19 +21,19 @@ import jax
 import numpy as np
 import pytest
 
-# Maximum steps for CI tests (override with JAX_SPICE_MAX_STEPS env var)
+# Maximum steps for CI tests (override with VA_JAX_MAX_STEPS env var)
 # Default: 0 (no limit). CI should set to e.g. 10000 for faster tests.
-MAX_STEPS_ENV = int(os.environ.get("JAX_SPICE_MAX_STEPS", "0"))
+MAX_STEPS_ENV = int(os.environ.get("VA_JAX_MAX_STEPS", "0"))
 
-from jax_spice._logging import enable_performance_logging, logger
-from jax_spice.analysis import CircuitEngine
-from jax_spice.analysis.node_setup import setup_internal_nodes
-from jax_spice.benchmarks.registry import (
+from vajax._logging import enable_performance_logging, logger
+from vajax.analysis import CircuitEngine
+from vajax.analysis.node_setup import setup_internal_nodes
+from vajax.benchmarks.registry import (
     BENCHMARKS,
     BenchmarkInfo,
     get_benchmark,
 )
-from jax_spice.utils import compare_transient_waveforms, find_vacask_binary, rawread
+from vajax.utils import compare_transient_waveforms, find_vacask_binary, rawread
 
 enable_performance_logging()
 
@@ -149,7 +149,7 @@ class TestBenchmarkTransient:
 
         # Workaround for cuDSS/Spineax bug: running 3+ sparse solves with different
         # sparsity patterns causes GPU memory corruption. Limit to 2 benchmarks on GPU.
-        # See: https://github.com/ChipFlow/jax-spice/issues/XXX
+        # See: https://github.com/ChipFlow/va-jax/issues/XXX
         on_gpu = jax.default_backend() in ("cuda", "gpu")
         # Only allow graetz and mul on GPU (they pass), skip others
         gpu_allowed = ["graetz", "mul"]
@@ -247,7 +247,7 @@ def get_vacask_node_count(vacask_bin: Path, benchmark_name: str, timeout: int = 
 
 
 class TestNodeCountComparison:
-    """Test that JAX-SPICE node counts match VACASK."""
+    """Test that VA-JAX node counts match VACASK."""
 
     @pytest.fixture
     def vacask_bin(self):
@@ -259,7 +259,7 @@ class TestNodeCountComparison:
 
     @pytest.mark.parametrize("benchmark_name", ["rc", "graetz", "ring"])
     def test_node_count_matches_vacask(self, vacask_bin, benchmark_name: str):
-        """Compare JAX-SPICE node count with VACASK unknownCount (+/- 1)."""
+        """Compare VA-JAX node count with VACASK unknownCount (+/- 1)."""
         info = get_benchmark(benchmark_name)
         if info is None or not info.sim_path.exists():
             pytest.skip(f"Benchmark {benchmark_name} not found")
@@ -278,11 +278,11 @@ class TestNodeCountComparison:
 
         logger.info(f"\n{benchmark_name}:")
         logger.info(f"  VACASK: nodes={vacask_counts['nodes']}, unknowns={vacask_unknowns}")
-        logger.info(f"  JAX-SPICE: external={engine.num_nodes}, total={n_total}")
+        logger.info(f"  VA-JAX: external={engine.num_nodes}, total={n_total}")
 
         diff_total = abs(n_total - vacask_unknowns)
         assert diff_total <= 1, (
-            f"Node count differs: JAX-SPICE={n_total}, VACASK unknowns={vacask_unknowns}"
+            f"Node count differs: VA-JAX={n_total}, VACASK unknowns={vacask_unknowns}"
         )
 
     def test_c6288_node_count(self, vacask_bin):
@@ -305,12 +305,12 @@ class TestNodeCountComparison:
 
         logger.info("\nc6288:")
         logger.info(f"  VACASK: nodes={vacask_counts['nodes']}, unknowns={vacask_unknowns}")
-        logger.info(f"  JAX-SPICE: external={engine.num_nodes}, total={n_total}")
+        logger.info(f"  VA-JAX: external={engine.num_nodes}, total={n_total}")
 
         expected = vacask_unknowns + 1
         ratio = abs(n_total - expected) / expected
         assert ratio <= 0.1, (
-            f"c6288: JAX-SPICE={n_total}, expected~{expected} ({ratio * 100:.1f}% off)"
+            f"c6288: VA-JAX={n_total}, expected~{expected} ({ratio * 100:.1f}% off)"
         )
 
 
@@ -479,13 +479,13 @@ def run_vacask_simulation(vacask_bin: Path, info: BenchmarkInfo, t_stop: float, 
             raw_file.unlink()
 
 
-# compare_waveforms and find_rising_edge_time are now in jax_spice.utils.waveform_compare
+# compare_waveforms and find_rising_edge_time are now in vajax.utils.waveform_compare
 
 
 def _compare_result_to_vacask(
     result, vacask_results: dict, spec: ComparisonSpec, solver_type: str
 ) -> dict:
-    """Compare a JAX-SPICE result against VACASK reference.
+    """Compare a VA-JAX result against VACASK reference.
 
     Returns dict with comparison metrics and pass/fail status.
     """
@@ -532,7 +532,7 @@ def _compare_result_to_vacask(
 
 
 class TestVACASKResultComparison:
-    """Compare JAX-SPICE simulation results against VACASK reference.
+    """Compare VA-JAX simulation results against VACASK reference.
 
     Uses cached results from TestBenchmarkTransient when available.
     Compares both dense and sparse solver results against VACASK.
@@ -565,7 +565,7 @@ class TestVACASKResultComparison:
             max_t_stop = dt * MAX_STEPS_ENV
             if t_stop > max_t_stop:
                 logger.info(
-                    f"Limiting steps from {int(t_stop / dt):,} to {MAX_STEPS_ENV:,} (JAX_SPICE_MAX_STEPS)"
+                    f"Limiting steps from {int(t_stop / dt):,} to {MAX_STEPS_ENV:,} (VA_JAX_MAX_STEPS)"
                 )
                 t_stop = max_t_stop
 
@@ -657,7 +657,7 @@ class TestVACASKResultComparison:
 
 
 # =============================================================================
-# tb_dp Benchmark (now auto-discovered from jax_spice/benchmarks/data/)
+# tb_dp Benchmark (now auto-discovered from vajax/benchmarks/data/)
 # =============================================================================
 
 
@@ -665,7 +665,7 @@ class TestTbDpBenchmark:
     """Test IHP SG13G2 dual-port SRAM benchmark (tb_dp512x8).
 
     Note: tb_dp is now auto-discovered by the registry from
-    jax_spice/benchmarks/data/tb_dp/*.sim
+    vajax/benchmarks/data/tb_dp/*.sim
     """
 
     def test_parse(self):

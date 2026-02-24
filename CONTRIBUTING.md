@@ -1,4 +1,4 @@
-# Contributing to JAX-SPICE
+# Contributing to VA-JAX
 
 This guide covers development setup, code organization, and contribution guidelines.
 
@@ -16,7 +16,7 @@ This guide covers development setup, code organization, and contribution guideli
 ```bash
 # Clone and enter directory
 git clone <repo-url>
-cd jax-spice
+cd va-jax
 
 # Install dependencies with uv
 uv sync
@@ -54,8 +54,8 @@ JAX_PLATFORMS=cuda uv run python -c "import jax; print(jax.devices())"
 ## Project Structure
 
 ```
-jax-spice/
-├── jax_spice/              # Main library
+va-jax/
+├── vajax/              # Main library
 │   ├── devices/            # Device models
 │   ├── analysis/           # Circuit solvers
 │   ├── netlist/            # Netlist parsing
@@ -71,10 +71,10 @@ jax-spice/
 
 | Module | Purpose | Key Files |
 |--------|---------|-----------|
-| `jax_spice.devices` | Device models | `base.py`, `mosfet_simple.py`, `openvaf_device.py` |
-| `jax_spice.analysis` | Solvers | `mna.py`, `dc.py`, `transient.py` |
-| `jax_spice.netlist` | Parsing | `parser.py`, `circuit.py` |
-| `jax_spice.benchmarks` | Benchmarks | `runner.py` |
+| `vajax.devices` | Device models | `base.py`, `mosfet_simple.py`, `openvaf_device.py` |
+| `vajax.analysis` | Solvers | `mna.py`, `dc.py`, `transient.py` |
+| `vajax.netlist` | Parsing | `parser.py`, `circuit.py` |
+| `vajax.benchmarks` | Benchmarks | `runner.py` |
 
 ## Running Tests
 
@@ -89,7 +89,7 @@ JAX_PLATFORMS=cpu uv run pytest tests/test_vacask_suite.py -v
 JAX_PLATFORMS=cpu uv run pytest tests/test_resistor.py::test_ohms_law -v
 
 # With coverage
-JAX_PLATFORMS=cpu uv run pytest tests/ --cov=jax_spice --cov-report=html
+JAX_PLATFORMS=cpu uv run pytest tests/ --cov=vajax --cov-report=html
 
 # openvaf-py tests (separate environment)
 cd openvaf-py && JAX_PLATFORMS=cpu ../.venv/bin/python -m pytest tests/ -v
@@ -107,13 +107,13 @@ cd openvaf-py && JAX_PLATFORMS=cpu ../.venv/bin/python -m pytest tests/ -v
 
 ```bash
 # Format with ruff
-uv run ruff format jax_spice tests
+uv run ruff format vajax tests
 
 # Lint
-uv run ruff check jax_spice tests
+uv run ruff check vajax tests
 
 # Type check
-uv run pyright jax_spice
+uv run pyright vajax
 ```
 
 Configuration is in `pyproject.toml`:
@@ -136,8 +136,8 @@ Configuration is in `pyproject.toml`:
 All devices implement a common interface:
 
 ```python
-from jax_spice.devices import DeviceStamps
-from jax_spice.analysis import AnalysisContext
+from vajax.devices import DeviceStamps
+from vajax.analysis import AnalysisContext
 from jax import Array
 
 def evaluate(
@@ -190,12 +190,12 @@ I_all = jax.vmap(mosfet_evaluate)(V_batched, params_batched)
 
 ## Adding a New Device
 
-1. Create `jax_spice/devices/your_device.py`:
+1. Create `vajax/devices/your_device.py`:
 
 ```python
 import jax.numpy as jnp
-from jax_spice.devices.base import DeviceStamps
-from jax_spice.analysis.context import AnalysisContext
+from vajax.devices.base import DeviceStamps
+from vajax.analysis.context import AnalysisContext
 
 def your_device(
     V: jnp.ndarray,           # Terminal voltages [V1, V2, ...]
@@ -224,16 +224,16 @@ def your_device(
     return DeviceStamps(currents=I, conductances=G)
 ```
 
-2. Export from `jax_spice/devices/__init__.py`
+2. Export from `vajax/devices/__init__.py`
 
 3. Add tests in `tests/test_your_device.py`
 
 ## Adding a New Analysis Type
 
-1. Create `jax_spice/analysis/your_analysis.py`
+1. Create `vajax/analysis/your_analysis.py`
 2. Use `MNASystem` for device management
 3. Build on existing patterns from `dc.py` or `transient.py`
-4. Export from `jax_spice/analysis/__init__.py`
+4. Export from `vajax/analysis/__init__.py`
 
 ## Debugging Tips
 
@@ -263,7 +263,7 @@ with jax.disable_jit():
    - Invalid device parameters
 
 3. **Convergence failures**: Try:
-   - Homotopy chain: `run_homotopy_chain()` from `jax_spice.analysis.homotopy`
+   - Homotopy chain: `run_homotopy_chain()` from `vajax.analysis.homotopy`
    - GMIN stepping: `gmin_stepping()` with mode="gdev" or "gshunt"
    - Source stepping: `source_stepping()`
    - Increased iteration limit
@@ -284,7 +284,7 @@ uv run python scripts/profile_gpu_cloudrun.py --benchmark ring --timesteps 50
 1. Create a feature branch from `main`
 2. Make your changes with clear commit messages
 3. Ensure tests pass: `JAX_PLATFORMS=cpu uv run pytest tests/ -v`
-4. Run linter: `uv run ruff check jax_spice tests`
+4. Run linter: `uv run ruff check vajax tests`
 5. Push and create PR
 6. Wait for CI checks to pass
 

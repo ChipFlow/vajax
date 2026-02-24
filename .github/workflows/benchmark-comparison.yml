@@ -113,10 +113,10 @@ jobs:
           cargo build --release -p openvaf-driver --bin openvaf-r --no-default-features --features llvm18
           echo "OPENVAF_DIR=${{ github.workspace }}/vendor/OpenVAF/target/release" >> "$GITHUB_ENV"
 
-      - name: Install jax-spice
+      - name: Install va-jax
         run: uv sync --extra dev
 
-      - name: Run JAX-SPICE tests
+      - name: Run VA-JAX tests
         if: matrix.run_tests
         env:
           JAX_PLATFORMS: cpu
@@ -182,7 +182,7 @@ jobs:
           ccache -s
 
       # Run automated VACASK result comparison tests (standard benchmarks only)
-      # These tests compare simulation waveforms between JAX-SPICE and VACASK
+      # These tests compare simulation waveforms between VA-JAX and VACASK
       # Tests marked with xfail are expected to fail and won't break CI
       - name: Run VACASK result comparison tests
         if: matrix.run_tests
@@ -192,9 +192,9 @@ jobs:
           JAX_ENABLE_X64: "1"
           VACASK_BIN: ${{ github.workspace }}/vendor/VACASK/build/simulator/vacask
           # Limit steps in CI to avoid timeout (full 1M steps takes too long)
-          JAX_SPICE_MAX_STEPS: "10000"
+          VA_JAX_MAX_STEPS: "10000"
           # Disable progress callbacks to allow XLA compilation caching
-          JAX_SPICE_NO_PROGRESS: "1"
+          VA_JAX_NO_PROGRESS: "1"
           # Enable JAX compilation tracing to debug CI slowdowns
           JAX_LOG_COMPILES: "1"
           JAX_EXPLAIN_CACHE_MISSES: "1"
@@ -227,11 +227,11 @@ jobs:
         env:
           JAX_PLATFORMS: cpu
           JAX_ENABLE_X64: "1"
-          JAX_SPICE_NO_PROGRESS: "1"
+          VA_JAX_NO_PROGRESS: "1"
           JAX_LOG_COMPILES: "1"
           JAX_EXPLAIN_CACHE_MISSES: "1"
         run: |
-          echo "Running JAX-SPICE vs VACASK comparison (${{ matrix.name }})..."
+          echo "Running VA-JAX vs VACASK comparison (${{ matrix.name }})..."
           echo "Benchmarks: ${{ matrix.benchmarks }}"
           uv run python scripts/compare_vacask.py \
             --benchmark ${{ matrix.benchmarks }} \
@@ -357,7 +357,7 @@ jobs:
                 echo ""
                 echo "VACASK binary exists but OSDI device files are missing."
                 echo "openvaf-r OSDI compilation fails on Linux/LLVM18 (known upstream issue)."
-                echo "JAX-SPICE benchmarks ran successfully - showing JAX-SPICE only results."
+                echo "VA-JAX benchmarks ran successfully - showing VA-JAX only results."
                 echo ""
                 echo "For full comparison results, run locally on macOS."
                 echo ""
@@ -365,7 +365,7 @@ jobs:
 
               echo "### Per-Step Timing"
               echo ""
-              echo "| Benchmark | Steps | JAX-SPICE (ms/step) | VACASK (ms/step) | Ratio |"
+              echo "| Benchmark | Steps | VA-JAX (ms/step) | VACASK (ms/step) | Ratio |"
               echo "|-----------|-------|---------------------|------------------|-------|"
 
               # Parse the per-step summary table from the log
@@ -377,7 +377,7 @@ jobs:
               echo ""
               echo "### Total Wall Time"
               echo ""
-              echo "| Benchmark | Steps | JAX-SPICE (ms) | VACASK (ms) | Ratio |"
+              echo "| Benchmark | Steps | VA-JAX (ms) | VACASK (ms) | Ratio |"
               echo "|-----------|-------|----------------|-------------|-------|"
 
               # Parse the total time summary table from the log
@@ -389,8 +389,8 @@ jobs:
               echo ""
               echo "### Interpretation"
               echo ""
-              echo "- **Ratio < 1.0**: JAX-SPICE is faster"
-              echo "- **Ratio > 1.0**: JAX-SPICE is slower (overhead-dominated for small circuits)"
+              echo "- **Ratio < 1.0**: VA-JAX is faster"
+              echo "- **Ratio > 1.0**: VA-JAX is slower (overhead-dominated for small circuits)"
               echo "- **N/A**: VACASK comparison not available"
             else
               echo "**Error**: Benchmark comparison log not found"

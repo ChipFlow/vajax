@@ -4,7 +4,7 @@ import jax
 import jax.numpy as jnp
 import pytest
 
-from jax_spice.analysis.gpu_backend import (
+from vajax.analysis.gpu_backend import (
     BackendConfig,
     backend_info,
     get_default_dtype,

@@ -59,9 +59,9 @@ print(f"  V(1) = {ng[0, 1]:.6f} V")
 print(f"  V(2) = {ng[0, 3]:.6f} V")
 print(f"  I(VDD) = {ng[0, 5] * 1e6:.2f} µA")
 
-# Run JAX-SPICE Full MNA
-from jax_spice.analysis.engine import CircuitEngine
-from jax_spice.analysis.transient import FullMNAStrategy
+# Run VA-JAX Full MNA
+from vajax.analysis.engine import CircuitEngine
+from vajax.analysis.transient import FullMNAStrategy
 
 runner = CircuitEngine("vendor/VACASK/benchmark/ring/vacask/runme.sim")
 runner.parse()

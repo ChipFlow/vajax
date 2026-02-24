@@ -8,7 +8,7 @@ import math
 import jax.numpy as jnp
 import pytest
 
-from jax_spice.analysis import (
+from vajax.analysis import (
     ACXFResult,
     CircuitEngine,
     DCIncResult,

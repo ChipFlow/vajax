@@ -1,11 +1,11 @@
 # Debug Tools Reference
 
-This document describes the debugging utilities in `jax_spice.debug` for troubleshooting OSDI vs JAX discrepancies.
+This document describes the debugging utilities in `vajax.debug` for troubleshooting OSDI vs JAX discrepancies.
 
 ## Quick Start
 
 ```python
-from jax_spice.debug import quick_compare, inspect_model
+from vajax.debug import quick_compare, inspect_model
 
 # Compare OSDI vs JAX at a bias point
 result = quick_compare(
@@ -20,7 +20,7 @@ print(result)
 inspect_model("vendor/OpenVAF/integration_tests/PSP102/psp102.va")
 
 # Graph-based queries (requires networkx)
-from jax_spice.debug import MIRGraph
+from vajax.debug import MIRGraph
 graph = MIRGraph.from_va_file("model.va", func='eval')
 graph.dae_residual('dt')      # Find residual variable
 graph.param_to_value('rth')   # Map param to MIR value
@@ -48,7 +48,7 @@ graph.param_to_value('rth')   # Map param to MIR value
 Full-featured comparison between OSDI and JAX implementations.
 
 ```python
-from jax_spice.debug import ModelComparator
+from vajax.debug import ModelComparator
 
 comparator = ModelComparator(
     va_path="path/to/model.va",
@@ -107,7 +107,7 @@ for idx, val, implied_t in cache.temperature_related:
 Examine MIR (Mid-level IR) structure for debugging translation issues.
 
 ```python
-from jax_spice.debug import MIRInspector
+from vajax.debug import MIRInspector
 
 inspector = MIRInspector("path/to/model.va")
 
@@ -151,7 +151,7 @@ Graph-based queries for MIR analysis. Requires `networkx`.
 Build a queryable graph from a VA model:
 
 ```python
-from jax_spice.debug import MIRGraph
+from vajax.debug import MIRGraph
 
 graph = MIRGraph.from_va_file("model.va", func='eval', include_dae=True)
 ```
@@ -227,7 +227,7 @@ is_const, value = graph.is_constant('v3')
 Format-aware comparison between OSDI (sparse, column-major) and JAX (dense, row-major).
 
 ```python
-from jax_spice.debug import compare_jacobians, print_jacobian_structure
+from vajax.debug import compare_jacobians, print_jacobian_structure
 
 # Compare Jacobians
 result = compare_jacobians(
@@ -279,7 +279,7 @@ step acceptance/rejection, and VACASK comparison.
 ### Parsing Debug Output
 
 ```python
-from jax_spice.debug import parse_debug_output, StepRecord
+from vajax.debug import parse_debug_output, StepRecord
 
 # Parse debug_steps text captured from a transient run
 records: list[StepRecord] = parse_debug_output(debug_text)
@@ -290,7 +290,7 @@ for r in records[:5]:
 ### Capturing a Full Step Trace
 
 ```python
-from jax_spice.debug import capture_step_trace, print_step_summary
+from vajax.debug import capture_step_trace, print_step_summary
 
 # Run a benchmark with debug_steps=True and get parsed results
 records, summary = capture_step_trace("ring", use_sparse=True)
@@ -302,7 +302,7 @@ print_step_summary(records, summary)
 Run a benchmark at multiple `t_stop` values to find where convergence degrades:
 
 ```python
-from jax_spice.debug import convergence_sweep
+from vajax.debug import convergence_sweep
 
 results = convergence_sweep("graetz", [1e-3, 5e-3, 7e-3, 10e-3])
 for r in results:
@@ -315,7 +315,7 @@ for r in results:
 Parse VACASK `tran_debug=1` output for side-by-side comparison:
 
 ```python
-from jax_spice.debug import parse_vacask_debug_output
+from vajax.debug import parse_vacask_debug_output
 
 vacask_records = parse_vacask_debug_output(vacask_stdout)
 accepted = [r for r in vacask_records if r.status == "accept"]
@@ -350,7 +350,7 @@ JAX_PLATFORMS=cpu uv run python scripts/compare_lte_solvers.py \
 Start by checking if convergence degrades at specific simulation durations:
 
 ```python
-from jax_spice.debug import convergence_sweep
+from vajax.debug import convergence_sweep
 
 results = convergence_sweep("graetz", [1e-3, 5e-3, 7e-3, 10e-3])
 # Look for t_stop values where rejected_steps spikes or convergence_rate drops
@@ -361,7 +361,7 @@ results = convergence_sweep("graetz", [1e-3, 5e-3, 7e-3, 10e-3])
 Zoom in on a problematic duration with full per-step data:
 
 ```python
-from jax_spice.debug import capture_step_trace, print_step_summary
+from vajax.debug import capture_step_trace, print_step_summary
 
 records, summary = capture_step_trace("graetz", use_sparse=False)
 print_step_summary(records, summary)
@@ -377,7 +377,7 @@ for r in rejected[:10]:
 Compare step-by-step behaviour with VACASK reference:
 
 ```python
-from jax_spice.debug import parse_debug_output, parse_vacask_debug_output
+from vajax.debug import parse_debug_output, parse_vacask_debug_output
 
 jax_records = parse_debug_output(jax_debug_text)
 vacask_records = parse_vacask_debug_output(vacask_debug_text)
@@ -392,7 +392,7 @@ vacask_records = parse_vacask_debug_output(vacask_debug_text)
 ### 1. Initial Comparison
 
 ```python
-from jax_spice.debug import quick_compare
+from vajax.debug import quick_compare
 
 result = quick_compare(va_path, osdi_path, params, voltages)
 print(result)
@@ -408,7 +408,7 @@ if not result.passed:
 If residuals differ, check the cache first:
 
 ```python
-from jax_spice.debug import ModelComparator
+from vajax.debug import ModelComparator
 
 comparator = ModelComparator(va_path, osdi_path, params)
 cache = comparator.analyze_cache()
@@ -425,7 +425,7 @@ if cache.has_nan > 0:
 If cache looks OK, inspect MIR structure:
 
 ```python
-from jax_spice.debug import MIRInspector
+from vajax.debug import MIRInspector
 
 inspector = MIRInspector(va_path)
 inspector.print_mir_stats()

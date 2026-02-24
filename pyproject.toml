@@ -1,5 +1,5 @@
 [project]
-name = "jax-spice"
+name = "va-jax"
 version = "0.1.0"
 description = "JAX-based analog circuit simulator with Verilog-A support"
 authors = [{name = "ChipFlow"}]
@@ -17,7 +17,7 @@ dependencies = [
 ]
 
 [tool.uv.workspace]
-members = ["openvaf_jax/openvaf_py", "openvaf_jax/osdi_py", "jax_spice/sparse"]
+members = ["openvaf_jax/openvaf_py", "openvaf_jax/osdi_py", "vajax/sparse"]
 
 [tool.uv.sources]
 openvaf-py = { workspace = true }
@@ -77,19 +77,19 @@ dev = [
 allow-direct-references = true
 
 [tool.hatch.build.targets.wheel]
-packages = ["jax_spice", "openvaf_jax"]
+packages = ["vajax", "openvaf_jax"]
 exclude = ["openvaf_jax/openvaf_py/target", "openvaf_jax/osdi_py/target"]
 
 [tool.hatch.build.targets.sdist]
 include = [
-    "jax_spice/**/*.py",
-    "jax_spice/benchmarks/data/*",
+    "vajax/**/*.py",
+    "vajax/benchmarks/data/*",
     "openvaf_jax/**/*.py",
 ]
 
 [project.scripts]
-jax-spice = "jax_spice.cli:main"
-jax-spice-benchmark = "jax_spice.benchmarks.c6288:main"
+va-jax = "vajax.cli:main"
+va-jax-benchmark = "vajax.benchmarks.c6288:main"
 
 [tool.ruff]
 line-length = 100

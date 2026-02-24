@@ -13,8 +13,8 @@ import jax
 import numpy as np
 import pytest
 
-# Precision is auto-configured by jax_spice import based on backend capabilities
-from jax_spice.analysis import CircuitEngine
+# Precision is auto-configured by vajax import based on backend capabilities
+from vajax.analysis import CircuitEngine
 
 # Benchmark configuration
 BENCHMARK_ROOT = Path(__file__).parent.parent / "vendor" / "VACASK" / "benchmark"

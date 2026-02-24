@@ -26,9 +26,9 @@ on:
         default: false
 
 env:
-  GCP_PROJECT: jax-spice-cuda-test
+  GCP_PROJECT: va-jax-cuda-test
   GCP_REGION: us-central1
-  JOB_NAME: jax-spice-nsys-profile
+  JOB_NAME: va-jax-nsys-profile
   AR_REMOTE_REPO: ghcr-remote
 
 jobs:

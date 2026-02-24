@@ -1,7 +1,7 @@
 """Tests for HiSIM models: HiSIM2, HiSIMHV
 
 NOTE: HiSIM2 and HiSIMHV hang during JAX function evaluation.
-See https://github.com/ChipFlow/jax-spice/issues/19
+See https://github.com/ChipFlow/va-jax/issues/19
 """
 
 import numpy as np

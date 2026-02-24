@@ -1,7 +1,7 @@
 """ngspice test discovery and registry.
 
 Discovers test circuits from vendor/ngspice/tests/ and categorizes them
-by device type and analysis compatibility with JAX-SPICE.
+by device type and analysis compatibility with VA-JAX.
 """
 
 import re
@@ -226,7 +226,7 @@ def _extract_output_nodes(content: str) -> List[str]:
     return _extract_output_signals(content)
 
 
-# Devices supported by JAX-SPICE (via OpenVAF or built-in)
+# Devices supported by VA-JAX (via OpenVAF or built-in)
 SUPPORTED_DEVICES = {
     "resistor",
     "capacitor",
@@ -244,7 +244,7 @@ def get_compatible_tests(
     device_types: Optional[Set[str]] = None,
     include_unsupported: bool = False,
 ) -> List[NgspiceTestCase]:
-    """Get tests compatible with JAX-SPICE capabilities.
+    """Get tests compatible with VA-JAX capabilities.
 
     Args:
         analysis_types: Filter by analysis type (default: ['tran'])

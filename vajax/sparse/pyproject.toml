@@ -1,0 +1,27 @@
+# UMFPACK JAX FFI Extension
+# This is a separate build target for the UMFPACK FFI extension.
+# Build with: cd vajax/sparse && pip install .
+
+[project]
+name = "umfpack-jax"
+version = "0.1.0"
+description = "UMFPACK FFI bindings for JAX - high-performance sparse direct solver"
+authors = [{name = "ChipFlow"}]
+requires-python = ">=3.11"
+dependencies = [
+    "jax>=0.4.29",
+    "numpy>=1.24.0",
+]
+readme = "README.md"
+
+[build-system]
+requires = [
+    "scikit-build-core>=0.8",
+    "nanobind>=1.8",
+    "jax>=0.4.29",
+]
+build-backend = "scikit_build_core.build"
+
+[tool.scikit-build]
+cmake.build-type = "Release"
+build.verbose = true

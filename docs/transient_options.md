@@ -1,13 +1,13 @@
 # Transient Analysis Options
 
-JAX-SPICE supports VACASK-compatible options for controlling transient analysis behavior.
+VA-JAX supports VACASK-compatible options for controlling transient analysis behavior.
 Options can be specified in the netlist and are automatically used as defaults.
 
 ## Simplest Usage
 
 ```python
-from jax_spice import CircuitEngine
-from jax_spice.analysis.transient import FullMNAStrategy
+from vajax import CircuitEngine
+from vajax.analysis.transient import FullMNAStrategy
 
 engine = CircuitEngine('circuit.sim')
 engine.parse()
@@ -34,8 +34,8 @@ analysis top tran step=1p stop=10n
 ```
 
 ```python
-from jax_spice import CircuitEngine
-from jax_spice.analysis.transient import FullMNAStrategy
+from vajax import CircuitEngine
+from vajax.analysis.transient import FullMNAStrategy
 
 engine = CircuitEngine('circuit.sim')
 engine.parse()
@@ -117,7 +117,7 @@ strategy = FullMNAStrategy(engine)
 Explicit `AdaptiveConfig` completely overrides netlist options:
 
 ```python
-from jax_spice.analysis.transient import AdaptiveConfig, FullMNAStrategy
+from vajax.analysis.transient import AdaptiveConfig, FullMNAStrategy
 
 # Override specific options
 config = AdaptiveConfig(

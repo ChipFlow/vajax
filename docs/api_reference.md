@@ -1,4 +1,4 @@
-# JAX-SPICE API Reference
+# VA-JAX API Reference
 
 ## Core Classes
 
@@ -7,7 +7,7 @@
 The main class for circuit simulation. Parses VACASK/SPICE netlists and runs various analyses.
 
 ```python
-from jax_spice import CircuitEngine
+from vajax import CircuitEngine
 
 engine = CircuitEngine("circuit.sim")
 engine.parse()
@@ -111,7 +111,7 @@ result = engine.run_noise(
 Run PVT (Process-Voltage-Temperature) corner analysis.
 
 ```python
-from jax_spice.analysis import create_pvt_corners
+from vajax.analysis import create_pvt_corners
 
 corners = create_pvt_corners(
     process=['tt', 'ff', 'ss'],
@@ -308,7 +308,7 @@ class CornerResult:
 Create PVT corner combinations for corner analysis.
 
 ```python
-from jax_spice.analysis import create_pvt_corners
+from vajax.analysis import create_pvt_corners
 
 corners = create_pvt_corners(
     process=['tt', 'ff', 'ss'],     # Process corners
@@ -326,7 +326,7 @@ corners = create_pvt_corners(
 Configure JAX floating-point precision.
 
 ```python
-from jax_spice import configure_precision
+from vajax import configure_precision
 
 configure_precision(force_x64=True)   # Force float64
 configure_precision(force_x64=False)  # Force float32
@@ -340,7 +340,7 @@ configure_precision()                  # Auto-detect based on backend
 Get current precision configuration.
 
 ```python
-from jax_spice import get_precision_info
+from vajax import get_precision_info
 
 info = get_precision_info()
 print(f"Backend: {info['backend']}")
@@ -356,7 +356,7 @@ print(f"Float64 enabled: {info['x64_enabled']}")
 Write results to ngspice-compatible raw file.
 
 ```python
-from jax_spice.io import write_rawfile
+from vajax.io import write_rawfile
 
 write_rawfile(result, "output.raw", binary=True)
 ```
@@ -373,7 +373,7 @@ write_rawfile(result, "output.raw", binary=True)
 Write results to CSV file.
 
 ```python
-from jax_spice.io import write_csv
+from vajax.io import write_csv
 
 write_csv(result, "output.csv", precision=9)
 ```
@@ -390,7 +390,7 @@ write_csv(result, "output.csv", precision=9)
 Read simulation results from CSV file.
 
 ```python
-from jax_spice.io import read_csv
+from vajax.io import read_csv
 
 data = read_csv("output.csv")
 times = data['times']
@@ -404,21 +404,21 @@ voltages = data['voltages']
 For large circuits (>1000 nodes), use sparse matrix solvers:
 
 ```python
-from jax_spice.analysis.sparse import (
+from vajax.analysis.sparse import (
     build_csr_arrays,    # COO to CSR conversion
     sparse_solve_csr,    # Sparse linear solve
 )
 ```
 
-See `jax_spice/analysis/sparse.py` for details.
+See `vajax/analysis/sparse.py` for details.
 
 ---
 
 ## Example: Complete Workflow
 
 ```python
-from jax_spice import CircuitEngine, configure_precision
-from jax_spice.io import write_rawfile
+from vajax import CircuitEngine, configure_precision
+from vajax.io import write_rawfile
 
 # Configure precision
 configure_precision(force_x64=True)

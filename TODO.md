@@ -1,4 +1,4 @@
-# jax-spice TODO
+# va-jax TODO
 
 Central tracking for development tasks and known issues.
 
@@ -22,8 +22,8 @@ Central tracking for development tasks and known issues.
 
 **Related files**:
 - `vendor/VACASK/devices/spice/sn/diode.va` - DEVpnjlim function (lines 403-440)
-- `jax_spice/analysis/mna_builder.py` - iniLim simparam setting (line 355)
-- `jax_spice/analysis/mna_builder.py` - isource stamping (line 316)
+- `vajax/analysis/mna_builder.py` - iniLim simparam setting (line 355)
+- `vajax/analysis/mna_builder.py` - isource stamping (line 316)
 
 ### Spineax Solver Missing limit_state Threading
 
@@ -67,7 +67,7 @@ This issue is likely caused by the array sizes for the while loop (scan mode)
 
 ### External Simulator Regression Suites
 
-**Goal**: Compare JAX-SPICE against ngspice and Xyce reference implementations to validate correctness.
+**Goal**: Compare VA-JAX against ngspice and Xyce reference implementations to validate correctness.
 
 #### ngspice Regression Suite (`vendor/ngspice/tests/`)
 
@@ -76,7 +76,7 @@ This issue is likely caused by the array sizes for the while loop (scan mode)
 - 65 tests have reference files (`.out` or `.standard` format)
 - 541 `.standard` reference files available (HiSIM, BSIM, etc.)
 - Infrastructure: `tests/test_ngspice_regression.py`, `tests/ngspice_test_registry.py`
-- Reference parsers: `jax_spice/io/ngspice_out_reader.py`
+- Reference parsers: `vajax/io/ngspice_out_reader.py`
 
 **Test Discovery**:
 - Auto-discovers all `.sp`, `.cir`, `.spice` files in `vendor/ngspice/tests/`
@@ -92,7 +92,7 @@ This issue is likely caused by the array sizes for the while loop (scan mode)
 - 541 `.standard` reference files in `reference/` subdirectories
 - Defines DC sweeps, AC, noise tests with bias conditions
 - Generates netlists via Perl scripts (`modelQaTestRoutines.pm`)
-- Future: Parse qaSpec format to generate JAX-SPICE tests directly
+- Future: Parse qaSpec format to generate VA-JAX tests directly
 
 **Device Support Gaps**:
 - [ ] BJT (`q` devices) - rtlinv.cir, analog tests
@@ -107,7 +107,7 @@ This issue is likely caused by the array sizes for the while loop (scan mode)
 - 1929 tests discovered via auto-discovery
 - Infrastructure: `tests/test_xyce_regression.py`, `tests/xyce_test_registry.py`
 - Reference files: `vendor/Xyce_Regression/OutputData/*.prn`
-- Reference parser: `jax_spice/io/prn_reader.py`
+- Reference parser: `vajax/io/prn_reader.py`
 
 **Test Discovery**:
 - Auto-discovers all `.cir` files in `vendor/Xyce_Regression/Netlists/`
@@ -158,7 +158,7 @@ The graetz benchmark uses `nr_bypass=0 nr_contbypass=1`, so our current behavior
 
 **Status**: COMPLETED
 
-The transient module uses `FullMNAStrategy` as the primary implementation (`jax_spice/analysis/transient/`).
+The transient module uses `FullMNAStrategy` as the primary implementation (`vajax/analysis/transient/`).
 Legacy code paths (`_run_transient_hybrid`, `_run_transient_while_loop`, `_make_gpu_resident_build_system_fn`)
 have been deleted from `engine.py`.
 
@@ -192,11 +192,11 @@ have been deleted from `engine.py`.
 
 - [x] ~~iniLim simparam off-by-one bug~~ (2025-02)
   - `nr_iteration` starts at 0, but iniLim check was `== 1`, so iniLim was never 1
-  - Fixed to `nr_iteration == 0` in `jax_spice/analysis/mna_builder.py:355`
+  - Fixed to `nr_iteration == 0` in `vajax/analysis/mna_builder.py:355`
 
 - [x] ~~isource COOVector stamping bug~~ (2025-02)
   - isource stamping appended plain tuple instead of COOVector
-  - Fixed to use `mask_coo_vector()` in `jax_spice/analysis/mna_builder.py:316`
+  - Fixed to use `mask_coo_vector()` in `vajax/analysis/mna_builder.py:316`
 
 - [x] ~~ddt() operator fixed~~ (2025-01)
   - `openvaf_jax/codegen/instruction.py` now returns charge value instead of zero
@@ -209,7 +209,7 @@ have been deleted from `engine.py`.
   - Full MNA with explicit branch current unknowns implemented
 
 - [x] ~~Transient analysis refactored~~ (2025-01)
-  - Unified `FullMNAStrategy` in `jax_spice/analysis/transient/`
+  - Unified `FullMNAStrategy` in `vajax/analysis/transient/`
   - Adaptive timestep control based on local truncation error
   - JIT-compiled simulation loop using lax.while_loop
 
@@ -219,8 +219,8 @@ have been deleted from `engine.py`.
   - Full parametrized test generation without manual curation
 
 - [x] ~~Reference file parsers~~ (2025-01)
-  - Added `jax_spice/io/ngspice_out_reader.py` for `.out` and `.standard` formats
-  - Added `jax_spice/io/prn_reader.py` for Xyce `.prn` format
+  - Added `vajax/io/ngspice_out_reader.py` for `.out` and `.standard` formats
+  - Added `vajax/io/prn_reader.py` for Xyce `.prn` format
   - Signal name mapping: `i(v1)` → `v1#branch` in ngspice output
 
 - [x] ~~Test registries~~ (2025-01)
@@ -229,7 +229,7 @@ have been deleted from `engine.py`.
   - Reference file detection in same directory or `reference/` subdir
 
 - [x] ~~Fixed SI suffix parsing in safe_eval.py~~ (2025-01)
-  - Added time units (ms, us, ns, ps, fs) to `jax_spice/utils/safe_eval.py`
+  - Added time units (ms, us, ns, ps, fs) to `vajax/utils/safe_eval.py`
   - Added voltage/current units (mv, uv, nv, ma, ua, na, pa, fa)
   - Fixes PULSE source parameter parsing (delay, rise, fall, width, period)
   - Required for Xyce DIODE test and any netlists using time units
@@ -242,7 +242,7 @@ have been deleted from `engine.py`.
 
 - [x] ~~Xyce regression suite infrastructure~~ (2025-01)
   - Added `test_xyce_regression.py` with PRN comparison framework
-  - Added `jax_spice/io/prn_reader.py` for Xyce output parsing
+  - Added `vajax/io/prn_reader.py` for Xyce output parsing
 
 - [x] ~~openvaf_jax Complex Model Support~~ (2025-12)
   - JAX translator matches MIR interpreter for all models
@@ -262,7 +262,7 @@ have been deleted from `engine.py`.
   - Auto-detects when to use sparse (>1000 nodes)
   - c6288 benchmark: 86k nodes, 490k non-zeros (0.007% density), ~1s/step
 
-- [x] ~~VACASKBenchmarkRunner module~~ (`jax_spice/benchmarks/`)
+- [x] ~~VACASKBenchmarkRunner module~~ (`vajax/benchmarks/`)
   - Generic runner for VACASK benchmark circuits
   - Subcircuit flattening with parameter expression evaluation
   - Uses production `transient_analysis_jit()` for simulation
@@ -305,25 +305,25 @@ have been deleted from `engine.py`.
 ### Key Files
 | Purpose | Location |
 |---------|----------|
-| **Newton-Raphson solver** | `jax_spice/analysis/solver.py` |
-| **Circuit engine (main API)** | `jax_spice/analysis/engine.py` |
-| Transient strategies | `jax_spice/analysis/transient/` |
-| MNA system | `jax_spice/analysis/mna.py` |
-| GPU backend selection | `jax_spice/analysis/gpu_backend.py` |
-| Benchmark runner | `jax_spice/benchmarks/runner.py` |
+| **Newton-Raphson solver** | `vajax/analysis/solver.py` |
+| **Circuit engine (main API)** | `vajax/analysis/engine.py` |
+| Transient strategies | `vajax/analysis/transient/` |
+| MNA system | `vajax/analysis/mna.py` |
+| GPU backend selection | `vajax/analysis/gpu_backend.py` |
+| Benchmark runner | `vajax/benchmarks/runner.py` |
 | Benchmark profiling | `scripts/profile_gpu.py` |
 | Cloud Run profiling | `scripts/profile_gpu_cloudrun.py` |
-| **Verilog-A device wrapper** | `jax_spice/devices/verilog_a.py` |
+| **Verilog-A device wrapper** | `vajax/devices/verilog_a.py` |
 | **OpenVAF→JAX codegen** | `openvaf_jax/codegen/` |
-| VACASK parser | `jax_spice/netlist/parser.py` |
+| VACASK parser | `vajax/netlist/parser.py` |
 | VACASK suite tests | `tests/test_vacask_suite.py` |
 | **ngspice regression tests** | `tests/test_ngspice_regression.py` |
 | ngspice test registry | `tests/ngspice_test_registry.py` |
-| ngspice .out/.standard parser | `jax_spice/io/ngspice_out_reader.py` |
+| ngspice .out/.standard parser | `vajax/io/ngspice_out_reader.py` |
 | **Xyce regression tests** | `tests/test_xyce_regression.py` |
 | Xyce test registry | `tests/xyce_test_registry.py` |
-| Xyce .prn parser | `jax_spice/io/prn_reader.py` |
-| SPICE→VACASK converter | `jax_spice/netlist_converter/ng2vclib/` |
+| Xyce .prn parser | `vajax/io/prn_reader.py` |
+| SPICE→VACASK converter | `vajax/netlist_converter/ng2vclib/` |
 
 ### Test Commands
 ```bash

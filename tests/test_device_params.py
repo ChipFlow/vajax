@@ -10,8 +10,8 @@ from pathlib import Path
 
 import pytest
 
-from jax_spice.analysis import CircuitEngine
-from jax_spice.analysis.debug import (
+from vajax.analysis import CircuitEngine
+from vajax.analysis.debug import (
     ParamTrace,
     check_param_coverage,
     execute_all_print_directives,
@@ -25,8 +25,8 @@ from jax_spice.analysis.debug import (
     trace_all_params,
     trace_param,
 )
-from jax_spice.netlist.circuit import PrintDirective
-from jax_spice.netlist.parser import parse_netlist
+from vajax.netlist.circuit import PrintDirective
+from vajax.netlist.parser import parse_netlist
 
 # Paths to test fixtures
 VACASK_BENCHMARK = Path(__file__).parent.parent / "vendor" / "VACASK" / "benchmark"

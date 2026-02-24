@@ -7,7 +7,7 @@
 ---
 
 ## Problem Summary
-- JAX-SPICE currently has PSP103-specific collapse logic hardcoded in runner.py
+- VA-JAX currently has PSP103-specific collapse logic hardcoded in runner.py
 - This is fragile and won't work for other models
 - OpenVAF's init function already computes collapse decisions at runtime
 - Need to expose this capability through openvaf-py
@@ -121,7 +121,7 @@ fn get_collapse_pattern(&self, params: std::collections::HashMap<String, f64>) -
 }
 ```
 
-### Step 2: Modify jax_spice/benchmarks/runner.py
+### Step 2: Modify vajax/benchmarks/runner.py
 
 **2a. Update `_get_model_collapse_pairs()`**
 
@@ -163,7 +163,7 @@ Delete `_get_psp103_collapse_pairs()` method entirely.
    - Build callback → pair mapping during compilation
    - Add `get_collapse_pattern()` method with callback hooks
 
-2. **`jax_spice/benchmarks/runner.py`** (~30 lines)
+2. **`vajax/benchmarks/runner.py`** (~30 lines)
    - Update `_get_model_collapse_pairs()` to use generic query
    - Remove `_get_psp103_collapse_pairs()` (~50 lines deleted)
 

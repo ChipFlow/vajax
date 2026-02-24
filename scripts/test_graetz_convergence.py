@@ -4,16 +4,16 @@
 import os
 
 os.environ["JAX_PLATFORMS"] = "cpu"
-os.environ["JAX_SPICE_NO_PROGRESS"] = "1"
+os.environ["VA_JAX_NO_PROGRESS"] = "1"
 
 import time
 
-from jax_spice.benchmarks.registry import get_benchmark
+from vajax.benchmarks.registry import get_benchmark
 
 info = get_benchmark("graetz")
 sim_path = info.sim_path
 
-from jax_spice.analysis.engine import CircuitEngine
+from vajax.analysis.engine import CircuitEngine
 
 engine = CircuitEngine(sim_path)
 engine.parse()

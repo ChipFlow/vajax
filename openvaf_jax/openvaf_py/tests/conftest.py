@@ -4,10 +4,10 @@ import sys
 from pathlib import Path
 
 # Add project root to path to find openvaf_jax module
-# Path: tests/conftest.py -> openvaf_py -> openvaf_jax -> jax-spice (root)
+# Path: tests/conftest.py -> openvaf_py -> openvaf_jax -> va-jax (root)
 sys.path.insert(0, str(Path(__file__).parent.parent.parent.parent))
 
-# Configure JAX float64 precision directly (avoid full jax_spice import)
+# Configure JAX float64 precision directly (avoid full vajax import)
 import jax
 
 jax.config.update("jax_enable_x64", True)
@@ -21,7 +21,7 @@ import pytest
 import openvaf_jax
 
 # Path to OpenVAF integration tests (in vendor submodule at project root)
-# Path: tests/conftest.py -> openvaf_py -> openvaf_jax -> jax-spice (root) -> vendor
+# Path: tests/conftest.py -> openvaf_py -> openvaf_jax -> va-jax (root) -> vendor
 PROJECT_ROOT = Path(__file__).parent.parent.parent.parent
 INTEGRATION_PATH = PROJECT_ROOT / "vendor" / "OpenVAF" / "integration_tests"
 

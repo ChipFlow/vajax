@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Compare JAX-SPICE vs VACASK Performance
+"""Compare VA-JAX vs VACASK Performance
 
 Runs both simulators on the same benchmarks with matching parameters
 and compares performance.
@@ -30,9 +30,9 @@ import json
 import os
 import subprocess
 
-# Enable jax_spice performance logging with memory stats and perf_counter timestamps
+# Enable vajax performance logging with memory stats and perf_counter timestamps
 # This helps track memory usage and correlate log messages with Perfetto trace timestamps
-from jax_spice._logging import enable_performance_logging
+from vajax._logging import enable_performance_logging
 
 enable_performance_logging(with_memory=True, with_perf_counter=True)
 import re
@@ -41,7 +41,7 @@ import time
 from pathlib import Path
 from typing import Dict, Optional, Tuple
 
-# Ensure jax-spice is importable
+# Ensure va-jax is importable
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 # Configure JAX memory allocation BEFORE importing JAX
@@ -54,15 +54,15 @@ os.environ.setdefault("XLA_PYTHON_CLIENT_ALLOCATOR", "platform")
 import jax
 import jax.numpy as jnp
 
-# Precision is auto-configured by jax_spice import (imported above via logging)
+# Precision is auto-configured by vajax import (imported above via logging)
 # Metal/TPU use f32, CPU/CUDA use f64
-from jax_spice.analysis import CircuitEngine
-from jax_spice.benchmarks.registry import (
+from vajax.analysis import CircuitEngine
+from vajax.benchmarks.registry import (
     BenchmarkInfo,
     get_benchmark,
     list_benchmarks,
 )
-from jax_spice.profiling import ProfileConfig
+from vajax.profiling import ProfileConfig
 
 
 def analyze_compiled_function(fn, args, name: str, output_dir: Optional[Path] = None):
@@ -163,7 +163,7 @@ def analyze_compiled_function(fn, args, name: str, output_dir: Optional[Path] = 
 
 
 # Note: Benchmark configurations are now auto-discovered from
-# jax_spice.benchmarks.registry. The registry parses .sim files
+# vajax.benchmarks.registry. The registry parses .sim files
 # to extract dt, t_stop, and device types automatically.
 
 # Published VACASK benchmark times (ms/step) from vendor/VACASK/benchmark/README.md
@@ -181,7 +181,7 @@ VACASK_REFERENCE_TIMES = {
 }
 
 
-from jax_spice.utils import find_vacask_binary
+from vajax.utils import find_vacask_binary
 
 
 def run_vacask(config: BenchmarkInfo, num_steps: int) -> Optional[Tuple[float, float]]:
@@ -255,7 +255,7 @@ def run_vacask(config: BenchmarkInfo, num_steps: int) -> Optional[Tuple[float, f
             temp_sim.unlink()
 
 
-def run_jax_spice(
+def run_vajax(
     config: BenchmarkInfo,
     num_steps: int,
     use_scan: bool,
@@ -266,7 +266,7 @@ def run_jax_spice(
     analyze: bool = False,
     analyze_output_dir: Optional[Path] = None,
 ) -> Tuple[float, float, Dict]:
-    """Run JAX-SPICE and return (time_per_step_ms, wall_time_s, stats).
+    """Run VA-JAX and return (time_per_step_ms, wall_time_s, stats).
 
     Args:
         config: Benchmark configuration
@@ -279,7 +279,7 @@ def run_jax_spice(
         analyze: If True, dump jaxpr and cost analysis for compiled functions
         analyze_output_dir: Directory to save analysis files (optional)
     """
-    from jax_spice.profiling import profile_section
+    from vajax.profiling import profile_section
 
     # Create benchmark-specific profile config if profiling is enabled
     full_profile_config = None
@@ -339,7 +339,7 @@ def run_jax_spice(
                 all_isource = jnp.zeros((num_steps, n_isources), dtype=jnp.float64)
 
                 # Determine output directory
-                out_dir = analyze_output_dir or Path(f"/tmp/jax-spice-analysis/{config.name}")
+                out_dir = analyze_output_dir or Path(f"/tmp/va-jax-analysis/{config.name}")
 
                 # Analyze the scan function
                 analyze_compiled_function(
@@ -389,7 +389,7 @@ def run_jax_spice(
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Compare JAX-SPICE vs VACASK")
+    parser = argparse.ArgumentParser(description="Compare VA-JAX vs VACASK")
     parser.add_argument(
         "--benchmark",
         type=str,
@@ -399,7 +399,7 @@ def main():
     parser.add_argument(
         "--use-scan",
         action="store_true",
-        help="Use lax.scan for JAX-SPICE (faster)",
+        help="Use lax.scan for VA-JAX (faster)",
     )
     parser.add_argument(
         "--use-sparse",
@@ -431,8 +431,8 @@ def main():
     parser.add_argument(
         "--profile-dir",
         type=str,
-        default="/tmp/jax-spice-traces",
-        help="Directory for profiling traces (default: /tmp/jax-spice-traces)",
+        default="/tmp/va-jax-traces",
+        help="Directory for profiling traces (default: /tmp/va-jax-traces)",
     )
     parser.add_argument(
         "--profile-full",
@@ -453,7 +453,7 @@ def main():
     args = parser.parse_args()
 
     print("=" * 70)
-    print("JAX-SPICE vs VACASK Performance Comparison")
+    print("VA-JAX vs VACASK Performance Comparison")
     print("=" * 70)
     print()
 
@@ -509,7 +509,7 @@ def main():
             nsys_cmd.extend(["--profile-mode", "none"])  # Just use CUDA markers
 
         # Mark that we want CUDA profiler markers
-        os.environ["JAX_SPICE_NSYS_MARKERS"] = "1"
+        os.environ["VA_JAX_NSYS_MARKERS"] = "1"
 
         print(f"Re-executing under nsys-jax: {' '.join(nsys_cmd[:5])}...")
         result = subprocess.run(nsys_cmd)
@@ -528,7 +528,7 @@ def main():
 
     # Setup JAX profiling if requested
     profile_config = None
-    use_cuda_markers = os.environ.get("JAX_SPICE_NSYS_MARKERS") == "1"
+    use_cuda_markers = os.environ.get("VA_JAX_NSYS_MARKERS") == "1"
 
     if profile_mode in ("jax", "both") or use_cuda_markers:
         has_gpu = any(d.platform != "cpu" for d in jax.devices())
@@ -576,12 +576,12 @@ def main():
 
         print(f"--- {name} ({num_steps} steps, dt={config.dt:.2e}) ---")
 
-        # Run JAX-SPICE
+        # Run VA-JAX
         # Auto-enable sparse for large circuits unless --force-dense is specified
         use_sparse = args.use_sparse or (config.is_large and not args.force_dense)
-        print("  JAX-SPICE warmup...", end=" ", flush=True)
+        print("  VA-JAX warmup...", end=" ", flush=True)
         analyze_dir = Path(args.profile_dir) / "analysis" if args.analyze else None
-        jax_ms, jax_wall, stats = run_jax_spice(
+        jax_ms, jax_wall, stats = run_vajax(
             config,
             num_steps,
             args.use_scan,
@@ -595,7 +595,7 @@ def main():
         startup_time = stats.get("startup_time", 0)
         print("done")
         print(
-            f"  JAX-SPICE: {jax_ms:.3f} ms/step ({jax_wall:.3f}s total, startup: {startup_time:.1f}s)"
+            f"  VA-JAX: {jax_ms:.3f} ms/step ({jax_wall:.3f}s total, startup: {startup_time:.1f}s)"
         )
 
         # Run VACASK or use reference times
@@ -661,7 +661,7 @@ def main():
     print("Summary (per-step timing)")
     print("=" * 70)
     print()
-    print("| Benchmark | Steps | JAX-SPICE (ms) | VACASK (ms) | Ratio |")
+    print("| Benchmark | Steps | VA-JAX (ms) | VACASK (ms) | Ratio |")
     print("|-----------|-------|----------------|-------------|-------|")
     for r in results:
         if r["vacask_ms"]:
@@ -682,7 +682,7 @@ def main():
     print("Summary (total wall time)")
     print("=" * 70)
     print()
-    print("| Benchmark | Steps | JAX-SPICE (ms) | VACASK (ms) | Ratio |")
+    print("| Benchmark | Steps | VA-JAX (ms) | VACASK (ms) | Ratio |")
     print("|-----------|-------|----------------|-------------|-------|")
     for r in results:
         # Convert wall time from seconds to milliseconds for better precision

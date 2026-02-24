@@ -123,11 +123,11 @@ J_diag = jnp.where(jnp.abs(J_diag) < gds_min, jnp.sign(J_diag) * gds_min, J_diag
 
 ## Files Involved
 
-- `jax_spice/analysis/dc_gpu.py` - GPU DC solver
-- `jax_spice/analysis/transient_gpu.py` - GPU transient solver
-- `jax_spice/benchmarks/c6288.py` - `create_simple_mosfet_eval()` at line 179
+- `vajax/analysis/dc_gpu.py` - GPU DC solver
+- `vajax/analysis/transient_gpu.py` - GPU transient solver
+- `vajax/benchmarks/c6288.py` - `create_simple_mosfet_eval()` at line 179
 - `openvaf-py/openvaf_jax.py` - OpenVAF→JAX translator
-- `jax_spice/devices/verilog_a.py` - VerilogADevice wrapper
+- `vajax/devices/verilog_a.py` - VerilogADevice wrapper
 
 ## Test Case
 

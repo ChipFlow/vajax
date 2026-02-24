@@ -12,7 +12,7 @@ applied correctly in the simulation engine.
 import jax.numpy as jnp
 import pytest
 
-from jax_spice.analysis.integration import (
+from vajax.analysis.integration import (
     IntegrationMethod,
     IntegrationState,
     apply_integration,
@@ -210,8 +210,8 @@ class TestEngineIntegrationBug:
         import os
         import tempfile
 
-        from jax_spice.analysis.engine import CircuitEngine
-        from jax_spice.analysis.integration import IntegrationMethod
+        from vajax.analysis.engine import CircuitEngine
+        from vajax.analysis.integration import IntegrationMethod
 
         # Create a simple RC circuit netlist
         # RC time constant tau = R*C = 1k * 1nF = 1us

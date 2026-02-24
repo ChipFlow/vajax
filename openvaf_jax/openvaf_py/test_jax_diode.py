@@ -11,7 +11,7 @@ print("="*70)
 
 # Compile the diode
 modules = openvaf_py.compile_va(
-    "/Users/roberttaylor/Code/ChipFlow/reference/jax-spice/OpenVAF/integration_tests/DIODE/diode.va"
+    "/Users/roberttaylor/Code/ChipFlow/reference/va-jax/OpenVAF/integration_tests/DIODE/diode.va"
 )
 diode = modules[0]
 

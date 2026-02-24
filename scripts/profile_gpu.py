@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""GPU Profiling Script for JAX-SPICE
+"""GPU Profiling Script for VA-JAX
 
 Profiles CPU/GPU performance of VACASK benchmark circuits using CircuitEngine.
 Compares dense vs sparse solvers across different circuit sizes.
@@ -30,7 +30,7 @@ from dataclasses import asdict
 from pathlib import Path
 from typing import List, Optional
 
-# Ensure jax-spice is importable
+# Ensure va-jax is importable
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 # Configure JAX memory allocation BEFORE importing JAX
@@ -41,11 +41,11 @@ os.environ.setdefault("XLA_PYTHON_CLIENT_ALLOCATOR", "platform")
 
 import jax
 
-from jax_spice._logging import enable_performance_logging, logger
+from vajax._logging import enable_performance_logging, logger
 
-# Import jax_spice first to auto-configure precision based on backend
+# Import vajax first to auto-configure precision based on backend
 # (Metal/TPU use f32, CPU/CUDA use f64)
-from jax_spice.analysis import CircuitEngine
+from vajax.analysis import CircuitEngine
 from scripts.benchmark_utils import BenchmarkResult, get_vacask_benchmarks
 
 # Enable verbose logging with flush and memory stats for profiling visibility
@@ -236,7 +236,7 @@ class GPUProfiler:
     def generate_report(self) -> str:
         """Generate a markdown report for GitHub Actions"""
         lines = []
-        lines.append("# JAX-SPICE GPU Profiling Report\n")
+        lines.append("# VA-JAX GPU Profiling Report\n")
 
         # Environment info
         lines.append("## Environment\n")
@@ -492,7 +492,7 @@ def main():
         return
 
     logger.info("=" * 70)
-    logger.info("JAX-SPICE GPU Profiling")
+    logger.info("VA-JAX GPU Profiling")
     logger.info("=" * 70)
     logger.info("")
 

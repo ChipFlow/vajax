@@ -9,8 +9,8 @@ from pathlib import Path
 
 import numpy as np
 
-from jax_spice.analysis.engine import CircuitEngine
-from jax_spice.analysis.integration import IntegrationMethod
+from vajax.analysis.engine import CircuitEngine
+from vajax.analysis.integration import IntegrationMethod
 
 sim_path = Path("vendor/VACASK/benchmark/graetz/vacask/runme.sim")
 engine = CircuitEngine(sim_path)

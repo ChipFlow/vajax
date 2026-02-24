@@ -7,11 +7,11 @@ the CPU UMFPACK solver on the same circuit.
 
 Usage:
     # Run locally (CPU/UMFPACK) and save trace:
-    JAX_PLATFORMS=cpu JAX_SPICE_NO_PROGRESS=1 uv run python scripts/compare_lte_solvers.py \
+    JAX_PLATFORMS=cpu VA_JAX_NO_PROGRESS=1 uv run python scripts/compare_lte_solvers.py \
         --benchmark ring --output /tmp/lte_trace_umfpack.json
 
     # Run on GPU (cuDSS) and save trace:
-    JAX_PLATFORMS=cuda JAX_SPICE_NO_PROGRESS=1 uv run python scripts/compare_lte_solvers.py \
+    JAX_PLATFORMS=cuda VA_JAX_NO_PROGRESS=1 uv run python scripts/compare_lte_solvers.py \
         --benchmark ring --output /tmp/lte_trace_cudss.json
 
     # Compare two traces:
@@ -19,7 +19,7 @@ Usage:
         --compare /tmp/lte_trace_umfpack.json /tmp/lte_trace_cudss.json
 
     # Run locally with both dense and sparse (UMFPACK) and compare:
-    JAX_PLATFORMS=cpu JAX_SPICE_NO_PROGRESS=1 uv run python scripts/compare_lte_solvers.py \
+    JAX_PLATFORMS=cpu VA_JAX_NO_PROGRESS=1 uv run python scripts/compare_lte_solvers.py \
         --benchmark ring --compare-local
 """
 
@@ -30,7 +30,7 @@ import sys
 from dataclasses import asdict
 from pathlib import Path
 
-from jax_spice.debug.transient_diagnostics import (
+from vajax.debug.transient_diagnostics import (
     StepRecord,
     StepTraceSummary,
     capture_step_trace,

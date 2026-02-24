@@ -6,12 +6,12 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-from jax_spice.utils import (
+from vajax.utils import (
     WaveformComparison,
     compare_waveforms,
     find_vacask_binary,
 )
-from jax_spice.utils.rawfile import rawread
+from vajax.utils.rawfile import rawread
 
 
 class TestCompareWaveforms:
@@ -236,7 +236,7 @@ class TestVacaskIntegration:
 
     def test_run_vacask_rc(self, vacask_available, rc_sim_file):
         """Test running VACASK on RC benchmark."""
-        from jax_spice.utils import run_vacask
+        from vajax.utils import run_vacask
 
         raw_path, error = run_vacask(rc_sim_file, vacask_bin=vacask_available)
 

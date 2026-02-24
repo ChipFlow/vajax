@@ -10,7 +10,7 @@ These tests verify that source waveforms are computed correctly using JAX.
 import jax.numpy as jnp
 import pytest
 
-from jax_spice.analysis import CircuitEngine
+from vajax.analysis import CircuitEngine
 
 
 class TestDCSource:

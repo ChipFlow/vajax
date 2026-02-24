@@ -11,7 +11,7 @@ import jax.numpy as jnp
 import pytest
 from jax import lax
 
-from jax_spice.analysis.homotopy import (
+from vajax.analysis.homotopy import (
     HomotopyConfig,
     HomotopyResult,
     gmin_stepping,
@@ -19,7 +19,7 @@ from jax_spice.analysis.homotopy import (
     source_stepping,
 )
 
-# Precision is auto-configured by jax_spice import based on backend capabilities
+# Precision is auto-configured by vajax import based on backend capabilities
 
 
 def create_mock_nr_solve(residual_fn_factory, max_iterations=50, abstol=1e-10):

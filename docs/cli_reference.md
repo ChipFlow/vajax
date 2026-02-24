@@ -1,31 +1,31 @@
-# JAX-SPICE CLI Reference
+# VA-JAX CLI Reference
 
-The `jax-spice` command-line interface provides ngspice-style access to circuit simulation.
+The `va-jax` command-line interface provides ngspice-style access to circuit simulation.
 
 ## Installation
 
-After installing jax-spice, the CLI is available:
+After installing va-jax, the CLI is available:
 
 ```bash
 # Install with uv
 uv sync
 
 # Verify installation
-jax-spice --version
-jax-spice --help
+va-jax --version
+va-jax --help
 ```
 
 ## Basic Usage
 
 ```bash
 # Run simulation on a circuit file
-jax-spice circuit.sim
+va-jax circuit.sim
 
 # Specify output file
-jax-spice circuit.sim -o results.raw
+va-jax circuit.sim -o results.raw
 
 # Run with specific output format
-jax-spice circuit.sim -o results.csv --format csv
+va-jax circuit.sim -o results.csv --format csv
 ```
 
 ## Commands
@@ -36,8 +36,8 @@ Run circuit simulation. This is the default command when a circuit file is provi
 
 ```bash
 # These are equivalent:
-jax-spice circuit.sim
-jax-spice run circuit.sim
+va-jax circuit.sim
+va-jax run circuit.sim
 ```
 
 **Options:**
@@ -60,16 +60,16 @@ jax-spice run circuit.sim
 
 ```bash
 # Transient analysis with custom parameters
-jax-spice circuit.sim --tran 1n 100u
+va-jax circuit.sim --tran 1n 100u
 
 # AC analysis
-jax-spice circuit.sim --ac dec 100 1k 1G
+va-jax circuit.sim --ac dec 100 1k 1G
 
 # Large circuit with sparse solver on GPU
-jax-spice large_circuit.sim --sparse --gpu
+va-jax large_circuit.sim --sparse --gpu
 
 # Force float64 precision on CPU
-jax-spice circuit.sim --cpu --x64
+va-jax circuit.sim --cpu --x64
 ```
 
 ### `benchmark`
@@ -78,13 +78,13 @@ Run benchmark circuits from the VACASK test suite.
 
 ```bash
 # List available benchmarks
-jax-spice benchmark --list
+va-jax benchmark --list
 
 # Run a specific benchmark
-jax-spice benchmark ring
+va-jax benchmark ring
 
 # Run with profiling
-jax-spice benchmark ring --profile
+va-jax benchmark ring --profile
 ```
 
 **Options:**
@@ -102,7 +102,7 @@ jax-spice benchmark ring --profile
 Convert SPICE netlists to VACASK format.
 
 ```bash
-jax-spice convert input.sp output.sim
+va-jax convert input.sp output.sim
 ```
 
 ### `info`
@@ -110,7 +110,7 @@ jax-spice convert input.sp output.sim
 Display system information.
 
 ```bash
-jax-spice info
+va-jax info
 ```
 
 Shows:
@@ -125,7 +125,7 @@ Shows:
 Binary format compatible with ngspice tools and gwave waveform viewer.
 
 ```bash
-jax-spice circuit.sim -o results.raw --format raw
+va-jax circuit.sim -o results.raw --format raw
 ```
 
 Read with ngspice:
@@ -144,7 +144,7 @@ gwave results.raw
 Comma-separated values, compatible with spreadsheets and data analysis tools.
 
 ```bash
-jax-spice circuit.sim -o results.csv --format csv
+va-jax circuit.sim -o results.csv --format csv
 ```
 
 Format:
@@ -159,7 +159,7 @@ time,node1,node2,...
 JSON format for programmatic processing.
 
 ```bash
-jax-spice circuit.sim -o results.json --format json
+va-jax circuit.sim -o results.json --format json
 ```
 
 Format:
@@ -187,34 +187,34 @@ Format:
 
 ```bash
 # Basic transient simulation
-jax-spice ring_oscillator.sim --tran 1n 10u
+va-jax ring_oscillator.sim --tran 1n 10u
 
 # Large circuit with sparse solver
-jax-spice c6288.sim --tran 1n 100n --sparse
+va-jax c6288.sim --tran 1n 100n --sparse
 
 # GPU acceleration
-jax-spice ring_oscillator.sim --gpu --tran 1n 10u
+va-jax ring_oscillator.sim --gpu --tran 1n 10u
 ```
 
 ### AC Analysis
 
 ```bash
 # Decade sweep, 100 points per decade
-jax-spice amplifier.sim --ac dec 100 1k 1G
+va-jax amplifier.sim --ac dec 100 1k 1G
 
 # Linear sweep
-jax-spice filter.sim --ac lin 1000 1k 10k
+va-jax filter.sim --ac lin 1000 1k 10k
 ```
 
 ### Benchmarking
 
 ```bash
 # Run ring oscillator benchmark with profiling
-jax-spice benchmark ring --profile
+va-jax benchmark ring --profile
 
 # Compare sparse vs dense solver
-jax-spice benchmark mul --profile
-jax-spice benchmark mul --profile --sparse
+va-jax benchmark mul --profile
+va-jax benchmark mul --profile --sparse
 ```
 
 ### Batch Processing
@@ -222,7 +222,7 @@ jax-spice benchmark mul --profile --sparse
 ```bash
 # Process multiple circuits
 for f in circuits/*.sim; do
-    jax-spice "$f" -o "results/$(basename "$f" .sim).raw"
+    va-jax "$f" -o "results/$(basename "$f" .sim).raw"
 done
 ```
 
@@ -232,10 +232,10 @@ done
 
 ```bash
 # Check system info
-jax-spice info
+va-jax info
 
 # Force CPU fallback
-jax-spice circuit.sim --cpu
+va-jax circuit.sim --cpu
 ```
 
 ### Convergence Issues
@@ -243,10 +243,10 @@ jax-spice circuit.sim --cpu
 For difficult circuits, try:
 ```bash
 # Use sparse solver for better conditioning
-jax-spice circuit.sim --sparse
+va-jax circuit.sim --sparse
 
 # Force double precision
-jax-spice circuit.sim --x64
+va-jax circuit.sim --x64
 ```
 
 ### Out of Memory
@@ -254,7 +254,7 @@ jax-spice circuit.sim --x64
 For large circuits:
 ```bash
 # Use sparse solver (required for >1000 nodes)
-jax-spice large_circuit.sim --sparse
+va-jax large_circuit.sim --sparse
 ```
 
 ## See Also

@@ -6,7 +6,7 @@
 
 ## Goal
 
-Enable efficient sparse linear solving in JAX-SPICE that works across CPU, GPU (NVIDIA, AMD), and TPU, with cached symbolic factorization for Newton-Raphson iterations.
+Enable efficient sparse linear solving in VA-JAX that works across CPU, GPU (NVIDIA, AMD), and TPU, with cached symbolic factorization for Newton-Raphson iterations.
 
 ## Current State of JAX Sparse Support
 
@@ -74,7 +74,7 @@ Relevant issues:
 
 ```
                     ┌─────────────────┐
-                    │  JAX-SPICE NR   │
+                    │  VA-JAX NR   │
                     │    Solver       │
                     └────────┬────────┘
                              │
@@ -95,7 +95,7 @@ Relevant issues:
 Add GMRES with block-Jacobi preconditioner as agnostic fallback:
 
 ```python
-# jax_spice/analysis/iterative_solver.py
+# vajax/analysis/iterative_solver.py
 
 def build_block_jacobi_preconditioner(J_diag_blocks):
     """Build M^-1 from diagonal blocks of Jacobian."""
@@ -183,7 +183,7 @@ Some applications have varying sparsity. Our circuit simulation has fixed patter
 
 ## Recommendations
 
-### For JAX-SPICE (Immediate)
+### For VA-JAX (Immediate)
 1. ✅ Use Spineax on NVIDIA GPUs (done)
 2. Add GMRES fallback for TPU/other GPUs
 3. Keep dense option for small circuits
@@ -202,14 +202,14 @@ Some applications have varying sparsity. Our circuit simulation has fixed patter
 
 ### Open Issues
 
-- [ ] **TPU CI failing** - [PR #1](https://github.com/ChipFlow/jax-spice/pull/1) adds TPU CI but tests are timing out/cancelled
+- [ ] **TPU CI failing** - [PR #1](https://github.com/ChipFlow/va-jax/pull/1) adds TPU CI but tests are timing out/cancelled
   - TPU tests ran for 6+ hours before being cancelled
   - Need to investigate: is it a VM provisioning issue or actual test hang?
 
 ### TPU Support Tasks
 
 - [ ] **Implement GMRES + block-Jacobi fallback solver**
-  - Create `jax_spice/analysis/iterative_solver.py`
+  - Create `vajax/analysis/iterative_solver.py`
   - Extract diagonal blocks from Jacobian for preconditioner
   - Use `jax.scipy.sparse.linalg.gmres` with matrix-free matvec
   - Benchmark on TPU vs dense solver

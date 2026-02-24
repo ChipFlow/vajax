@@ -2,7 +2,7 @@
 
 ## Executive Summary
 
-The current data flow from Verilog-A source through `openvaf_py` to JAX-SPICE has several naming convention issues that make the code difficult to understand and debug. This document proposes a clear, well-documented data flow with unambiguous naming conventions.
+The current data flow from Verilog-A source through `openvaf_py` to VA-JAX has several naming convention issues that make the code difficult to understand and debug. This document proposes a clear, well-documented data flow with unambiguous naming conventions.
 
 ## Current Issues
 
@@ -174,7 +174,7 @@ Create clear documentation showing data flow:
                                     │
                                     ▼
 ┌─────────────────────────────────────────────────────────────────────────┐
-│                       ENGINE.PY (JAX-SPICE)                              │
+│                       ENGINE.PY (VA-JAX)                              │
 │  CircuitEngine._prepare_openvaf_batched_inputs():                        │
 │  - Builds node_map: {model_node_name → circuit_node_idx}                │
 │  - ALSO adds sim_node{i} entries for DAE residual mapping               │
@@ -240,13 +240,13 @@ Mark original method as deprecated, remove in future version.
 1. Add unit tests for `get_dae_system_v2()` output format
 2. Add integration tests comparing v1 and v2 outputs for known models
 3. Test with ring oscillator benchmark to verify currents are non-zero
-4. Compare JAX-SPICE vs VACASK results
+4. Compare VA-JAX vs VACASK results
 
 ## Files to Modify
 
 1. `openvaf-py/src/lib.rs` - Add `get_dae_system_v2()` method
 2. `openvaf-py/openvaf_jax.py` - Use v2 API, update code generation
-3. `jax_spice/analysis/engine.py` - Remove `sim_node{}` workarounds
+3. `vajax/analysis/engine.py` - Remove `sim_node{}` workarounds
 4. Tests for all above
 
 ## Success Criteria

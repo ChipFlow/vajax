@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""CPU Profiling Script for JAX-SPICE
+"""CPU Profiling Script for VA-JAX
 
 Profiles CPU performance of VACASK benchmark circuits using CircuitEngine.
 Compares dense vs sparse solvers across different circuit sizes.
@@ -22,7 +22,7 @@ import time
 from pathlib import Path
 from typing import List
 
-# Ensure jax-spice is importable
+# Ensure va-jax is importable
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 # Force CPU backend
@@ -30,9 +30,9 @@ os.environ["JAX_PLATFORMS"] = "cpu"
 
 import jax
 
-# Import jax_spice first to auto-configure precision based on backend
+# Import vajax first to auto-configure precision based on backend
 # (Metal/TPU use f32, CPU/CUDA use f64)
-from jax_spice.analysis import CircuitEngine
+from vajax.analysis import CircuitEngine
 from scripts.benchmark_utils import BenchmarkResult, get_vacask_benchmarks, log
 
 
@@ -152,7 +152,7 @@ def main():
     args = parser.parse_args()
 
     log("=" * 70)
-    log("JAX-SPICE CPU Profiling")
+    log("VA-JAX CPU Profiling")
     log("=" * 70)
     log()
 

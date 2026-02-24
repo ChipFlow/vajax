@@ -32,7 +32,7 @@ import os
 import time
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
-logger = logging.getLogger("jax_spice.openvaf")
+logger = logging.getLogger("vajax.openvaf")
 
 # Re-export key types
 from .cache import cache_stats, clear_cache, exec_with_cache, get_vmapped_jit
@@ -1350,7 +1350,7 @@ class OpenVAFToJAX:
         if os.environ.get("OPENVAF_JAX_DUMP_CODE"):
             import hashlib
 
-            dump_dir = os.path.expanduser("~/.cache/jax_spice/openvaf_codegen_dump")
+            dump_dir = os.path.expanduser("~/.cache/vajax/openvaf_codegen_dump")
             os.makedirs(dump_dir, exist_ok=True)
             code_hash = hashlib.sha256(code.encode()).hexdigest()[:8]
             dump_path = os.path.join(dump_dir, f"{fn_name}_{code_hash}_{len(code_lines)}lines.py")

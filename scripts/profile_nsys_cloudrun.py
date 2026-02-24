@@ -16,7 +16,7 @@ Usage:
     uv run scripts/profile_nsys_cloudrun.py [--circuit inv_test|nor_test|and_test|c6288_test]
 
 Prerequisites:
-    - gcloud CLI authenticated with access to jax-spice-cuda-test project
+    - gcloud CLI authenticated with access to va-jax-cuda-test project
     - gsutil for downloading traces
 
 Output:
@@ -35,9 +35,9 @@ import tempfile
 import time
 from pathlib import Path
 
-GCP_PROJECT = "jax-spice-cuda-test"
+GCP_PROJECT = "va-jax-cuda-test"
 GCP_REGION = "us-central1"
-JOB_NAME = "jax-spice-nsys-profile"
+JOB_NAME = "va-jax-nsys-profile"
 GCS_BUCKET = f"gs://{GCP_PROJECT}-traces"
 
 
@@ -87,7 +87,7 @@ def main():
     local_profile_dir = Path(tempfile.gettempdir()) / f"nsys-profile-{args.circuit}-{timestamp}"
 
     print("=" * 60)
-    print("JAX-SPICE nsys-jax GPU Profiling on Cloud Run")
+    print("VA-JAX nsys-jax GPU Profiling on Cloud Run")
     print("=" * 60)
     print(f"Circuit: {args.circuit}")
     print(f"Timesteps: {args.timesteps}")
@@ -119,7 +119,7 @@ set -e
 cd /app
 
 # Clone repo at main
-git clone --depth 1 --recurse-submodules https://github.com/ChipFlow/jax-spice.git source
+git clone --depth 1 --recurse-submodules https://github.com/ChipFlow/va-jax.git source
 cd source
 
 # Install deps
@@ -165,7 +165,7 @@ echo "Profile uploaded to: {profile_gcs_path}.zip"
         JOB_NAME,
         f"--region={GCP_REGION}",
         f"--project={GCP_PROJECT}",
-        "--image=us-central1-docker.pkg.dev/jax-spice-cuda-test/ghcr-remote/chipflow/jax-spice/gpu-base:latest",
+        "--image=us-central1-docker.pkg.dev/va-jax-cuda-test/ghcr-remote/chipflow/va-jax/gpu-base:latest",
         "--execution-environment=gen2",
         "--gpu=1",
         "--gpu-type=nvidia-l4",

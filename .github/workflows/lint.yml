@@ -20,10 +20,10 @@ jobs:
         run: uv python install 3.11
 
       - name: Run ruff check
-        run: uv tool run ruff check jax_spice/ tests/ scripts/ benchmarks/
+        run: uv tool run ruff check vajax/ tests/ scripts/ benchmarks/
 
       - name: Run ruff format check
-        run: uv tool run ruff format --check jax_spice/ tests/ scripts/ benchmarks/
+        run: uv tool run ruff format --check vajax/ tests/ scripts/ benchmarks/
 
       - name: Install Python dependencies for type checking
         run: |
@@ -31,4 +31,4 @@ jobs:
           uv pip install pyright
 
       - name: Run pyright
-        run: .venv/bin/pyright jax_spice/
+        run: .venv/bin/pyright vajax/

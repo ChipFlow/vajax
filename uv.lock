@@ -15,10 +15,10 @@ resolution-markers = [
 
 [manifest]
 members = [
-    "jax-spice",
     "openvaf-py",
     "osdi-py",
     "umfpack-jax",
+    "va-jax",
 ]
 
 [[package]]
@@ -456,90 +456,6 @@ with-cuda = [
     { name = "nvidia-nvjitlink-cu12", marker = "sys_platform == 'linux'" },
     { name = "nvidia-nvshmem-cu12", marker = "sys_platform == 'linux'" },
 ]
-
-[[package]]
-name = "jax-spice"
-version = "0.1.0"
-source = { editable = "." }
-dependencies = [
-    { name = "jax" },
-    { name = "jaxlib" },
-    { name = "jaxtyping" },
-    { name = "matplotlib" },
-    { name = "numpy" },
-    { name = "openvaf-py" },
-    { name = "scipy" },
-    { name = "simpleeval" },
-    { name = "umfpack-jax" },
-]
-
-[package.optional-dependencies]
-cuda12 = [
-    { name = "jax-cuda12-plugin", marker = "sys_platform != 'darwin'" },
-    { name = "spineax" },
-]
-dev = [
-    { name = "beartype" },
-    { name = "osdi-py" },
-    { name = "pyright" },
-    { name = "pytest" },
-    { name = "pytest-cov" },
-    { name = "ruff" },
-    { name = "scikit-umfpack" },
-]
-sax = [
-    { name = "sax" },
-]
-test = [
-    { name = "beartype" },
-    { name = "osdi-py" },
-    { name = "pytest" },
-    { name = "pytest-cov" },
-]
-umfpack = [
-    { name = "scikit-umfpack" },
-]
-umfpack-ffi = [
-    { name = "umfpack-jax" },
-]
-
-[package.dev-dependencies]
-dev = [
-    { name = "radon" },
-]
-
-[package.metadata]
-requires-dist = [
-    { name = "beartype", marker = "extra == 'dev'", specifier = ">=0.18.0" },
-    { name = "beartype", marker = "extra == 'test'", specifier = ">=0.18.0" },
-    { name = "jax", specifier = ">=0.9.0" },
-    { name = "jax-cuda12-plugin", marker = "sys_platform != 'darwin' and extra == 'cuda12'", specifier = ">=0.9.0" },
-    { name = "jaxlib", specifier = ">=0.9.0" },
-    { name = "jaxtyping", specifier = ">=0.2.0" },
-    { name = "matplotlib", specifier = ">=3.7.0" },
-    { name = "numpy", specifier = ">=1.24.0" },
-    { name = "openvaf-py", editable = "openvaf_jax/openvaf_py" },
-    { name = "osdi-py", marker = "extra == 'dev'", editable = "openvaf_jax/osdi_py" },
-    { name = "osdi-py", marker = "extra == 'test'", editable = "openvaf_jax/osdi_py" },
-    { name = "pyright", marker = "extra == 'dev'" },
-    { name = "pytest", marker = "extra == 'dev'", specifier = ">=7.4.0" },
-    { name = "pytest", marker = "extra == 'test'", specifier = ">=7.4.0" },
-    { name = "pytest-cov", marker = "extra == 'dev'" },
-    { name = "pytest-cov", marker = "extra == 'test'" },
-    { name = "ruff", marker = "extra == 'dev'" },
-    { name = "sax", marker = "extra == 'sax'", specifier = ">=0.13.0" },
-    { name = "scikit-umfpack", marker = "extra == 'dev'", specifier = ">=0.4.2" },
-    { name = "scikit-umfpack", marker = "extra == 'umfpack'", specifier = ">=0.4.2" },
-    { name = "scipy", specifier = ">=1.11.0" },
-    { name = "simpleeval", specifier = ">=1.0.0" },
-    { name = "spineax", marker = "extra == 'cuda12'", git = "https://github.com/robtaylor/spineax.git" },
-    { name = "umfpack-jax", editable = "jax_spice/sparse" },
-    { name = "umfpack-jax", marker = "extra == 'umfpack-ffi'", editable = "jax_spice/sparse" },
-]
-provides-extras = ["cuda12", "umfpack", "umfpack-ffi", "sax", "test", "dev"]
-
-[package.metadata.requires-dev]
-dev = [{ name = "radon", specifier = ">=6.0.1" }]
 
 [[package]]
 name = "jaxlib"
@@ -2004,7 +1920,7 @@ wheels = [
 [[package]]
 name = "umfpack-jax"
 version = "0.1.0"
-source = { editable = "jax_spice/sparse" }
+source = { editable = "vajax/sparse" }
 dependencies = [
     { name = "jax" },
     { name = "numpy" },
@@ -2015,6 +1931,90 @@ requires-dist = [
     { name = "jax", specifier = ">=0.4.29" },
     { name = "numpy", specifier = ">=1.24.0" },
 ]
+
+[[package]]
+name = "va-jax"
+version = "0.1.0"
+source = { editable = "." }
+dependencies = [
+    { name = "jax" },
+    { name = "jaxlib" },
+    { name = "jaxtyping" },
+    { name = "matplotlib" },
+    { name = "numpy" },
+    { name = "openvaf-py" },
+    { name = "scipy" },
+    { name = "simpleeval" },
+    { name = "umfpack-jax" },
+]
+
+[package.optional-dependencies]
+cuda12 = [
+    { name = "jax-cuda12-plugin", marker = "sys_platform != 'darwin'" },
+    { name = "spineax" },
+]
+dev = [
+    { name = "beartype" },
+    { name = "osdi-py" },
+    { name = "pyright" },
+    { name = "pytest" },
+    { name = "pytest-cov" },
+    { name = "ruff" },
+    { name = "scikit-umfpack" },
+]
+sax = [
+    { name = "sax" },
+]
+test = [
+    { name = "beartype" },
+    { name = "osdi-py" },
+    { name = "pytest" },
+    { name = "pytest-cov" },
+]
+umfpack = [
+    { name = "scikit-umfpack" },
+]
+umfpack-ffi = [
+    { name = "umfpack-jax" },
+]
+
+[package.dev-dependencies]
+dev = [
+    { name = "radon" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "beartype", marker = "extra == 'dev'", specifier = ">=0.18.0" },
+    { name = "beartype", marker = "extra == 'test'", specifier = ">=0.18.0" },
+    { name = "jax", specifier = ">=0.9.0" },
+    { name = "jax-cuda12-plugin", marker = "sys_platform != 'darwin' and extra == 'cuda12'", specifier = ">=0.9.0" },
+    { name = "jaxlib", specifier = ">=0.9.0" },
+    { name = "jaxtyping", specifier = ">=0.2.0" },
+    { name = "matplotlib", specifier = ">=3.7.0" },
+    { name = "numpy", specifier = ">=1.24.0" },
+    { name = "openvaf-py", editable = "openvaf_jax/openvaf_py" },
+    { name = "osdi-py", marker = "extra == 'dev'", editable = "openvaf_jax/osdi_py" },
+    { name = "osdi-py", marker = "extra == 'test'", editable = "openvaf_jax/osdi_py" },
+    { name = "pyright", marker = "extra == 'dev'" },
+    { name = "pytest", marker = "extra == 'dev'", specifier = ">=7.4.0" },
+    { name = "pytest", marker = "extra == 'test'", specifier = ">=7.4.0" },
+    { name = "pytest-cov", marker = "extra == 'dev'" },
+    { name = "pytest-cov", marker = "extra == 'test'" },
+    { name = "ruff", marker = "extra == 'dev'" },
+    { name = "sax", marker = "extra == 'sax'", specifier = ">=0.13.0" },
+    { name = "scikit-umfpack", marker = "extra == 'dev'", specifier = ">=0.4.2" },
+    { name = "scikit-umfpack", marker = "extra == 'umfpack'", specifier = ">=0.4.2" },
+    { name = "scipy", specifier = ">=1.11.0" },
+    { name = "simpleeval", specifier = ">=1.0.0" },
+    { name = "spineax", marker = "extra == 'cuda12'", git = "https://github.com/robtaylor/spineax.git" },
+    { name = "umfpack-jax", editable = "vajax/sparse" },
+    { name = "umfpack-jax", marker = "extra == 'umfpack-ffi'", editable = "vajax/sparse" },
+]
+provides-extras = ["cuda12", "umfpack", "umfpack-ffi", "sax", "test", "dev"]
+
+[package.metadata.requires-dev]
+dev = [{ name = "radon", specifier = ">=6.0.1" }]
 
 [[package]]
 name = "virtualenv"

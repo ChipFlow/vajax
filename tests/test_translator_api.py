@@ -14,7 +14,7 @@ import openvaf_py
 import pytest
 
 import openvaf_jax
-from jax_spice import build_simparams
+from vajax import build_simparams
 
 # Test model paths
 PROJECT_ROOT = Path(__file__).parent.parent

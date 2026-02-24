@@ -1,4 +1,4 @@
-"""Pytest configuration for JAX-SPICE tests
+"""Pytest configuration for VA-JAX tests
 
 Handles platform-specific JAX configuration:
 - macOS: Forces CPU backend since Metal doesn't support triangular_solve
@@ -19,7 +19,7 @@ import sys
 from pathlib import Path
 from typing import Any, Dict
 
-from jax_spice.utils.safe_eval import safe_eval_expr
+from vajax.utils.safe_eval import safe_eval_expr
 
 
 def _setup_cuda_libraries():
@@ -48,8 +48,8 @@ def _setup_jaxtyping():
     try:
         from jaxtyping import install_import_hook
 
-        # Enable runtime type checking for jax_spice modules
-        install_import_hook("jax_spice", "beartype.beartype")
+        # Enable runtime type checking for vajax modules
+        install_import_hook("vajax", "beartype.beartype")
     except ImportError:
         pass  # beartype not installed, skip runtime checking
 
@@ -69,12 +69,12 @@ def pytest_configure(config):
         # Linux with CUDA: Preload CUDA libraries before JAX import
         _setup_cuda_libraries()
 
-    # Enable jaxtyping runtime checking (must be before jax_spice imports)
+    # Enable jaxtyping runtime checking (must be before vajax imports)
     _setup_jaxtyping()
 
-    # Import jax_spice to auto-configure precision based on backend
+    # Import vajax to auto-configure precision based on backend
     # This will detect Metal/TPU and disable x64 if needed
-    import jax_spice  # noqa: F401
+    import vajax  # noqa: F401
 
 
 # =============================================================================

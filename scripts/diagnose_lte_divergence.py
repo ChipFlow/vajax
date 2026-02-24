@@ -17,9 +17,9 @@ import jax.numpy as jnp
 
 
 def run_diagnostic(use_sparse: bool, n_steps: int = 5, output_path: str | None = None):
-    from jax_spice.analysis.engine import CircuitEngine
-    from jax_spice.analysis.transient.adaptive import AdaptiveConfig
-    from jax_spice.benchmarks.registry import get_benchmark
+    from vajax.analysis.engine import CircuitEngine
+    from vajax.analysis.transient.adaptive import AdaptiveConfig
+    from vajax.benchmarks.registry import get_benchmark
 
     backend = jax.default_backend()
     solver = (

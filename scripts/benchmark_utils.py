@@ -9,7 +9,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import List, Optional, Tuple
 
-# Re-export find_vacask_binary from jax_spice.utils to avoid duplication
+# Re-export find_vacask_binary from vajax.utils to avoid duplication
 
 
 @dataclass

@@ -1,6 +1,6 @@
 # Performance Analysis
 
-This document analyzes JAX-SPICE performance characteristics, explaining the
+This document analyzes VA-JAX performance characteristics, explaining the
 overhead profile relative to VACASK (C++ reference simulator) and the GPU
 acceleration crossover point.
 
@@ -9,7 +9,7 @@ acceleration crossover point.
 All measurements from GitHub Actions CI runners (CPU: ubuntu-latest, GPU: nvidia-runner-1).
 VACASK numbers on CPU use live execution; GPU comparisons use reference values.
 
-### CPU: JAX-SPICE vs VACASK
+### CPU: VA-JAX vs VACASK
 
 | Benchmark | Nodes | Steps | JAX (ms/step) | VACASK (ms/step) | Ratio |
 |-----------|------:|------:|--------------:|-----------------:|------:|
@@ -19,7 +19,7 @@ VACASK numbers on CPU use live execution; GPU comparisons use reference values.
 | ring      |    47 |   20k |         0.511 |            0.109 |  4.7x |
 | c6288     | ~5000 |    1k |        88.060 |           76.390 |  1.2x |
 
-### GPU: JAX-SPICE Acceleration
+### GPU: VA-JAX Acceleration
 
 | Benchmark | Nodes | GPU (ms/step) | CPU (ms/step) | GPU Speedup | vs VACASK CPU |
 |-----------|------:|--------------:|--------------:|------------:|--------------:|
@@ -136,7 +136,7 @@ For c6288 (~86,000 transistors), vmap amortizes perfectly.
 
 ### 3. COO Matrix Assembly
 
-JAX-SPICE builds the Jacobian from COO (coordinate) format:
+VA-JAX builds the Jacobian from COO (coordinate) format:
 1. Each device type produces (row, col, value) triplets
 2. Triplets are concatenated across device types
 3. Duplicate indices are summed to form the final matrix
@@ -197,5 +197,5 @@ These are known areas where the per-step overhead could be reduced:
    BDF2; simpler methods (trapezoidal) would reduce overhead.
 
 These optimizations would primarily benefit small-circuit CPU performance
-without affecting the large-circuit GPU path where JAX-SPICE already
+without affecting the large-circuit GPU path where VA-JAX already
 outperforms VACASK.

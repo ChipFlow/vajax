@@ -28,12 +28,12 @@ import jax
 
 sys.path.insert(0, ".")
 
-# Import jax_spice first to auto-configure precision based on backend
-from jax_spice.analysis import CircuitEngine
+# Import vajax first to auto-configure precision based on backend
+from vajax.analysis import CircuitEngine
 
 
 def main():
-    parser = argparse.ArgumentParser(description="nsys-jax profiling target for JAX-SPICE")
+    parser = argparse.ArgumentParser(description="nsys-jax profiling target for VA-JAX")
     parser.add_argument(
         "circuit",
         nargs="?",

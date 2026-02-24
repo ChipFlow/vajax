@@ -1,6 +1,6 @@
 # OSDI Parameter Architecture
 
-This document describes how OSDI (Open Simulator Device Interface) handles parameters, the distinction between different parameter types, and how this relates to JAX-SPICE's parameter handling through `openvaf_jax`.
+This document describes how OSDI (Open Simulator Device Interface) handles parameters, the distinction between different parameter types, and how this relates to VA-JAX's parameter handling through `openvaf_jax`.
 
 ## 1. OSDI Parameter Kinds
 
@@ -155,11 +155,11 @@ def eval_func(voltages, params, cache_values):
     ids = v84982 * some_expression(voltages)
 ```
 
-## 5. JAX-SPICE Parameter Handling
+## 5. VA-JAX Parameter Handling
 
 ### The Problem
 
-JAX-SPICE's `runner.py` batches devices for GPU efficiency. The vectorized path must set:
+VA-JAX's `runner.py` batches devices for GPU efficiency. The vectorized path must set:
 
 1. **Regular parameters** (`l`, `w`, `nf`, etc.) - from netlist
 2. **Hidden_state parameters** - computed geometry values
@@ -192,9 +192,9 @@ if 'le' in hidden_to_col:
 3. **NaN propagation** through model calculations
 4. **Should JAX code compute these?** The generated JAX init function should compute them, but the vectorized runner bypasses this
 
-## 6. Comparison: VACASK vs JAX-SPICE
+## 6. Comparison: VACASK vs VA-JAX
 
-| Aspect | VACASK | JAX-SPICE |
+| Aspect | VACASK | VA-JAX |
 |--------|--------|-----------|
 | Init execution | Native code, once per setup | Should use generated JAX init |
 | Cache passing | Automatic in native code | Manual via cache_mapping |
@@ -318,7 +318,7 @@ After this flow, **HiddenState is no longer needed** - it's been replaced by the
 ## 9. Related Documentation
 
 - [VACASK OSDI Inputs](vacask_osdi_inputs.md) - How VACASK interfaces with OSDI
-- [Architecture Overview](architecture_overview.md) - Overall JAX-SPICE architecture
+- [Architecture Overview](architecture_overview.md) - Overall VA-JAX architecture
 - [OpenVAF CLAUDE.md](../vendor/OpenVAF/CLAUDE.md) - OpenVAF compiler architecture
 
 ## 9. File References
@@ -328,5 +328,5 @@ After this flow, **HiddenState is no longer needed** - it's been replaced by the
 | OSDI header definitions | `vendor/OpenVAF/openvaf/osdi/header/osdi.h` |
 | Rust MIR interpreter | `openvaf_jax/openvaf_py/src/lib.rs` |
 | JAX code translator | `openvaf_jax/__init__.py` |
-| Benchmark runner | `jax_spice/benchmarks/runner.py` |
+| Benchmark runner | `vajax/benchmarks/runner.py` |
 | VACASK OSDI interface | `vendor/VACASK/lib/osdiinstance.cpp` |

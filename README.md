@@ -1,9 +1,9 @@
-# JAX-SPICE: GPU-Accelerated Analog Circuit Simulator
+# VA-JAX: GPU-Accelerated Analog Circuit Simulator
 
-[![Tests](https://github.com/ChipFlow/jax-spice/actions/workflows/test.yml/badge.svg)](https://github.com/ChipFlow/jax-spice/actions/workflows/test.yml)
-[![GPU Tests](https://github.com/ChipFlow/jax-spice/actions/workflows/test-gpu.yml/badge.svg)](https://github.com/ChipFlow/jax-spice/actions/workflows/test-gpu.yml)
-[![Lint](https://github.com/ChipFlow/jax-spice/actions/workflows/lint.yml/badge.svg)](https://github.com/ChipFlow/jax-spice/actions/workflows/lint.yml)
-[![Benchmark](https://github.com/ChipFlow/jax-spice/actions/workflows/benchmark-comparison.yml/badge.svg)](https://github.com/ChipFlow/jax-spice/actions/workflows/benchmark-comparison.yml)
+[![Tests](https://github.com/ChipFlow/va-jax/actions/workflows/test.yml/badge.svg)](https://github.com/ChipFlow/va-jax/actions/workflows/test.yml)
+[![GPU Tests](https://github.com/ChipFlow/va-jax/actions/workflows/test-gpu.yml/badge.svg)](https://github.com/ChipFlow/va-jax/actions/workflows/test-gpu.yml)
+[![Lint](https://github.com/ChipFlow/va-jax/actions/workflows/lint.yml/badge.svg)](https://github.com/ChipFlow/va-jax/actions/workflows/lint.yml)
+[![Benchmark](https://github.com/ChipFlow/va-jax/actions/workflows/benchmark-comparison.yml/badge.svg)](https://github.com/ChipFlow/va-jax/actions/workflows/benchmark-comparison.yml)
 
 A proof-of-concept GPU-accelerated analog circuit simulator built on JAX, demonstrating:
 - **Automatic differentiation** for computing device Jacobians without explicit derivatives
@@ -13,17 +13,17 @@ A proof-of-concept GPU-accelerated analog circuit simulator built on JAX, demons
 
 ## Current Status
 
-JAX-SPICE is in active development as a proof-of-concept. All VACASK benchmark circuits are passing.
+VA-JAX is in active development as a proof-of-concept. All VACASK benchmark circuits are passing.
 
-**[Full benchmark results and test coverage →](https://chipflow.github.io/jax-spice/)**
+**[Full benchmark results and test coverage →](https://chipflow.github.io/va-jax/)**
 
 ## Validation: Three-Way Comparison
 
-JAX-SPICE results are validated against VACASK (reference simulator) and ngspice.
+VA-JAX results are validated against VACASK (reference simulator) and ngspice.
 All simulators use identical netlists and device models (PSP103 MOSFETs via OSDI).
 
 ### RC Low-Pass Filter
-Simple RC circuit demonstrating basic transient behavior. JAX-SPICE matches VACASK and ngspice exactly.
+Simple RC circuit demonstrating basic transient behavior. VA-JAX matches VACASK and ngspice exactly.
 
 ![RC Comparison](docs/images/rc_three_way_comparison.png)
 
@@ -33,7 +33,7 @@ Simple RC circuit demonstrating basic transient behavior. JAX-SPICE matches VACA
 ![Ring Oscillator Comparison](docs/images/ring_three_way_comparison.png)
 
 ### C6288 16-bit Multiplier
-Large-scale benchmark with ~86,000 nodes. Uses sparse solver for memory efficiency. Demonstrates JAX-SPICE scaling to production-sized circuits.
+Large-scale benchmark with ~86,000 nodes. Uses sparse solver for memory efficiency. Demonstrates VA-JAX scaling to production-sized circuits.
 
 ![C6288 Comparison](docs/images/c6288_three_way_comparison.png)
 
@@ -45,7 +45,7 @@ uv run scripts/plot_three_way_comparison.py --benchmark c6288 --output-dir docs/
 
 ## Performance
 
-JAX-SPICE is designed for GPU acceleration of large circuits. The table below shows
+VA-JAX is designed for GPU acceleration of large circuits. The table below shows
 per-step timing against VACASK (C++ reference simulator) on CI runners.
 
 ### CPU Performance (vs VACASK)
@@ -73,11 +73,11 @@ prevents this in normal usage.
 
 ### Performance Characteristics
 
-**Where JAX-SPICE excels:** Large circuits (1000+ nodes) on GPU, where matrix
+**Where VA-JAX excels:** Large circuits (1000+ nodes) on GPU, where matrix
 operations dominate and GPU parallelism pays off. The c6288 benchmark (16-bit
 multiplier, ~5000 nodes) runs **2.9x faster than VACASK** on GPU.
 
-**Where VACASK is faster:** Small circuits on CPU. JAX-SPICE carries a per-step
+**Where VACASK is faster:** Small circuits on CPU. VA-JAX carries a per-step
 fixed overhead of ~5-12 microseconds from:
 
 - **Adaptive timestep machinery**: LTE estimation, voltage prediction, and
@@ -105,7 +105,7 @@ uv sync
 JAX_PLATFORMS=cpu uv run pytest tests/ -v
 
 # Run a benchmark
-JAX_PLATFORMS=cpu uv run python -m jax_spice.benchmarks.runner vendor/VACASK/sim/ring.sim
+JAX_PLATFORMS=cpu uv run python -m vajax.benchmarks.runner vendor/VACASK/sim/ring.sim
 ```
 
 ### Installation Options
@@ -123,25 +123,25 @@ uv sync --extra sax
 
 ## Command-Line Interface
 
-JAX-SPICE provides an ngspice-style CLI:
+VA-JAX provides an ngspice-style CLI:
 
 ```bash
 # Run simulation on a circuit file
-jax-spice circuit.sim
+va-jax circuit.sim
 
 # Specify output file and format
-jax-spice circuit.sim -o results.raw
-jax-spice circuit.sim -o results.csv --format csv
+va-jax circuit.sim -o results.raw
+va-jax circuit.sim -o results.csv --format csv
 
 # Override analysis parameters
-jax-spice circuit.sim --tran 1n 100u
-jax-spice circuit.sim --ac dec 100 1k 1G
+va-jax circuit.sim --tran 1n 100u
+va-jax circuit.sim --ac dec 100 1k 1G
 
 # Run benchmarks
-jax-spice benchmark ring --profile
+va-jax benchmark ring --profile
 
 # System info
-jax-spice info
+va-jax info
 ```
 
 See [docs/cli_reference.md](docs/cli_reference.md) for full documentation.
@@ -149,7 +149,7 @@ See [docs/cli_reference.md](docs/cli_reference.md) for full documentation.
 ## Example: Transient Simulation
 
 ```python
-from jax_spice import CircuitEngine
+from vajax import CircuitEngine
 
 # Load and parse a VACASK circuit file
 engine = CircuitEngine("path/to/circuit.sim")
@@ -167,7 +167,7 @@ for node_name, voltages in result.voltages.items():
 ## Architecture Overview
 
 ```
-jax_spice/
+vajax/
 ├── analysis/             # Circuit solvers and analysis engines
 │   ├── engine.py        # CircuitEngine - main simulation API
 │   ├── solver.py        # Newton-Raphson with lax.while_loop
@@ -234,7 +234,7 @@ model nmos psp103va
 All analyses are accessed through `CircuitEngine`:
 
 ```python
-from jax_spice import CircuitEngine
+from vajax import CircuitEngine
 
 engine = CircuitEngine("circuit.sim")
 engine.parse()
@@ -283,7 +283,7 @@ noise_result = engine.run_noise(
 ### Corner Analysis (PVT Sweep)
 
 ```python
-from jax_spice.analysis import create_pvt_corners
+from vajax.analysis import create_pvt_corners
 
 # Create PVT corners
 corners = create_pvt_corners(
@@ -311,10 +311,10 @@ acxf_result = engine.run_acxf(input_source="vin", output_node="vout")
 
 ## Verilog-A Integration
 
-JAX-SPICE can use production PDK models via OpenVAF:
+VA-JAX can use production PDK models via OpenVAF:
 
 ```python
-from jax_spice.devices import VerilogADevice, compile_va
+from vajax.devices import VerilogADevice, compile_va
 
 # Compile a Verilog-A model
 model = compile_va("psp103.va")
@@ -330,7 +330,7 @@ See `docs/vacask_osdi_inputs.md` for details on the OpenVAF integration.
 
 ```bash
 # Run specific benchmark
-JAX_PLATFORMS=cpu uv run python -m jax_spice.benchmarks.runner vendor/VACASK/sim/ring.sim
+JAX_PLATFORMS=cpu uv run python -m vajax.benchmarks.runner vendor/VACASK/sim/ring.sim
 
 # Profile with GPU
 JAX_PLATFORMS=cuda uv run python scripts/profile_gpu.py --benchmark ring
@@ -346,7 +346,7 @@ JAX_PLATFORMS=cpu uv run pytest tests/test_vacask_suite.py -v
 - **Precision**: Auto-configured based on backend:
   - CPU/CUDA: Float64 enabled for numerical precision
   - Metal/TPU: Float32 (backends don't support float64 natively)
-  - Use `jax_spice.configure_precision(force_x64=True/False)` to override
+  - Use `vajax.configure_precision(force_x64=True/False)` to override
 
 ## Documentation
 

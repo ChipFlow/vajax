@@ -7,8 +7,8 @@ import jax.numpy as jnp
 import numpy as np
 import pytest
 
-from jax_spice.analysis.integration import IntegrationMethod, compute_coefficients
-from jax_spice.analysis.transient.predictor import (
+from vajax.analysis.integration import IntegrationMethod, compute_coefficients
+from vajax.analysis.transient.predictor import (
     compute_new_timestep,
     compute_predictor_coeffs,
     estimate_lte,
@@ -229,7 +229,7 @@ class TestTimestepCalculation:
 
     def test_accept_reject_threshold(self):
         """Test the accept/reject decision based on dt ratio."""
-        from jax_spice.analysis.transient import AdaptiveConfig
+        from vajax.analysis.transient import AdaptiveConfig
 
         config = AdaptiveConfig(redo_factor=2.5)
 
@@ -255,7 +255,7 @@ class TestAdaptiveConfig:
 
     def test_default_config(self):
         """Default config should have reasonable values."""
-        from jax_spice.analysis.transient import AdaptiveConfig
+        from vajax.analysis.transient import AdaptiveConfig
 
         config = AdaptiveConfig()
 
@@ -268,7 +268,7 @@ class TestAdaptiveConfig:
 
     def test_custom_config(self):
         """Custom config values should be stored correctly."""
-        from jax_spice.analysis.transient import AdaptiveConfig
+        from vajax.analysis.transient import AdaptiveConfig
 
         config = AdaptiveConfig(
             lte_ratio=5.0,

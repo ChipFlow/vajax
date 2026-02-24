@@ -20,14 +20,14 @@ sys.path.insert(0, str(project_root / "openvaf_jax" / "openvaf_py"))
 import numpy as np
 from conftest import parse_embedded_python, parse_si_value
 
-from jax_spice.netlist.parser import parse_netlist
+from vajax.netlist.parser import parse_netlist
 
-# Paths - VACASK is at ../VACASK relative to jax-spice
-JAX_SPICE_ROOT = Path(__file__).parent.parent
-VACASK_ROOT = JAX_SPICE_ROOT.parent / "VACASK"
+# Paths - VACASK is at ../VACASK relative to va-jax
+VA_JAX_ROOT = Path(__file__).parent.parent
+VACASK_ROOT = VA_JAX_ROOT.parent / "VACASK"
 VACASK_TEST = VACASK_ROOT / "test"
 VACASK_DEVICES = VACASK_ROOT / "devices"
-VACASK_BENCHMARK = JAX_SPICE_ROOT / "vendor" / "VACASK" / "benchmark"
+VACASK_BENCHMARK = VA_JAX_ROOT / "vendor" / "VACASK" / "benchmark"
 
 
 def discover_benchmark_dirs() -> List[Path]:

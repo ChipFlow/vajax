@@ -78,9 +78,9 @@ EKV and MVSG work correctly. Compare their:
 | Tool | Purpose |
 |------|---------|
 | `scripts/analyze_mir_cfg.py` | CFG analysis, PHI node finding, path tracing |
-| `jax_spice/debug/mir_tracer.py` | Value flow tracing through MIR |
-| `jax_spice/debug/param_analyzer.py` | Parameter kind analysis |
-| `jax_spice/debug/jacobian.py` | Format-aware Jacobian comparison |
+| `vajax/debug/mir_tracer.py` | Value flow tracing through MIR |
+| `vajax/debug/param_analyzer.py` | Parameter kind analysis |
+| `vajax/debug/jacobian.py` | Format-aware Jacobian comparison |
 
 ## Next Steps
 

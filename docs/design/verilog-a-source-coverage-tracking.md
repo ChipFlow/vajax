@@ -1,6 +1,6 @@
 # Verilog-A Source Coverage Tracking - System Design Document
 
-**Author:** JAX-SPICE Team
+**Author:** VA-JAX Team
 **Date:** 2025-12-29
 **Status:** Draft
 **Version:** 1.0
@@ -9,7 +9,7 @@
 
 ## 1. Executive Summary
 
-**System Purpose:** Track which lines of Verilog-A source code are exercised during JAX-SPICE circuit simulations, enabling coverage-driven verification and CI integration.
+**System Purpose:** Track which lines of Verilog-A source code are exercised during VA-JAX circuit simulations, enabling coverage-driven verification and CI integration.
 
 **Scale:**
 - VA Models: ~50 standard models (resistor, capacitor, diode, PSP103, BSIM, etc.)
@@ -651,7 +651,7 @@ gantt
 ### 8.1 User-Facing API
 
 ```python
-from jax_spice.coverage import CoverageTracker, CoverageMode
+from vajax.coverage import CoverageTracker, CoverageMode
 
 # Enable coverage during simulation
 tracker = CoverageTracker(mode=CoverageMode.LINE_AND_BRANCH)
@@ -683,21 +683,21 @@ for file, lines in coverage.uncovered_lines.items():
 
 ```bash
 # Run tests with coverage
-JAX_SPICE_COVERAGE=1 uv run pytest tests/
+VA_JAX_COVERAGE=1 uv run pytest tests/
 
 # Generate coverage report
-uv run python -m jax_spice.coverage report \
+uv run python -m vajax.coverage report \
     --input coverage.json \
     --output coverage.xml \
     --format cobertura
 
 # Merge multiple coverage files
-uv run python -m jax_spice.coverage merge \
+uv run python -m vajax.coverage merge \
     coverage1.json coverage2.json \
     --output merged.json
 
 # Show coverage summary
-uv run python -m jax_spice.coverage summary coverage.json
+uv run python -m vajax.coverage summary coverage.json
 ```
 
 ### 8.3 CI Integration
@@ -716,7 +716,7 @@ jobs:
 
       - name: Run tests with coverage
         run: |
-          JAX_SPICE_COVERAGE=1 uv run pytest tests/ \
+          VA_JAX_COVERAGE=1 uv run pytest tests/ \
             --cov-report=xml:coverage.xml
 
       - name: Upload coverage to Codecov
@@ -969,7 +969,7 @@ Given the complexity, a phased approach:
 ### C. File Structure
 
 ```
-jax_spice/
+vajax/
 ├── coverage/
 │   ├── __init__.py
 │   ├── tracker.py          # CoverageTracker, CoverageMode

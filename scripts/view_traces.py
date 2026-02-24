@@ -19,10 +19,10 @@ Usage:
     uv run scripts/view_traces.py --run 20378600298
 
     # View traces from a local directory
-    uv run scripts/view_traces.py /tmp/jax-spice-traces
+    uv run scripts/view_traces.py /tmp/va-jax-traces
 
     # Download and view traces from GCS
-    uv run scripts/view_traces.py --gcs gs://jax-spice-cuda-test-traces/abc123
+    uv run scripts/view_traces.py --gcs gs://va-jax-cuda-test-traces/abc123
 """
 
 import argparse
@@ -34,8 +34,8 @@ import webbrowser
 from pathlib import Path
 
 # Cache directory for downloaded traces
-CACHE_DIR = Path.home() / ".cache" / "jax-spice-traces"
-GCS_BUCKET = "jax-spice-cuda-test-traces"
+CACHE_DIR = Path.home() / ".cache" / "va-jax-traces"
+GCS_BUCKET = "va-jax-cuda-test-traces"
 
 
 def list_trace_files(trace_dir: Path) -> list[Path]:
@@ -297,7 +297,7 @@ def main():
         print(f"Error: Trace directory does not exist: {trace_dir}")
         print()
         print("To generate traces, run benchmarks with profiling enabled:")
-        print("  JAX_SPICE_PROFILE_JAX=1 uv run python scripts/compare_vacask.py --profile")
+        print("  VA_JAX_PROFILE_JAX=1 uv run python scripts/compare_vacask.py --profile")
         print()
         print("Or run on Cloud Run GPU:")
         print("  uv run scripts/profile_gpu_cloudrun.py")
@@ -307,7 +307,7 @@ def main():
     trace_files = list_trace_files(trace_dir)
 
     print("=" * 60)
-    print("JAX-SPICE Profiling Trace Viewer")
+    print("VA-JAX Profiling Trace Viewer")
     print("=" * 60)
     print()
     print(f"Trace directory: {trace_dir}")

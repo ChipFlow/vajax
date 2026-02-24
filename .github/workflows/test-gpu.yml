@@ -95,7 +95,7 @@ jobs:
           uv sync
           uv run maturin develop --release
 
-      - name: Install jax-spice with CUDA dependencies
+      - name: Install va-jax with CUDA dependencies
         run: uv sync --extra cuda12 --extra test
 
       - name: Verify JAX GPU detection
@@ -132,7 +132,7 @@ jobs:
             --force-gpu \
             --analyze \
             --profile-mode jax \
-            --profile-dir /tmp/jax-spice-traces \
+            --profile-dir /tmp/va-jax-traces \
             --json-output /tmp/gpu-benchmark-summary.json 2>&1 | tee /tmp/benchmark_output.txt
           BENCHMARK_STATUS=${PIPESTATUS[0]}
           set -e
@@ -159,7 +159,7 @@ jobs:
         run: |
           if [ -f /tmp/benchmark_output.txt ]; then
             {
-              echo "## JAX-SPICE vs VACASK Benchmark Comparison (GPU)"
+              echo "## VA-JAX vs VACASK Benchmark Comparison (GPU)"
               echo ""
               echo "### Environment"
               echo "- **Platform**: GPU (nvidia-runner-1)"
@@ -169,7 +169,7 @@ jobs:
 
               echo "### Per-Step Timing"
               echo ""
-              echo "| Benchmark | Steps | JAX-SPICE (ms/step) | VACASK (ms/step) | Ratio |"
+              echo "| Benchmark | Steps | VA-JAX (ms/step) | VACASK (ms/step) | Ratio |"
               echo "|-----------|-------|---------------------|------------------|-------|"
 
               grep -A 10 "Summary (per-step timing)" /tmp/benchmark_output.txt | \
@@ -178,7 +178,7 @@ jobs:
               echo ""
               echo "### Total Wall Time"
               echo ""
-              echo "| Benchmark | Steps | JAX-SPICE (ms) | VACASK (ms) | Ratio |"
+              echo "| Benchmark | Steps | VA-JAX (ms) | VACASK (ms) | Ratio |"
               echo "|-----------|-------|----------------|-------------|-------|"
 
               grep -A 10 "Summary (total wall time)" /tmp/benchmark_output.txt | \
@@ -187,8 +187,8 @@ jobs:
               echo ""
               echo "### Interpretation"
               echo ""
-              echo "- **Ratio < 1.0**: JAX-SPICE is faster"
-              echo "- **Ratio > 1.0**: JAX-SPICE is slower"
+              echo "- **Ratio < 1.0**: VA-JAX is faster"
+              echo "- **Ratio > 1.0**: VA-JAX is slower"
               echo "- **N/A**: VACASK comparison not available"
             } >> "$GITHUB_STEP_SUMMARY"
           fi
@@ -201,7 +201,7 @@ jobs:
           XLA_PYTHON_CLIENT_PREALLOCATE: "false"
           XLA_PYTHON_CLIENT_ALLOCATOR: platform
           TF_CPP_MIN_LOG_LEVEL: "2"
-          JAX_SPICE_NO_PROGRESS: "1"
+          VA_JAX_NO_PROGRESS: "1"
         run: |
           set +e
           mkdir -p lte-traces
@@ -219,7 +219,7 @@ jobs:
           XLA_PYTHON_CLIENT_PREALLOCATE: "false"
           XLA_PYTHON_CLIENT_ALLOCATOR: platform
           TF_CPP_MIN_LOG_LEVEL: "2"
-          JAX_SPICE_NO_PROGRESS: "1"
+          VA_JAX_NO_PROGRESS: "1"
         run: |
           set +e
           mkdir -p lte-traces
@@ -252,6 +252,6 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: profiling-traces-${{ github.sha }}
-          path: /tmp/jax-spice-traces/
+          path: /tmp/va-jax-traces/
           if-no-files-found: ignore
           retention-days: 30

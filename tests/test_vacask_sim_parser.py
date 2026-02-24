@@ -1,7 +1,7 @@
 """Tests that parse VACASK .sim files and use openvaf_jax models
 
 This module tests the integration between:
-1. VACASK netlist parser (jax_spice.netlist.parser)
+1. VACASK netlist parser (vajax.netlist.parser)
 2. openvaf_jax model compilation (from .va files)
 3. DC operating point analysis
 
@@ -20,7 +20,7 @@ project_root = Path(__file__).parent.parent
 sys.path.insert(0, str(project_root))
 sys.path.insert(0, str(project_root / "openvaf_jax" / "openvaf_py"))
 
-from jax_spice.netlist.parser import parse_netlist
+from vajax.netlist.parser import parse_netlist
 
 # VACASK paths
 VACASK_PATH = Path(__file__).parent.parent / "vendor" / "VACASK"

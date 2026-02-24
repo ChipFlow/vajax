@@ -1,6 +1,6 @@
 # VACASK .sim File Format
 
-This document describes the VACASK simulation file format and how to adapt it for use with jax-spice using openvaf_jax models instead of OSDI.
+This document describes the VACASK simulation file format and how to adapt it for use with va-jax using openvaf_jax models instead of OSDI.
 
 ## File Structure
 
@@ -13,7 +13,7 @@ load "psp103v4.osdi"
 load "spice/resistor.osdi"
 ```
 
-These load OSDI compiled libraries. For jax-spice, we need to:
+These load OSDI compiled libraries. For va-jax, we need to:
 - Replace with openvaf_jax compilation of the corresponding .va files
 - Map the module name (e.g., `psp103va`) to the JAX function
 
@@ -106,7 +106,7 @@ ends
 
 The `int` node between mn1 and mn2 is the floating node that causes convergence issues with autodiff Jacobians.
 
-## Adapting for jax-spice
+## Adapting for va-jax
 
 ### Step 1: Parse the .sim file
 
@@ -128,7 +128,7 @@ osdi_lib = load_osdi("psp103v4.osdi")
 
 Use:
 ```python
-# jax-spice: Compile to JAX
+# va-jax: Compile to JAX
 import openvaf_py
 import openvaf_jax
 
@@ -158,9 +158,9 @@ def evaluate_device(model_fn, voltages, params):
     return residuals, jacobian
 ```
 
-## jax-spice Parser Compatibility
+## va-jax Parser Compatibility
 
-The existing jax-spice parser (`jax_spice/netlist/parser.py`) is a Python recursive descent parser
+The existing va-jax parser (`vajax/netlist/parser.py`) is a Python recursive descent parser
 that handles the core VACASK netlist format. It successfully parses **40 out of 46 VACASK-format test files** (87%).
 
 ### Supported Features

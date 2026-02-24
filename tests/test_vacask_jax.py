@@ -25,7 +25,7 @@ import openvaf_py
 from conftest import parse_si_value
 
 import openvaf_jax
-from jax_spice.netlist.parser import parse_netlist
+from vajax.netlist.parser import parse_netlist
 
 # Paths
 VACASK_TEST = Path(__file__).parent.parent / "vendor" / "VACASK" / "test"

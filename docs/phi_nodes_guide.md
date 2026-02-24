@@ -348,7 +348,7 @@ uv run scripts/analyze_mir_cfg.py model.va --func eval --branches
 #### MIRInspector Class
 
 ```python
-from jax_spice.debug import MIRInspector
+from vajax.debug import MIRInspector
 
 inspector = MIRInspector(va_path)
 inspector.print_phi_summary('eval')  # Show all PHI nodes

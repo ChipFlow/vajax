@@ -13,7 +13,7 @@ import os
 from pathlib import Path
 from typing import Any, Callable, Dict, Literal, Optional, Tuple, Union, cast, overload
 
-logger = logging.getLogger("jax_spice.openvaf")
+logger = logging.getLogger("vajax.openvaf")
 
 # Default persistent cache directory
 _PERSISTENT_CACHE_DIR: Optional[Path] = None
@@ -125,7 +125,7 @@ def cache_stats() -> Dict[str, int]:
 def get_persistent_cache_dir() -> Path:
     """Get the persistent cache directory, creating it if needed.
 
-    Uses JAX_SPICE_CACHE_DIR env var, or ~/.cache/jax_spice/openvaf by default.
+    Uses VA_JAX_CACHE_DIR env var, or ~/.cache/vajax/openvaf by default.
 
     Returns:
         Path to the cache directory
@@ -135,11 +135,11 @@ def get_persistent_cache_dir() -> Path:
     if _PERSISTENT_CACHE_DIR is not None:
         return _PERSISTENT_CACHE_DIR
 
-    cache_dir = os.environ.get('JAX_SPICE_CACHE_DIR')
+    cache_dir = os.environ.get('VA_JAX_CACHE_DIR')
     if cache_dir:
         _PERSISTENT_CACHE_DIR = Path(cache_dir) / 'openvaf'
     else:
-        _PERSISTENT_CACHE_DIR = Path.home() / '.cache' / 'jax_spice' / 'openvaf'
+        _PERSISTENT_CACHE_DIR = Path.home() / '.cache' / 'vajax' / 'openvaf'
 
     _PERSISTENT_CACHE_DIR.mkdir(parents=True, exist_ok=True)
     return _PERSISTENT_CACHE_DIR

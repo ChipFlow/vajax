@@ -10,7 +10,7 @@ from pathlib import Path
 from typing import Dict, Optional
 
 # Add paths to find openvaf modules
-# tests_pdk/ -> openvaf_py/ -> openvaf_jax/ -> jax-spice/
+# tests_pdk/ -> openvaf_py/ -> openvaf_jax/ -> va-jax/
 REPO_ROOT = Path(__file__).parent.parent.parent.parent
 sys.path.insert(0, str(REPO_ROOT))
 

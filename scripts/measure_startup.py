@@ -2,7 +2,7 @@
 """Measure benchmark startup and JIT compilation times.
 
 This script measures:
-1. Import time for jax_spice (includes JAX import)
+1. Import time for vajax (includes JAX import)
 2. Circuit parse time
 3. First transient run (JIT compilation)
 4. Second transient run (cached JIT)
@@ -29,7 +29,7 @@ def measure_single_benchmark(
     if clear_cache:
         import shutil
 
-        cache_dir = Path.home() / ".cache" / "jax_spice"
+        cache_dir = Path.home() / ".cache" / "vajax"
         if cache_dir.exists():
             shutil.rmtree(cache_dir)
 
@@ -39,12 +39,12 @@ import os
 
 # Measure import time
 t0 = time.perf_counter()
-import jax_spice
-from jax_spice import CircuitEngine
+import vajax
+from vajax import CircuitEngine
 t_import = time.perf_counter() - t0
 
 # Get benchmark info
-from jax_spice.benchmarks.registry import get_benchmark
+from vajax.benchmarks.registry import get_benchmark
 bench = get_benchmark("{benchmark}")
 if bench is None:
     print('{{"error": "unknown benchmark"}}')
@@ -138,7 +138,7 @@ def main():
         "--json", action="store_true", help="Output raw JSON instead of formatted table"
     )
     parser.add_argument(
-        "--clear-cache", action="store_true", help="Clear ~/.cache/jax_spice before each benchmark"
+        "--clear-cache", action="store_true", help="Clear ~/.cache/vajax before each benchmark"
     )
     args = parser.parse_args()
 

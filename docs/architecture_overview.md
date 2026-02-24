@@ -1,10 +1,10 @@
-# JAX-SPICE Architecture Overview
+# VA-JAX Architecture Overview
 
-This document provides a high-level overview of JAX-SPICE's architecture for developers new to the codebase.
+This document provides a high-level overview of VA-JAX's architecture for developers new to the codebase.
 
 ## Design Philosophy
 
-JAX-SPICE is built on three core principles:
+VA-JAX is built on three core principles:
 
 1. **Functional Device Models**: Devices are pure JAX functions compiled from Verilog-A
 2. **Automatic Differentiation**: Jacobians computed via JAX autodiff, no explicit derivatives
@@ -15,7 +15,7 @@ JAX-SPICE is built on three core principles:
 ```
 ┌─────────────────────────────────────────────────────────────────────┐
 │                           User Code                                  │
-│   from jax_spice import CircuitEngine                               │
+│   from vajax import CircuitEngine                               │
 │   engine = CircuitEngine("circuit.sim")                             │
 │   engine.parse()                                                     │
 │   result = engine.run_transient(...)                                │
@@ -221,7 +221,7 @@ OpenVAF compiles this to a pure JAX function that:
 
 ## Sparse Matrix Support
 
-For large circuits (>1000 nodes), JAX-SPICE uses JAX's native sparse formats:
+For large circuits (>1000 nodes), VA-JAX uses JAX's native sparse formats:
 
 ```python
 from jax.experimental.sparse import BCOO, BCSR
@@ -397,7 +397,7 @@ Prevents floating nodes and improves conditioning.
 ### Loading and Running a Circuit
 
 ```python
-from jax_spice import CircuitEngine
+from vajax import CircuitEngine
 
 # Load circuit from VACASK .sim file
 engine = CircuitEngine("vendor/VACASK/sim/ring.sim")
@@ -442,7 +442,7 @@ noise_result = engine.run_noise(
 )
 
 # PVT corners
-from jax_spice.analysis import create_pvt_corners
+from vajax.analysis import create_pvt_corners
 corners = create_pvt_corners(
     process=['tt', 'ff', 'ss'],
     voltage=[0.9, 1.0, 1.1],

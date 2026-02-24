@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Compare JAX-SPICE vs VACASK simulation results."""
+"""Compare VA-JAX vs VACASK simulation results."""
 
 import re
 import subprocess
@@ -11,8 +11,8 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 
-# Import jax_spice first to auto-configure precision based on backend
-from jax_spice.analysis import CircuitEngine
+# Import vajax first to auto-configure precision based on backend
+from vajax.analysis import CircuitEngine
 
 
 def parse_value_with_suffix(value_str: str) -> float:
@@ -119,7 +119,7 @@ def run_vacask_short_tran(sim_path: Path, vacask_bin: Path, steps: int = 5) -> d
 
 
 def run_jaxspice(sim_path: Path, steps: int = 5) -> dict:
-    """Run JAX-SPICE and return final voltages."""
+    """Run VA-JAX and return final voltages."""
     engine = CircuitEngine(sim_path)
     engine.parse()
 
@@ -171,7 +171,7 @@ def compare_benchmarks():
     }
 
     print("=" * 70)
-    print("JAX-SPICE vs VACASK Results Comparison")
+    print("VA-JAX vs VACASK Results Comparison")
     print("=" * 70)
     print()
 
@@ -186,8 +186,8 @@ def compare_benchmarks():
         print(f"--- {name} benchmark ---")
         print(f"Sim file: {sim_path}")
 
-        # Run JAX-SPICE
-        print("  Running JAX-SPICE...", end=" ", flush=True)
+        # Run VA-JAX
+        print("  Running VA-JAX...", end=" ", flush=True)
         try:
             jax_voltages, engine, jax_step = run_jaxspice(sim_path, config["steps"])
             print(f"done ({len(jax_voltages)} nodes, dt={jax_step:.2e}s)")
@@ -215,7 +215,7 @@ def compare_benchmarks():
 
         # Compare key nodes
         print()
-        print(f"  {'Node':<15} {'JAX-SPICE':>12} {'VACASK':>12} {'Diff':>12} {'Rel Err':>10}")
+        print(f"  {'Node':<15} {'VA-JAX':>12} {'VACASK':>12} {'Diff':>12} {'Rel Err':>10}")
         print(f"  {'-' * 15} {'-' * 12} {'-' * 12} {'-' * 12} {'-' * 10}")
 
         max_rel_err = 0
