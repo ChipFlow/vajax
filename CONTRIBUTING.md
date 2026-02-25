@@ -2,6 +2,35 @@
 
 This guide covers development setup, code organization, and contribution guidelines.
 
+## Start Here
+
+If you're new to VAJAX, start with these resources:
+
+1. **[Getting Started](docs/getting_started.md)** - Install and run your first simulation
+2. **[Architecture Overview](docs/architecture_overview.md)** - How the pieces fit together
+3. **[Supported Devices](docs/supported_devices.md)** - What device models are available
+
+### Key Concepts
+
+VAJAX is a **SPICE-class circuit simulator** built on JAX. If you're unfamiliar with
+circuit simulation, here are the core concepts:
+
+- **Modified Nodal Analysis (MNA)**: Formulates circuit equations as `G*V = I` where G is a
+  conductance matrix, V is node voltages, and I is current sources. Each device "stamps" its
+  contributions into G and I. See [MNA on Wikipedia](https://en.wikipedia.org/wiki/Modified_nodal_analysis).
+
+- **Newton-Raphson iteration**: Nonlinear circuits require iterative solving. At each step,
+  we linearize the circuit around the current solution and solve `J * delta = -f(V)` where
+  J is the Jacobian and f is the residual (KCL violations).
+
+- **Transient analysis**: Time-domain simulation using numerical integration (trapezoidal rule
+  or Gear's method). Capacitors and inductors introduce time derivatives that are discretized
+  into equivalent conductances.
+
+- **Verilog-A / OpenVAF**: Device models (transistors, diodes, etc.) are written in Verilog-A,
+  compiled by OpenVAF to machine code, then translated to JAX functions. This gives us
+  production-quality device models with automatic differentiation.
+
 ## Development Setup
 
 ### Prerequisites
