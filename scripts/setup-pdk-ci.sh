@@ -7,13 +7,13 @@
 # This script:
 # 1. Generates an SSH deploy key for CI access to private PDK repos
 # 2. Adds the public key to PDK repos as a deploy key (skips if exists)
-# 3. Adds the private key as a secret to the jax-spice repo (overwrites if exists)
+# 3. Adds the private key as a secret to the vajax repo (overwrites if exists)
 
 set -e
 
-REPO="ChipFlow/jax-spice"
+REPO="ChipFlow/vajax"
 PDK_REPOS=("ChipFlow/pdk-gf130")
-KEY_TITLE="jax-spice-ci"
+KEY_TITLE="vajax-ci"
 
 echo "=== PDK CI Setup Script ==="
 echo ""
@@ -75,7 +75,7 @@ fi
 KEY_DIR="$(mktemp -d)"
 KEY_FILE="${KEY_DIR}/pdk_deploy_key"
 echo "Generating deploy key..."
-ssh-keygen -t ed25519 -C "jax-spice-ci-$(date +%Y%m%d)" -f "$KEY_FILE" -N ""
+ssh-keygen -t ed25519 -C "vajax-ci-$(date +%Y%m%d)" -f "$KEY_FILE" -N ""
 echo ""
 
 # Add deploy key to PDK repos

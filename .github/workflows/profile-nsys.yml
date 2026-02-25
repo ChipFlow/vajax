@@ -1,0 +1,163 @@
+name: nsys GPU Profiling
+
+on:
+  workflow_dispatch:
+    inputs:
+      circuit:
+        description: 'Circuit to profile'
+        type: choice
+        options:
+          - rc
+          - graetz
+          - mul
+          - ring
+          - c6288
+        default: ring
+      timesteps:
+        description: 'Number of timesteps'
+        default: '50'
+      sparse:
+        description: 'Use sparse solver (for large circuits)'
+        type: boolean
+        default: false
+
+# Only one profiling job at a time on the GPU runner
+concurrency:
+  group: nsys-profile
+  cancel-in-progress: false
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: 0
+  RUSTC_WRAPPER: "sccache"
+
+jobs:
+  nsys-profile:
+    runs-on: nvidia-runner-1
+    timeout-minutes: 60
+
+    steps:
+      - name: Checkout with submodules
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: CUDA environment diagnostics
+        run: |
+          echo "=== GPU Info ==="
+          nvidia-smi || echo "nvidia-smi not available"
+          echo ""
+          echo "=== CUDA Version ==="
+          nvcc --version 2>/dev/null || echo "nvcc not in PATH"
+          echo ""
+          echo "=== nsys Version ==="
+          nsys --version 2>/dev/null || echo "nsys not in PATH"
+
+      - name: Install LLVM 18
+        run: |
+          if ! llvm-config-18 --version 2>/dev/null; then
+            wget -qO- https://apt.llvm.org/llvm-snapshot.gpg.key | sudo tee /etc/apt/trusted.gpg.d/apt.llvm.org.asc > /dev/null
+            sudo chmod a+r /etc/apt/trusted.gpg.d/apt.llvm.org.asc
+            wget -q https://apt.llvm.org/llvm.sh
+            chmod +x llvm.sh
+            sudo ./llvm.sh 18
+            rm llvm.sh
+          fi
+          echo "LLVM_SYS_181_PREFIX=/usr/lib/llvm-18" >> $GITHUB_ENV
+
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Set up sccache
+        uses: mozilla-actions/sccache-action@v0.0.7
+        with:
+          disable_annotations: true
+
+      - name: Cache Rust dependencies
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: openvaf_jax/openvaf_py
+
+      - name: Install CUDA toolkit
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y cuda-nvcc-12-6 cuda-cudart-dev-12-6
+          echo "/usr/local/cuda-12.6/bin" >> $GITHUB_PATH
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get install -y libsuitesparse-dev swig cmake pkg-config
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v4
+
+      - name: Set up Python
+        run: uv python install 3.13
+
+      - name: Build openvaf-py
+        working-directory: openvaf_jax/openvaf_py
+        run: |
+          uv sync
+          uv run maturin develop --release
+
+      - name: Install vajax with CUDA dependencies
+        run: uv sync --extra cuda12
+
+      - name: Run nsys profiling
+        env:
+          JAX_PLATFORMS: cuda,cpu
+          XLA_FLAGS: "--xla_gpu_autotune_level=0"
+          XLA_PYTHON_CLIENT_PREALLOCATE: "false"
+          XLA_PYTHON_CLIENT_ALLOCATOR: platform
+          TF_CPP_MIN_LOG_LEVEL: "2"
+        run: |
+          SPARSE_FLAG=""
+          if [ "${{ inputs.sparse }}" = "true" ]; then
+            SPARSE_FLAG="--sparse"
+          fi
+
+          TIMESTAMP=$(date +%s)
+          PROFILE_NAME="nsys-${{ inputs.circuit }}-${TIMESTAMP}"
+
+          echo "=== Starting nsys GPU Profiling ==="
+          echo "Circuit: ${{ inputs.circuit }}"
+          echo "Timesteps: ${{ inputs.timesteps }}"
+          echo "Sparse: ${{ inputs.sparse }}"
+          echo "Commit: ${{ github.sha }}"
+
+          nsys profile \
+            --trace=cuda,nvtx,osrt \
+            --output "/tmp/${PROFILE_NAME}" \
+            uv run python scripts/nsys_profile_target.py \
+              ${{ inputs.circuit }} ${{ inputs.timesteps }} ${SPARSE_FLAG}
+
+          echo "profile_name=${PROFILE_NAME}" >> "$GITHUB_ENV"
+
+      - name: Generate summary
+        if: always()
+        run: |
+          {
+            echo "## nsys GPU Profiling Results"
+            echo ""
+            echo "**Circuit:** ${{ inputs.circuit }}"
+            echo "**Timesteps:** ${{ inputs.timesteps }}"
+            echo "**Sparse:** ${{ inputs.sparse }}"
+            echo "**Commit:** \`${{ github.sha }}\`"
+            echo ""
+            if [ -f "/tmp/${profile_name}.nsys-rep" ]; then
+              echo "### Profile Summary"
+              echo ""
+              echo '```'
+              nsys stats "/tmp/${profile_name}.nsys-rep" --report cuda_gpu_kern_sum 2>&1 | head -40 || true
+              echo '```'
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload nsys report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: nsys-profile-${{ inputs.circuit }}-${{ github.sha }}
+          path: /tmp/nsys-*.nsys-rep
+          if-no-files-found: ignore
+          retention-days: 30
