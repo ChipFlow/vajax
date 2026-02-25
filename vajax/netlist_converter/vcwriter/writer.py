@@ -113,7 +113,7 @@ class VacaskWriter:
             buf.write("\n")
 
         # Collect all top-level content with line numbers for ordered output
-        content_items: list[tuple[int, str, any]] = []
+        content_items: list[tuple[int, str, Any]] = []
 
         # Add comments
         for comment in netlist.comments:

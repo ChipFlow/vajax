@@ -132,7 +132,7 @@ def detect_dialect(content: str) -> str:
         "ltspice": ltspice_score,
         "hspice": hspice_score,
     }
-    max_dialect = max(scores, key=scores.get)
+    max_dialect = max(scores, key=scores.get)  # type: ignore[arg-type]
     if scores[max_dialect] >= 2:
         return max_dialect
     return "ngspice"

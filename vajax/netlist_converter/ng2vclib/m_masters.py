@@ -138,7 +138,7 @@ class MastersMixin:
                     l1 = l.strip()
                     if l1.startswith("*"):
                         l1 = l1[1:].strip()
-                        if pat_preosdi.match(ll):
+                        if pat_preosdi.match(l1):
                             # Have a pre_osdi, add to list of files
                             osdi_file = l1[8:].strip()
                             self.data["osdi_loads"].add(osdi_file)
@@ -241,6 +241,6 @@ class MastersMixin:
                         # Not a dot command, must be an instance
                         # Preprocess it
                         try:
-                            self.preprocess_instance(*line, in_sub)
+                            self.preprocess_instance(*line, in_sub)  # type: ignore[reportCallIssue]
                         except ConverterError as e:
                             raise ConverterError(str(e), history, lnum)
