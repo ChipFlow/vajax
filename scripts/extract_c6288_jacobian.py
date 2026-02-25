@@ -82,7 +82,9 @@ def extract_jacobian(output_dir: Path = Path("c6288_jacobian")) -> None:
     n_total = n_unknowns + 1  # +1 for ground
     n_augmented = n_unknowns + n_vsources
 
-    logger.info(f"System size: {n_unknowns} unknowns + {n_vsources} vsources = {n_augmented} augmented")
+    logger.info(
+        f"System size: {n_unknowns} unknowns + {n_vsources} vsources = {n_augmented} augmented"
+    )
 
     # Get DC source values
     vsource_dc_vals, isource_dc_vals = engine._get_dc_source_values(n_vsources, 0)
@@ -98,7 +100,9 @@ def extract_jacobian(output_dir: Path = Path("c6288_jacobian")) -> None:
 
     # Zero charges, DC mode (integ_c0=0)
     Q_prev = jnp.zeros(n_unknowns, dtype=jnp.float64)
-    limit_state = jnp.zeros(total_limit_states, dtype=jnp.float64) if total_limit_states > 0 else None
+    limit_state = (
+        jnp.zeros(total_limit_states, dtype=jnp.float64) if total_limit_states > 0 else None
+    )
 
     logger.info("Evaluating build_system (first NR iteration at mid-rail)...")
 
@@ -112,7 +116,11 @@ def extract_jacobian(output_dir: Path = Path("c6288_jacobian")) -> None:
         device_arrays,
         engine.options.gmin,  # gmin
         0.0,  # gshunt
-        0.0, 0.0, None, 0.0, None,  # integration history (unused for DC)
+        0.0,
+        0.0,
+        None,
+        0.0,
+        None,  # integration history (unused for DC)
         limit_state,
         0,  # nr_iteration = 0
     )
@@ -126,8 +134,8 @@ def extract_jacobian(output_dir: Path = Path("c6288_jacobian")) -> None:
     logger.info(f"max|f| = {np.max(np.abs(f_np)):.6e}")
 
     # Convert to scipy CSR for analysis and export
-    from scipy.sparse import csr_matrix
     from scipy.io import mmwrite
+    from scipy.sparse import csr_matrix
 
     J_csr = csr_matrix(J_np)
     J_csr.eliminate_zeros()
@@ -145,10 +153,11 @@ def extract_jacobian(output_dir: Path = Path("c6288_jacobian")) -> None:
         logger.warning(f"  {zero_diag} near-zero diagonal entries!")
 
     # Symmetry check (BaSpaCho might care)
-    J_csc = J_csr.tocsc()
     sym_diff = J_csr - J_csr.T
     sym_norm = np.max(np.abs(sym_diff.data)) if sym_diff.nnz > 0 else 0.0
-    logger.info(f"Symmetry: max|J - J^T| = {sym_norm:.6e} ({'symmetric' if sym_norm < 1e-12 else 'unsymmetric'})")
+    logger.info(
+        f"Symmetry: max|J - J^T| = {sym_norm:.6e} ({'symmetric' if sym_norm < 1e-12 else 'unsymmetric'})"
+    )
 
     # --- Export Matrix Market format ---
     mtx_path = output_dir / "jacobian.mtx"
@@ -157,6 +166,7 @@ def extract_jacobian(output_dir: Path = Path("c6288_jacobian")) -> None:
 
     # --- Export RHS in Matrix Market format ---
     from scipy.sparse import csc_matrix
+
     rhs_sparse = csc_matrix(f_np.reshape(-1, 1))
     rhs_path = output_dir / "rhs.mtx"
     mmwrite(str(rhs_path), rhs_sparse, comment="c6288 RHS at DC mid-rail, first NR iteration")
@@ -184,7 +194,7 @@ def extract_jacobian(output_dir: Path = Path("c6288_jacobian")) -> None:
         mf.write("c6288 Jacobian Export for BaSpaCho Testing\n")
         mf.write("=" * 50 + "\n\n")
         mf.write(f"Circuit: {info.name} ({info.title})\n")
-        mf.write(f"Operating point: DC, mid-rail ({vdd/2:.2f}V), first NR iteration\n\n")
+        mf.write(f"Operating point: DC, mid-rail ({vdd / 2:.2f}V), first NR iteration\n\n")
         mf.write(f"Matrix dimensions: {n_augmented} x {n_augmented}\n")
         mf.write(f"  n_unknowns (node voltages): {n_unknowns}\n")
         mf.write(f"  n_vsources (branch currents): {n_vsources}\n")
@@ -212,13 +222,13 @@ def extract_jacobian(output_dir: Path = Path("c6288_jacobian")) -> None:
 
     # Print a quick summary useful for BaSpaCho
     print(f"\n{'=' * 60}")
-    print(f"BaSpaCho Test Case: c6288 Jacobian")
+    print("BaSpaCho Test Case: c6288 Jacobian")
     print(f"{'=' * 60}")
     print(f"  Size:       {n_augmented} x {n_augmented}")
     print(f"  Nonzeros:   {nnz}")
     print(f"  Density:    {density:.4f}%")
     print(f"  Symmetric:  {'yes' if sym_norm < 1e-12 else 'no'}")
-    print(f"  Solver:     LU (unsymmetric)")
+    print("  Solver:     LU (unsymmetric)")
     print(f"  Files:      {output_dir}/jacobian.mtx (Matrix Market)")
     print(f"              {output_dir}/jacobian.npz (NumPy CSR)")
     print(f"{'=' * 60}")
