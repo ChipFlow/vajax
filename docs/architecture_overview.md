@@ -156,8 +156,17 @@ The output of transient analysis.
 class TransientResult:
     times: Array                       # Shape: (n_steps,) time points
     voltages: Dict[str, Array]         # node_name → voltage array
-    currents: Dict[str, Array]         # Optional: device currents
-    converged: bool                    # True if all steps converged
+    currents: Dict[str, Array]         # source_name → current array
+    stats: Dict[str, Any]             # Simulation statistics (wall_time, etc.)
+
+    # Properties
+    num_steps: int                     # len(times)
+    node_names: List[str]             # list(voltages.keys())
+    source_names: List[str]           # list(currents.keys())
+
+    # Methods
+    def voltage(node: str) -> Array    # Case-insensitive node voltage lookup
+    def current(source: str) -> Array  # Case-insensitive source current lookup
 ```
 
 ### OpenVAF Device Interface

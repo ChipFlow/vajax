@@ -7,29 +7,46 @@ from vajax.debug.jacobian import (
     osdi_to_dense_jacobian,
     print_jacobian_structure,
 )
-from vajax.debug.mir_inspector import (
-    MIRInspector,
-    ParamSummary,
-    PHIInfo,
-    inspect_model,
-)
-from vajax.debug.mir_tracer import (
-    MIRTracer,
-    ValueInfo,
-    trace_model,
-)
+# MIR inspector/tracer imports are optional (require openvaf_py)
+try:
+    from vajax.debug.mir_inspector import (
+        MIRInspector,
+        ParamSummary,
+        PHIInfo,
+        inspect_model,
+    )
+
+    _HAS_MIR_INSPECTOR = True
+except ImportError:
+    _HAS_MIR_INSPECTOR = False
+
+try:
+    from vajax.debug.mir_tracer import (
+        MIRTracer,
+        ValueInfo,
+        trace_model,
+    )
+
+    _HAS_MIR_TRACER = True
+except ImportError:
+    _HAS_MIR_TRACER = False
 from vajax.debug.model_comparison import (
     CacheAnalysis,
     ComparisonResult,
     ModelComparator,
     quick_compare,
 )
-from vajax.debug.param_analyzer import (
-    KindSummary,
-    ParamAnalyzer,
-    ParamInfo,
-    analyze_model,
-)
+try:
+    from vajax.debug.param_analyzer import (
+        KindSummary,
+        ParamAnalyzer,
+        ParamInfo,
+        analyze_model,
+    )
+
+    _HAS_PARAM_ANALYZER = True
+except ImportError:
+    _HAS_PARAM_ANALYZER = False
 from vajax.debug.simulation_tracer import (
     DeviceParamsTrace,
     NodeAllocation,
