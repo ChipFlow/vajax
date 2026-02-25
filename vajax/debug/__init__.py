@@ -7,6 +7,7 @@ from vajax.debug.jacobian import (
     osdi_to_dense_jacobian,
     print_jacobian_structure,
 )
+
 # MIR inspector/tracer imports are optional (require openvaf_py)
 try:
     from vajax.debug.mir_inspector import (
@@ -36,6 +37,7 @@ from vajax.debug.model_comparison import (
     ModelComparator,
     quick_compare,
 )
+
 try:
     from vajax.debug.param_analyzer import (
         KindSummary,
