@@ -1,0 +1,47 @@
+// Spectre library with corner sections
+// Demonstrates library/section/endsection/endlibrary blocks
+
+simulator lang=spectre
+
+library device_lib
+
+section tt
+// Typical-typical corner models
+model nch nmos type=n \
+    toxe=1.8e-9 vth0=0.4 \
+    k1=0.5 k2=0.0 \
+    u0=0.032
+
+model pch pmos type=p \
+    toxe=1.8e-9 vth0=-0.4 \
+    k1=0.5 k2=0.0 \
+    u0=0.012
+endsection tt
+
+section ff
+// Fast-fast corner models
+model nch nmos type=n \
+    toxe=1.7e-9 vth0=0.35 \
+    k1=0.45 k2=0.0 \
+    u0=0.035
+
+model pch pmos type=p \
+    toxe=1.7e-9 vth0=-0.35 \
+    k1=0.45 k2=0.0 \
+    u0=0.014
+endsection ff
+
+section ss
+// Slow-slow corner models
+model nch nmos type=n \
+    toxe=1.9e-9 vth0=0.45 \
+    k1=0.55 k2=0.0 \
+    u0=0.028
+
+model pch pmos type=p \
+    toxe=1.9e-9 vth0=-0.45 \
+    k1=0.55 k2=0.0 \
+    u0=0.010
+endsection ss
+
+endlibrary device_lib

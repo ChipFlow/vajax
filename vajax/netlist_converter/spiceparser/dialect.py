@@ -56,9 +56,40 @@ def detect_dialect(content: str) -> str:
         content: SPICE netlist content as a string
 
     Returns:
-        Dialect name: "ltspice", "hspice", or "ngspice"
+        Dialect name: "spectre", "ltspice", "hspice", or "ngspice"
     """
+    import re
+
     content_lower = content.lower()
+
+    # Spectre indicators (highest priority - industry standard)
+    spectre_score = 0
+    # simulator lang=spectre declaration
+    if "simulator lang=spectre" in content_lower or "simulator lang = spectre" in content_lower:
+        spectre_score += 5
+    # library/endlibrary blocks (Spectre structural syntax)
+    if re.search(r"^library\s+\w+", content, re.MULTILINE | re.IGNORECASE):
+        spectre_score += 3
+    if "endlibrary" in content_lower:
+        spectre_score += 2
+    # section/endsection blocks
+    if re.search(r"^section\s+\w+", content, re.MULTILINE | re.IGNORECASE):
+        spectre_score += 3
+    if "endsection" in content_lower:
+        spectre_score += 2
+    # subckt without dot prefix (Spectre style)
+    if re.search(r"^subckt\s+\w+", content, re.MULTILINE | re.IGNORECASE):
+        spectre_score += 3
+    # ends without dot prefix
+    if re.search(r"^ends\s+\w+", content, re.MULTILINE | re.IGNORECASE):
+        spectre_score += 2
+    # // inline comments (Spectre style)
+    if "//" in content:
+        spectre_score += 2
+    # Instance syntax with nodes in parentheses: name (nodes) model
+    # This is a strong Spectre indicator
+    if re.search(r"^\w+\s+\([^)]+\)\s+\w+", content, re.MULTILINE):
+        spectre_score += 2
 
     # LTSpice indicators
     ltspice_score = 0
@@ -89,8 +120,6 @@ def detect_dialect(content: str) -> str:
     if ".prot" in content_lower or ".unprot" in content_lower:
         hspice_score += 2
     # Single-quoted expressions (common in HSPICE)
-    import re
-
     if re.search(r"=\s*'[^']+[+\-*/][^']+'", content):
         hspice_score += 2
     # Spaces around = in parameters (HSPICE style)
@@ -98,22 +127,37 @@ def detect_dialect(content: str) -> str:
         hspice_score += 1
 
     # Return highest scoring dialect, default to ngspice
-    if ltspice_score > hspice_score and ltspice_score >= 2:
-        return "ltspice"
-    if hspice_score > ltspice_score and hspice_score >= 2:
-        return "hspice"
+    scores = {
+        "spectre": spectre_score,
+        "ltspice": ltspice_score,
+        "hspice": hspice_score,
+    }
+    max_dialect = max(scores, key=scores.get)
+    if scores[max_dialect] >= 2:
+        return max_dialect
     return "ngspice"
 
 
 def detect_dialect_from_file(filepath: str) -> str:
     """Detect SPICE dialect from a file.
 
+    Uses both file extension and content analysis to determine dialect.
+    The .scs extension strongly indicates Spectre format.
+
     Args:
         filepath: Path to SPICE netlist file
 
     Returns:
-        Dialect name: "ltspice", "hspice", or "ngspice"
+        Dialect name: "spectre", "ltspice", "hspice", or "ngspice"
     """
+    from pathlib import Path
+
+    path = Path(filepath)
+
+    # .scs extension is a strong Spectre indicator
+    if path.suffix.lower() == ".scs":
+        return "spectre"
+
     with open(filepath, encoding="utf-8", errors="replace") as f:
         content = f.read()
     return detect_dialect(content)

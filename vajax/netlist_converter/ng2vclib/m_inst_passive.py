@@ -52,8 +52,8 @@ class InstancePassiveMixin:
                 # Don't know how to handle
                 raise ConverterError("Cannot handle model at position " + str(mod_index + 1) + ".")
 
-        # Process parameters - extend psplit rather than replace
-        psplit.extend(self.process_instance_params(params, "r", handle_m=True))
+        # Process parameters
+        psplit = self.process_instance_params(params, "r", handle_m=True)
 
         txt = lws + annot["output_name"] + " (" + (" ".join(terminals)) + ") " + model + " "
 
@@ -178,8 +178,8 @@ class InstancePassiveMixin:
                 # Don't know how to handle
                 raise ConverterError("Cannot handle model at position " + str(mod_index + 1) + ".")
 
-        # Process parameters - extend psplit rather than replace
-        psplit.extend(self.process_instance_params(params, "l", handle_m=True))
+        # Process parameters
+        psplit = self.process_instance_params(params, "l", handle_m=True)
 
         txt = lws + annot["output_name"] + " (" + (" ".join(terminals)) + ") " + model + " "
 

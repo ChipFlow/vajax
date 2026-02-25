@@ -1,0 +1,35 @@
+// Mixed Spectre/SPICE dialect file
+// Demonstrates simulator lang= switching
+
+// Start in Spectre mode
+simulator lang=spectre
+
+// Spectre-style model definitions
+model nch nmos type=n toxe=1.8e-9 vth0=0.4
+model pch pmos type=p toxe=1.8e-9 vth0=-0.4
+
+// Spectre-style subcircuit (nodes in parentheses)
+subckt inv_spectre (in out vdd vss) parameters wp=1u wn=500n l=100n
+    Mp (out in vdd vdd) pch w=wp l=l
+    Mn (out in vss vss) nch w=wn l=l
+ends inv_spectre
+
+// Include some SPICE-format legacy content
+simulator lang=spice
+
+* SPICE-style comments with asterisk
+.subckt inv_spice in out vdd vss wp=1u wn=500n l=100n
+M1 out in vdd vdd pch w=wp l=l
+M2 out in vss vss nch w=wn l=l
+.ends inv_spice
+
+* Back to Spectre for top-level
+simulator lang=spectre
+
+// Top-level instantiations
+I1 (input mid VDD GND) inv_spectre wp=2u wn=1u
+I2 (mid output VDD GND) inv_spectre wp=2u wn=1u
+
+// Voltage sources using Spectre syntax
+Vdd (VDD 0) vsource dc=1.8 type=dc
+Vin (input 0) vsource dc=0 type=pulse val0=0 val1=1.8 period=10n rise=100p fall=100p

@@ -11,8 +11,9 @@ spiceparser.dialect system.
 
 import os
 
-# Import dialect support from ..spiceparser
-from ..spiceparser.dialect import SpiceDialect, get_dialect
+# Import dialect support from spiceparser
+from vajax.netlist_converter.spiceparser.dialect import SpiceDialect, get_dialect
+
 from . import dfl
 from .m_devices import DevicesMixin
 from .m_file import FileLoaderMixin

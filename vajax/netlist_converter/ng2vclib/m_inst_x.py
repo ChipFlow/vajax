@@ -20,9 +20,12 @@ class InstanceXMixin:
         # Process parameters, do not handle m (keep its name unchanged)
         psplit = self.process_instance_params(params, "x", handle_m=False)
 
-        # Use lowercase model name (consistent with subcircuit definitions)
-        # and sanitize for VACASK compatibility
-        output_model = self.sanitize_identifier(annot["mod_name"])
+        # Do not use output model name from output_mod_name.
+        # Decide based on original_case_subckt value.
+        if self.cfg.get("original_case_subckt", False):
+            output_model = annot["mod_name"]
+        else:
+            output_model = annot["orig_mod_name"]
 
         txt = lws + annot["output_name"] + " (" + (" ".join(terminals)) + ") " + output_model + " "
 

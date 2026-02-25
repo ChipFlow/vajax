@@ -299,7 +299,9 @@ Examples:
         """,
     )
 
-    parser.add_argument("--version", action="version", version="%(prog)s 0.1.0")
+    from vajax import __version__
+
+    parser.add_argument("--version", action="version", version=f"%(prog)s {__version__}")
     parser.add_argument(
         "-v", "--verbose", action="count", default=0, help="Increase verbosity (use -vv for debug)"
     )
@@ -364,7 +366,7 @@ Examples:
     conv_parser.add_argument(
         "-d",
         "--dialect",
-        choices=["ngspice", "hspice", "ltspice"],
+        choices=["ngspice", "hspice", "ltspice", "spectre"],
         default="ngspice",
         help="SPICE dialect (default: ngspice)",
     )

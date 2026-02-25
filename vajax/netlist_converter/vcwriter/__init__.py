@@ -9,7 +9,7 @@ VACASK uses a Spectre-like syntax with parentheses around node lists and
 `load` directives for loading OSDI compiled Verilog-A modules.
 
 Output format example:
-    // Converted by ng2vc converter
+    // Converted by netlist_converter converter
     load "spice/resistor.osdi"
 
     model sp_resistor res1

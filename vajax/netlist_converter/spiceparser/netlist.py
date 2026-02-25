@@ -30,6 +30,21 @@ class Parameter:
 
 
 @dataclass
+class Comment:
+    """A comment line from the netlist.
+
+    Attributes:
+        text: Comment text (without the comment character prefix)
+        line_number: Line number in source file
+        inline: True if this was an inline comment (// style)
+    """
+
+    text: str
+    line_number: int | None = None
+    inline: bool = False
+
+
+@dataclass
 class ModelDef:
     """A SPICE .model definition.
 
@@ -86,6 +101,7 @@ class Subcircuit:
         instances: Device instances within the subcircuit
         models: Model definitions local to this subcircuit
         subcircuits: Nested subcircuit definitions
+        comments: Comments within this subcircuit
         source_file: Path to source file
         line_number: Line number in source file
     """
@@ -96,6 +112,7 @@ class Subcircuit:
     instances: list[Instance] = field(default_factory=list)
     models: list[ModelDef] = field(default_factory=list)
     subcircuits: list["Subcircuit"] = field(default_factory=list)
+    comments: list[Comment] = field(default_factory=list)
     source_file: Path | None = None
     line_number: int | None = None
 
@@ -118,25 +135,76 @@ class LibrarySection:
 
 
 @dataclass
+class VariationSpec:
+    """A single variation specification in a statistics block.
+
+    Used to represent Spectre-style variation directives like:
+        vary vth0 dist=gauss std=0.01
+
+    Attributes:
+        parameter: Parameter name being varied
+        distribution: Distribution type ("gauss", "uniform", etc.)
+        std: Standard deviation (for Gaussian distributions)
+        mean: Mean value (optional, defaults to parameter's nominal value)
+        variation_type: "process" or "mismatch"
+    """
+
+    parameter: str
+    distribution: str = "gauss"
+    std: str | float | None = None
+    mean: str | float | None = None
+    variation_type: str = "process"
+
+
+@dataclass
+class StatisticsBlock:
+    """A Spectre statistics block for Monte Carlo variation.
+
+    Represents a statistics block containing process and mismatch variations:
+        statistics {
+            process { vary vth0 dist=gauss std=0.01 }
+            mismatch { vary delvto dist=gauss std=0.05 }
+        }
+
+    Attributes:
+        name: Optional block name
+        process_variations: List of process-level variations
+        mismatch_variations: List of mismatch (instance-level) variations
+        raw_content: Original text for pass-through preservation
+    """
+
+    name: str | None = None
+    process_variations: list[VariationSpec] = field(default_factory=list)
+    mismatch_variations: list[VariationSpec] = field(default_factory=list)
+    raw_content: list[str] = field(default_factory=list)
+
+
+@dataclass
 class Netlist:
     """A complete parsed SPICE netlist.
 
     Attributes:
         title: First line of netlist (title comment)
+        comments: Top-level comments (outside subcircuits)
+        parameters: Global parameter definitions (.param)
         models: Top-level model definitions
         subcircuits: Top-level subcircuit definitions
         instances: Top-level instances (for testbenches)
         library_sections: Named library sections (.lib name ... .endl)
         includes: List of included files
+        statistics_blocks: Spectre statistics blocks for MC variation
         source_file: Path to main source file
     """
 
     title: str = ""
+    comments: list[Comment] = field(default_factory=list)
+    parameters: dict[str, Any] = field(default_factory=dict)
     models: list[ModelDef] = field(default_factory=list)
     subcircuits: list[Subcircuit] = field(default_factory=list)
     instances: list[Instance] = field(default_factory=list)
     library_sections: dict[str, LibrarySection] = field(default_factory=dict)
     includes: list[Path] = field(default_factory=list)
+    statistics_blocks: list[StatisticsBlock] = field(default_factory=list)
     source_file: Path | None = None
 
     def get_model(self, name: str) -> ModelDef | None:

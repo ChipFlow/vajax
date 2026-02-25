@@ -7,7 +7,7 @@
 This module defines the mapping between SPICE device types and their
 corresponding OSDI (Open Source Device Interface) modules for VACASK output.
 
-Extracted from ng2vclib/dfl.py to provide a shared, dialect-independent
+Extracted from netlist_converter/dfl.py to provide a shared, dialect-independent
 device registry.
 """
 

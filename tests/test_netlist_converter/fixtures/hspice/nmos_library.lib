@@ -1,0 +1,47 @@
+* HSPICE library example with corner sections
+* This demonstrates .lib/.endl syntax for model corner selection
+
+.lib typical
+* Typical corner model
+.model nmos_typ nmos level=54 version=4.5
++ tnom=27 toxe=1.8e-9 toxp=1.5e-9
++ toxm=1.8e-9 epsrox=3.9 wint=5e-9
++ vth0=0.4 k1=0.5 k2=0.0
++ dvt0=0.0 dvt1=0.0
+
+.model pmos_typ pmos level=54 version=4.5
++ tnom=27 toxe=1.8e-9 toxp=1.5e-9
++ toxm=1.8e-9 epsrox=3.9 wint=5e-9
++ vth0=-0.4 k1=0.5 k2=0.0
++ dvt0=0.0 dvt1=0.0
+.endl typical
+
+.lib ff
+* Fast-fast corner model
+.model nmos_ff nmos level=54 version=4.5
++ tnom=27 toxe=1.7e-9 toxp=1.4e-9
++ toxm=1.7e-9 epsrox=3.9 wint=4e-9
++ vth0=0.35 k1=0.45 k2=0.0
++ dvt0=0.0 dvt1=0.0
+
+.model pmos_ff pmos level=54 version=4.5
++ tnom=27 toxe=1.7e-9 toxp=1.4e-9
++ toxm=1.7e-9 epsrox=3.9 wint=4e-9
++ vth0=-0.35 k1=0.45 k2=0.0
++ dvt0=0.0 dvt1=0.0
+.endl ff
+
+.lib ss
+* Slow-slow corner model
+.model nmos_ss nmos level=54 version=4.5
++ tnom=27 toxe=1.9e-9 toxp=1.6e-9
++ toxm=1.9e-9 epsrox=3.9 wint=6e-9
++ vth0=0.45 k1=0.55 k2=0.0
++ dvt0=0.0 dvt1=0.0
+
+.model pmos_ss pmos level=54 version=4.5
++ tnom=27 toxe=1.9e-9 toxp=1.6e-9
++ toxm=1.9e-9 epsrox=3.9 wint=6e-9
++ vth0=-0.45 k1=0.55 k2=0.0
++ dvt0=0.0 dvt1=0.0
+.endl ss

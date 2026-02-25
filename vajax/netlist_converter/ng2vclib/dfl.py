@@ -2,13 +2,13 @@
 #
 # SPDX-License-Identifier: AGPL-3.0-or-later
 
-"""Default configuration for ng2vc converter.
+"""Default configuration for netlist_converter converter.
 
 This module provides the default configuration and uses shared definitions
-from ..spiceparser.elements for device type and OSDI module mappings.
+from vajax.netlist_converter.spiceparser.elements for device type and OSDI module mappings.
 """
 
-from ..spiceparser.elements import (
+from vajax.netlist_converter.spiceparser.elements import (
     DEFAULT_MODELS,
     DEVICE_TYPES,
     MERGE_VECTOR_INSTANCE_PARAMS,
@@ -18,9 +18,9 @@ from ..spiceparser.elements import (
 
 
 def _build_type_map():
-    """Build type_map from ..spiceparser.elements.DEVICE_TYPES.
+    """Build type_map from spiceparser.elements.DEVICE_TYPES.
 
-    Converts DeviceTypeInfo dataclasses to the tuple format expected by ng2vclib.
+    Converts DeviceTypeInfo dataclasses to the tuple format expected by netlist_converter.
     """
     type_map = {}
     for name, info in DEVICE_TYPES.items():
@@ -34,9 +34,9 @@ def _build_type_map():
 
 
 def _build_family_map():
-    """Build family_map from ..spiceparser.elements.OSDI_MODULES.
+    """Build family_map from spiceparser.elements.OSDI_MODULES.
 
-    Converts OsdiModuleInfo dataclasses to the tuple format expected by ng2vclib.
+    Converts OsdiModuleInfo dataclasses to the tuple format expected by netlist_converter.
     """
     family_map = {}
     for key, info in OSDI_MODULES.items():
@@ -45,9 +45,9 @@ def _build_family_map():
 
 
 def _build_default_models():
-    """Build default_models from ..spiceparser.elements.DEFAULT_MODELS.
+    """Build default_models from spiceparser.elements.DEFAULT_MODELS.
 
-    Converts OsdiModuleInfo dataclasses to the tuple format expected by ng2vclib.
+    Converts OsdiModuleInfo dataclasses to the tuple format expected by netlist_converter.
     """
     return {prefix: (info.osdi_file, info.module_name) for prefix, info in DEFAULT_MODELS.items()}
 
@@ -55,11 +55,11 @@ def _build_default_models():
 def default_config():
     """Returns a default configuration.
 
-    Uses shared definitions from ..spiceparser.elements for device mappings,
-    ensuring consistency between ng2vc and the multi-dialect parser.
+    Uses shared definitions from spiceparser.elements for device mappings,
+    ensuring consistency between netlist_converter and the multi-dialect parser.
     """
     return {
-        "signature": "// Converted by ng2vc converter\n",
+        "signature": "// Converted by netlist_converter converter\n",
         "sourcepath": ["."],
         "merge_vector_instance_params": dict(MERGE_VECTOR_INSTANCE_PARAMS),
         "remove_instance_params": {k: set(v) for k, v in REMOVE_INSTANCE_PARAMS.items()},

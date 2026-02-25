@@ -1,0 +1,24 @@
+// Spectre statistics block test for MC variation
+// Tests parsing of statistics blocks with process and mismatch variations
+
+simulator lang=spectre
+
+statistics {
+    process {
+        vary vth0 dist=gauss std=0.01
+        vary toxe dist=gauss std=0.001
+        vary u0 dist=gauss std=0.02
+    }
+    mismatch {
+        vary delvto dist=gauss std=0.05
+        vary dvth0 dist=gauss std=0.03
+    }
+}
+
+model nch nmos type=n vth0=0.4 toxe=1.8n u0=300
+
+subckt inv (in out vdd vss)
+    parameters wp=1u wn=500n l=100n
+    Mp (out in vdd vdd) nch w=wp l=l
+    Mn (out in vss vss) nch w=wn l=l
+ends inv

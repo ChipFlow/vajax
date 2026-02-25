@@ -137,8 +137,8 @@ class FileLoaderMixin:
         try:
             with open(fp, errors="ignore") as file:
                 lines = [line.rstrip("\r\n") for line in file]
-        except (OSError, IOError, UnicodeDecodeError) as e:
-            raise ConverterError(f"Failed to open {fp}: {e}")
+        except Exception:
+            raise ConverterError("Failed to open " + fp)
 
         # Canonical path
         fp = os.path.realpath(fp)
@@ -370,14 +370,11 @@ class FileLoaderMixin:
         lines = []
         for lnum, lws, line, eolc, data in nlines:
             if data.get("isnl", False):
-                # Store raw line before any preprocessing (for PULSE/PWL parsing)
-                data["rawline"] = line
-
                 # Netlist lines are converted to lowercase and preprocessed
                 # Preprocess first
                 line = self.preprocess_line(line)
 
-                # Store original case (after preprocessing)
+                # Store original case
                 data["origline"] = line
 
                 # To lowercase

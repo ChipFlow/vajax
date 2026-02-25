@@ -1,10 +1,5 @@
-# SPDX-FileCopyrightText: 2025 ChipFlow
-#
-# SPDX-License-Identifier: AGPL-3.0-or-later
-
 import re
 
-from ..spiceparser.params import sanitize_identifier as _sanitize_identifier
 from .exc import ConverterError
 from .generators import traverse
 from .patterns import *
@@ -12,17 +7,6 @@ from .patterns import *
 
 class MastersMixin:
     pat_paramassign = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*=")
-
-    def sanitize_identifier(self, name):
-        """Sanitize an identifier for VACASK compatibility.
-
-        Replaces characters that are invalid in VACASK identifiers:
-        - ! -> _
-        - [N] -> _N_ (array indices not allowed in VACASK identifiers)
-
-        Delegates to spiceparser.params.sanitize_identifier().
-        """
-        return _sanitize_identifier(name)
 
     def split_instance(self, line, orig_line, in_sub=None):
         """
@@ -124,15 +108,15 @@ class MastersMixin:
 
         # Instance name for output
         if self.cfg.get("original_case_instance", False):
-            annot["output_name"] = self.sanitize_identifier(annot["orig_name"])
+            annot["output_name"] = annot["orig_name"]
         else:
-            annot["output_name"] = self.sanitize_identifier(annot["name"])
+            annot["output_name"] = annot["name"]
 
         # Model name for output (for instances)
         if self.cfg.get("original_case_model", False):
-            annot["output_mod_name"] = self.sanitize_identifier(annot["orig_mod_name"])
+            annot["output_mod_name"] = annot["orig_mod_name"]
         else:
-            annot["output_mod_name"] = self.sanitize_identifier(annot["mod_name"])
+            annot["output_mod_name"] = annot["mod_name"]
 
     def collect_masters(self):
         """
@@ -148,17 +132,16 @@ class MastersMixin:
             for history, line, depth, in_control_block in traverse(
                 deck, depth=self.cfg.get("process_depth", None)
             ):
-                if in_control_block:
-                    # In control block - skip in both passes, except for pre_osdi in pass 1
-                    if passno == 1:
-                        lnum, lws, l, eolc, annot = line
-                        l1 = l.strip()
-                        if l1.startswith("*"):
-                            l1 = l1[1:].strip()
-                            if pat_preosdi.match(l1):
-                                # Have a pre_osdi, add to list of files
-                                osdi_file = l1[8:].strip()
-                                self.data["osdi_loads"].add(osdi_file)
+                if in_control_block and passno == 1:
+                    # In control block, pass 1, look for pre_osdi
+                    lnum, lws, l, eolc, annot = line
+                    l1 = l.strip()
+                    if l1.startswith("*"):
+                        l1 = l1[1:].strip()
+                        if pat_preosdi.match(ll):
+                            # Have a pre_osdi, add to list of files
+                            osdi_file = l1[8:].strip()
+                            self.data["osdi_loads"].add(osdi_file)
                     continue
 
                 lnum, lws, l, eolc, annot = line
@@ -185,15 +168,14 @@ class MastersMixin:
                                 first_param = ndx
                                 break
 
-                        # Get terminals and sanitize for VACASK
-                        terminals = [self.sanitize_identifier(t) for t in parts[2:first_param]]
+                        # Get terminals
+                        terminals = parts[2:first_param]
 
                         # Get parameters, split into name and value
                         sub_params = [p.split("=") for p in parts[first_param:]]
 
-                        # Store with sanitized subcircuit name
-                        sanitized_sub = self.sanitize_identifier(in_sub)
-                        self.data["subckts"][sanitized_sub] = (terminals, sub_params)
+                        # Store
+                        self.data["subckts"][in_sub] = (terminals, sub_params)
                 elif pat_cidotends.match(l):
                     # End of subcircuit
                     in_sub = None
@@ -229,11 +211,13 @@ class MastersMixin:
                             pnew = []
                             for pname, pval in params:
                                 if pname == "level":
-                                    level = int(pval)
+                                    level = int(float(pval))  # Handle "54.0"
                                     if remove_level:
                                         continue
                                 elif pname == "version":
-                                    version = int(pval)
+                                    # Version is stored as string for family_map lookup
+                                    # E.g., "4.5", "4.80", "3.3.0"
+                                    version = str(pval)
                                     if remove_version:
                                         continue
                                 else:
@@ -257,6 +241,6 @@ class MastersMixin:
                         # Not a dot command, must be an instance
                         # Preprocess it
                         try:
-                            self.preprocess_instance(lnum, lws, l, eolc, annot, in_sub)
+                            self.preprocess_instance(*line, in_sub)
                         except ConverterError as e:
                             raise ConverterError(str(e), history, lnum)

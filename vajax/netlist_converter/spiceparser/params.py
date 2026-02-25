@@ -7,7 +7,7 @@
 This module provides functions for parsing, formatting, and transforming
 SPICE parameters, including SI prefix handling and expression processing.
 
-Extracted from ng2vclib/m_params.py to provide shared parameter handling.
+Extracted from netlist_converter/m_params.py to provide shared parameter handling.
 """
 
 import re
@@ -27,6 +27,19 @@ _SI_PREFIX_PATTERN = re.compile(
 # Pattern to match 'temper' variable (replaced with $temp in VACASK)
 _TEMPER_PATTERN = re.compile(r"\btemper\b")
 
+# Pattern to match gauss/agauss function calls
+# Matches: gauss(mean, sigma) or gauss(mean, sigma, n) or agauss(...)
+# Examples: gauss(1k, 0.1, 3), agauss(0, 0.05, 3), GAUSS(vth0, sigma)
+_GAUSS_PATTERN = re.compile(
+    r"\b(a?gauss)\s*\(\s*"  # function name with open paren
+    r"([^,]+)"  # mean/nominal value (first arg)
+    r"\s*,\s*"  # comma separator
+    r"([^,)]+)"  # std deviation (second arg)
+    r"(?:\s*,\s*([^)]+))?"  # optional num_sigma (third arg)
+    r"\s*\)",  # close paren
+    re.IGNORECASE,
+)
+
 
 # SI prefix conversion map for VACASK output
 _SI_OUTPUT_MAP = {
@@ -34,6 +47,20 @@ _SI_OUTPUT_MAP = {
     "g": "G",
     "t": "T",
 }
+
+# SI prefixes for numeric output formatting (value, suffix)
+# Ordered from largest to smallest for proper matching
+_SI_OUTPUT_PREFIXES = [
+    (1e12, "T"),
+    (1e9, "G"),
+    (1e6, "M"),
+    (1e3, "k"),
+    (1e-3, "m"),
+    (1e-6, "u"),
+    (1e-9, "n"),
+    (1e-12, "p"),
+    (1e-15, "f"),
+]
 
 
 def _si_replace_worker(match: re.Match) -> str:
@@ -65,11 +92,100 @@ def convert_si_prefixes(expr: str) -> str:
     return _SI_PREFIX_PATTERN.sub(_si_replace_worker, expr)
 
 
+def contains_gauss_function(expr: str) -> bool:
+    """Check if expression contains a gauss or agauss function call.
+
+    Used to detect Monte Carlo variation expressions that should be
+    preserved as-is in output (pass-through for VACASK).
+
+    Args:
+        expr: Expression string to check
+
+    Returns:
+        True if expression contains gauss() or agauss() function call
+    """
+    return bool(_GAUSS_PATTERN.search(expr))
+
+
+def extract_gauss_calls(expr: str) -> list[dict]:
+    """Extract all gauss/agauss function calls from an expression.
+
+    Parses gauss/agauss calls and returns their components for analysis
+    or transformation. The raw expression is preserved for pass-through.
+
+    Args:
+        expr: Expression string potentially containing gauss calls
+
+    Returns:
+        List of dicts with keys: function, mean, std_dev, num_sigma, raw
+    """
+    calls = []
+    for match in _GAUSS_PATTERN.finditer(expr):
+        func_name = match.group(1).lower()
+        mean = match.group(2).strip()
+        std_dev = match.group(3).strip()
+        num_sigma_str = match.group(4)
+        num_sigma = float(num_sigma_str.strip()) if num_sigma_str else None
+
+        calls.append(
+            {
+                "function": func_name,
+                "mean": mean,
+                "std_dev": std_dev,
+                "num_sigma": num_sigma,
+                "raw": match.group(0),
+            }
+        )
+    return calls
+
+
+def format_numeric_si(value: float) -> str:
+    """Format a numeric value using SI prefixes for readability.
+
+    Converts values like 1000.0 to "1k", 1e-12 to "1p", etc.
+    Values between 0.001 and 999 are kept as-is for readability.
+
+    Args:
+        value: Numeric value to format
+
+    Returns:
+        String with SI prefix (e.g., "1k", "10p", "2.5M")
+    """
+    if value == 0:
+        return "0"
+
+    abs_value = abs(value)
+    sign = "-" if value < 0 else ""
+
+    # Values in comfortable range (0.001 to 999) - keep as-is
+    if 0.001 <= abs_value < 1000:
+        if abs_value == int(abs_value):
+            return f"{sign}{int(abs_value)}"
+        return f"{sign}{abs_value:.6g}"
+
+    # Find appropriate SI prefix for large/small values
+    for scale, suffix in _SI_OUTPUT_PREFIXES:
+        if abs_value >= scale * 0.9999:  # Allow small floating-point tolerance
+            scaled = abs_value / scale
+            # Format without unnecessary trailing zeros
+            if scaled == int(scaled):
+                return f"{sign}{int(scaled)}{suffix}"
+            else:
+                # Limit to reasonable precision
+                formatted = f"{scaled:.6g}"
+                return f"{sign}{formatted}{suffix}"
+
+    # Very small values (< 1 femto) - use scientific notation
+    return f"{value:.6g}"
+
+
 def format_value(value_str: str) -> str:
     """Format a parameter value for VACASK output.
 
     - Removes curly braces from expressions
     - Converts SI prefixes to VACASK format
+    - Converts plain numeric values to SI prefix format
+    - Preserves gauss/agauss expressions as-is for VACASK pass-through
 
     Args:
         value_str: Raw parameter value string
@@ -79,6 +195,18 @@ def format_value(value_str: str) -> str:
     """
     if value_str.startswith("{") and value_str.endswith("}"):
         value_str = value_str[1:-1]
+    # Preserve gauss expressions without SI prefix conversion
+    # to avoid mangling the function arguments
+    if contains_gauss_function(value_str):
+        return value_str
+
+    # Try to convert plain numeric values to SI format
+    try:
+        num_value = float(value_str)
+        return format_numeric_si(num_value)
+    except ValueError:
+        pass
+
     return convert_si_prefixes(value_str)
 
 
@@ -226,9 +354,7 @@ def process_instance_params(
 def process_terminals(terminals: list[str]) -> list[str]:
     """Process terminal/node names for VACASK output.
 
-    Replaces characters that are invalid in VACASK identifiers:
-    - ! -> _
-    - [N] -> _N_ (array indices not allowed in VACASK identifiers)
+    Replaces characters that are invalid in VACASK identifiers.
 
     Args:
         terminals: List of terminal names
@@ -236,33 +362,7 @@ def process_terminals(terminals: list[str]) -> list[str]:
     Returns:
         Processed terminal names
     """
-    result = []
-    for t in terminals:
-        t = t.replace("!", "_")
-        # Replace [N] with _N_ (array indices not allowed in VACASK)
-        t = re.sub(r"\[(\d+)\]", r"_\1_", t)
-        result.append(t)
-    return result
-
-
-def sanitize_identifier(name: str | None) -> str | None:
-    """Sanitize an identifier for VACASK compatibility.
-
-    Replaces characters that are invalid in VACASK identifiers:
-    - ! -> _
-    - [N] -> _N_ (array indices not allowed in VACASK identifiers)
-
-    Args:
-        name: Identifier string, or None
-
-    Returns:
-        Sanitized identifier, or None if input was None
-    """
-    if name is None:
-        return None
-    name = name.replace("!", "_")
-    name = re.sub(r"\[(\d+)\]", r"_\1_", name)
-    return name
+    return [t.replace("!", "_") for t in terminals]
 
 
 def format_params_line(

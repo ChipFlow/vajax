@@ -137,10 +137,21 @@ All devices are routed through OpenVAF except voltage/current sources:
 
 ## Solver Architecture
 
-The simulation hot paths use JAX for GPU acceleration:
-- `vajax/analysis/sparse.py` - JAX BCOO/BCSR sparse matrix operations
-- `vajax/analysis/solver.py` - Newton-Raphson with `lax.while_loop`
-- `vajax/analysis/transient/scan.py` - Time-stepping with `lax.scan`
+**Production transient hot path** (the code that actually runs simulations):
+- `vajax/analysis/solver_factories.py` - Three NR solver backends:
+  - **Dense**: `jax.scipy.linalg.solve` (small circuits <1000 nodes)
+  - **Spineax/cuDSS**: GPU sparse solver with cached symbolic factorization (CUDA)
+  - **UMFPACK FFI**: CPU sparse solver via nanobind FFI (large circuits)
+- `vajax/analysis/transient/full_mna.py` - Adaptive time-stepping with `lax.while_loop`
+
+**DC/utility solvers**:
+- `vajax/analysis/solver.py` - Simple dense NR solver for DC operating point
+- `vajax/analysis/sparse.py` - JAX BCOO/BCSR sparse utilities (legacy, not used in hot path)
+
+**Known architectural issue**: Each solver factory in `solver_factories.py` reimplements
+the full NR iteration (~400 lines each). Common NR logic should be extracted so adding
+a new linear solver backend is ~50 lines, not a copy-paste of 400.
+See GitHub issue #37 for GPU optimization opportunities.
 
 NumPy/SciPy are used appropriately for:
 - File I/O (`rawfile.py`, `prn_reader.py`)
@@ -211,20 +222,11 @@ max_f = jnp.max(jnp.abs(f_masked))
 
 | Benchmark | Node Count Match | DC OP Match | Notes |
 |-----------|------------------|-------------|-------|
-| rc        | ✅ | ✅ | Simple RC circuit |
-| graetz    | ✅ | ✅ | Diode bridge rectifier |
-| ring      | ✅ (47 nodes) | ~34% RMS error | Investigation ongoing |
-| c6288     | ✅ (~5k after collapse) | TBD | Large multiplier circuit |
-
-### Remaining Work
-
-The Ring benchmark shows ~34% RMS error vs VACASK. Since hidden_state params are
-inlined (see above), the issue must be elsewhere. Possible causes to investigate:
-
-1. **Cache values**: Init computes ~462 cache values - verify these match VACASK
-2. **Inf values in cache**: Found 2 inf values at indices 662, 741 - may cause issues
-3. **Voltage mapping**: Check that terminal voltages are correctly extracted
-4. **Transient integration**: Verify ddt() operator and charge integration
+| rc        | ✅ | ✅ 0.00% RMS | Simple RC circuit |
+| graetz    | ✅ | ✅ 0.00% RMS | Diode bridge rectifier |
+| mul       | ✅ | ✅ 0.00% RMS | Diode voltage multiplier |
+| ring      | ✅ (47 nodes) | ✅ <1% RMS | Metastable oscillator; comparison requires aligning start times |
+| c6288     | ✅ (~5k after collapse) | ✅ 2.01% RMS | Large multiplier circuit |
 
 ## OSDI vs openvaf_jax Jacobian Format Differences
 
@@ -467,3 +469,42 @@ models shows the following callback usage:
 - Disabled by default (`emit_debug_prints=False`)
 - Enable via `InstructionTranslator(..., emit_debug_prints=True)`
 - Warning: `jax.debug.print` causes slow JIT tracing
+
+---
+
+## User Persona Simulation
+
+To evaluate the project's usability and contributor experience, run simulated user
+personas as background agents. Each persona independently explores the repo and
+reports findings. This helps identify documentation gaps, onboarding friction, and
+architectural confusion that developers familiar with the codebase may not notice.
+
+### How to Run
+
+Launch two `general-purpose` Task agents in parallel with `run_in_background: true`:
+
+1. **End-user persona** (e.g., "Ana" — analog IC designer):
+   - Background: Uses commercial simulators (Spectre), basic Python, unfamiliar with uv/JAX
+   - Task: Walk through discovery → installation → first run → documentation gaps
+   - Focus: Can they actually get a circuit simulated? What's confusing?
+
+2. **Developer contributor persona** (e.g., "Dev" — GPU/scientific computing expert):
+   - Background: Expert in JAX/CUDA/sparse linear algebra, knows nothing about SPICE
+   - Task: Evaluate architecture → build/test → code quality → contribution barriers
+   - Focus: Would they contribute? What's the biggest barrier?
+
+### Key Instructions for Persona Agents
+
+- Read actual files in the repo — don't assume or fabricate
+- Be specific about file paths and line numbers when citing issues
+- Be constructively critical — what's good, what's confusing, what's missing
+- Report on the experience as a narrative, not just a checklist
+
+### What This Catches
+
+Cross-cutting themes from past runs:
+- Installation friction (both personas flagged Rust+LLVM build requirement)
+- Documentation gaps (no tutorial, no "start here" for contributors)
+- Architectural confusion (solver.py vs solver_factories.py split)
+- Stale documentation (CLAUDE.md had outdated RMS error figures)
+- Missing features visible to users but not to developers (waveform viewing)
