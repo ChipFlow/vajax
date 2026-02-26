@@ -778,6 +778,23 @@
     </span>
   </a>
   
+    <nav class="md-nav" aria-label="Performance Profile">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#scale-comparison-benchmarks" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Scale Comparison: Benchmarks
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
 </li>
       
     </ul>
@@ -1198,6 +1215,23 @@
     </span>
   </a>
   
+    <nav class="md-nav" aria-label="Performance Profile">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#scale-comparison-benchmarks" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Scale Comparison: Benchmarks
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
 </li>
       
     </ul>
@@ -1520,6 +1554,52 @@ VAJAX vs 0.002ms VACASK) show higher ratios.</p>
 <p>On GPU, the vmap'd device evaluation and cuDSS sparse solve provide additional
 speedup for large circuits, as the 10,048 parallel PSP103 evaluations map
 directly to GPU threads.</p>
+<h3 id="scale-comparison-benchmarks">Scale Comparison: Benchmarks<a class="headerlink" href="#scale-comparison-benchmarks" title="Permanent link">&para;</a></h3>
+<table>
+<thead>
+<tr>
+<th>Metric</th>
+<th>c6288 (16x16)</th>
+<th>mul64 (64x64)</th>
+<th>Ratio</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Architecture</td>
+<td>Wallace-tree</td>
+<td>Array multiplier</td>
+<td>—</td>
+</tr>
+<tr>
+<td>Partial product ANDs</td>
+<td>256</td>
+<td>4,096</td>
+<td>16x</td>
+</tr>
+<tr>
+<td>Total MOSFETs</td>
+<td>~10,048</td>
+<td>~266,408</td>
+<td>~27x</td>
+</tr>
+<tr>
+<td>Estimated unknowns</td>
+<td>~25,219</td>
+<td>~400K+</td>
+<td>~16x</td>
+</tr>
+<tr>
+<td>Adder cells</td>
+<td>~2,160</td>
+<td>~3,969</td>
+<td>~2x</td>
+</tr>
+</tbody>
+</table>
+<p>The <code>mul64</code> benchmark serves as a GPU stress test — at ~266K MOSFETs and ~400K+
+unknowns, it exercises the sparse solver and vmap'd device evaluation at a scale
+where GPU parallelism is essential.</p>
 
 
 

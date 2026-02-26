@@ -701,6 +701,17 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
+  <a href="#mul64-133k-nodes-gpu-stress-test" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        mul64 (133k nodes): GPU Stress Test
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#c6288-5000-nodes-gpu-advantage" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -1365,6 +1376,17 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
+  <a href="#mul64-133k-nodes-gpu-stress-test" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        mul64 (133k nodes): GPU Stress Test
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#c6288-5000-nodes-gpu-advantage" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -1482,8 +1504,20 @@ VACASK numbers on CPU use live execution; GPU comparisons use reference values.<
 <td style="text-align: right;">76.390</td>
 <td style="text-align: right;">1.2x</td>
 </tr>
+<tr>
+<td>mul64</td>
+<td style="text-align: right;">~133k</td>
+<td style="text-align: right;">—</td>
+<td style="text-align: right;">—</td>
+<td style="text-align: right;">—</td>
+<td style="text-align: right;">—</td>
+</tr>
 </tbody>
 </table>
+<blockquote>
+<p><strong>mul64</strong> (64x64 array multiplier): ~266k MOSFETs, ~400k+ unknowns. Too large
+for CPU benchmarking; designed as a GPU stress test. CPU numbers pending.</p>
+</blockquote>
 <h3 id="gpu-vajax-acceleration">GPU: VAJAX Acceleration<a class="headerlink" href="#gpu-vajax-acceleration" title="Permanent link">&para;</a></h3>
 <table>
 <thead>
@@ -1497,6 +1531,14 @@ VACASK numbers on CPU use live execution; GPU comparisons use reference values.<
 </tr>
 </thead>
 <tbody>
+<tr>
+<td>mul64</td>
+<td style="text-align: right;">~133k</td>
+<td style="text-align: right;">—</td>
+<td style="text-align: right;">—</td>
+<td style="text-align: right;">—</td>
+<td style="text-align: right;">—</td>
+</tr>
 <tr>
 <td>c6288</td>
 <td style="text-align: right;">~5000</td>
@@ -1531,6 +1573,11 @@ VACASK numbers on CPU use live execution; GPU comparisons use reference values.<
 </tr>
 </tbody>
 </table>
+<blockquote>
+<p><strong>mul64</strong> GPU numbers pending — this benchmark is designed to stress-test GPU
+sparse solver performance at ~400k+ unknowns, where GPU parallelism should
+provide the largest speedup over CPU.</p>
+</blockquote>
 <p>GPU results for circuits below ~500 nodes reflect GPU kernel overhead on tiny
 workloads, not simulation inefficiency. The auto-threshold (<code>gpu_threshold=500</code>)
 prevents this in normal usage; the benchmark uses <code>--force-gpu</code> to measure all
@@ -1578,11 +1625,12 @@ circuits for tracking purposes.</p>
 per-step overhead</strong> in the JAX path that VACASK doesn't have:</p>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>Overhead ratio vs circuit size:
 <a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a>
-<a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a>    mul (8 nodes)     ████████████████████████████████  10.9x
-<a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a>    rc (4 nodes)      ████████████████████             6.6x
-<a id="__codelineno-0-5" name="__codelineno-0-5" href="#__codelineno-0-5"></a>    graetz (6 nodes)  ████████████████                 5.4x
-<a id="__codelineno-0-6" name="__codelineno-0-6" href="#__codelineno-0-6"></a>    ring (47 nodes)   ██████████████                   4.7x
-<a id="__codelineno-0-7" name="__codelineno-0-7" href="#__codelineno-0-7"></a>    c6288 (5k nodes)  ████                             1.2x
+<a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a>    mul (8 nodes)      ████████████████████████████████  10.9x
+<a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a>    rc (4 nodes)       ████████████████████             6.6x
+<a id="__codelineno-0-5" name="__codelineno-0-5" href="#__codelineno-0-5"></a>    graetz (6 nodes)   ████████████████                 5.4x
+<a id="__codelineno-0-6" name="__codelineno-0-6" href="#__codelineno-0-6"></a>    ring (47 nodes)    ██████████████                   4.7x
+<a id="__codelineno-0-7" name="__codelineno-0-7" href="#__codelineno-0-7"></a>    c6288 (5k nodes)   ████                             1.2x
+<a id="__codelineno-0-8" name="__codelineno-0-8" href="#__codelineno-0-8"></a>    mul64 (133k nodes) █                                TBD (GPU-only)
 </code></pre></div>
 <h3 id="overhead-breakdown">Overhead Breakdown<a class="headerlink" href="#overhead-breakdown" title="Permanent link">&para;</a></h3>
 <p>Each timestep in <code>full_mna.py</code> body_fn executes ~11 major operations beyond the
@@ -1742,6 +1790,13 @@ formulas for common step ratios.</p>
 <p>GPU acceleration becomes beneficial when the per-step compute time exceeds
 the kernel launch and memory overhead (~100-500 us per step). This happens
 around 500+ nodes.</p>
+<h3 id="mul64-133k-nodes-gpu-stress-test">mul64 (133k nodes): GPU Stress Test<a class="headerlink" href="#mul64-133k-nodes-gpu-stress-test" title="Permanent link">&para;</a></h3>
+<ul>
+<li>~266k PSP103 MOSFET evaluations per NR iteration</li>
+<li>Sparse Jacobian: ~400k+ unknowns</li>
+<li>Dense solve impossible (~1.2TB memory); sparse solver required</li>
+<li>This is the primary benchmark for GPU sparse solver optimization</li>
+</ul>
 <h3 id="c6288-5000-nodes-gpu-advantage">c6288 (5000 nodes): GPU Advantage<a class="headerlink" href="#c6288-5000-nodes-gpu-advantage" title="Permanent link">&para;</a></h3>
 <ul>
 <li>Jacobian: 5000x5000 matrix operations</li>
