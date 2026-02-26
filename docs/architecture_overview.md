@@ -338,6 +338,9 @@ currents = jax.vmap(device_fn)(V[node_indices], batched_params)
 
 Speedup: 10-100x depending on device count
 
+For a detailed walkthrough of how all these mechanisms compose for a real circuit,
+see [Parallelism Architecture: c6288 Case Study](parallelism_architecture.md).
+
 ### Batched Parameter Arrays
 
 Pre-computing parameter arrays eliminates Python loops:

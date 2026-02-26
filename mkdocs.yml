@@ -29,7 +29,11 @@ markdown_extensions:
   - admonition
   - pymdownx.highlight:
       anchor_linenums: true
-  - pymdownx.superfences
+  - pymdownx.superfences:
+      custom_fences:
+        - name: mermaid
+          class: mermaid
+          format: !!python/name:pymdownx.superfences.fence_code_format
   - pymdownx.tabbed:
       alternate_style: true
   - tables
@@ -39,6 +43,8 @@ markdown_extensions:
 nav:
   - Home: index.md
   - User Guide:
+      - Getting Started: getting_started.md
+      - Supported Devices: supported_devices.md
       - API Reference: api_reference.md
       - CLI Reference: cli_reference.md
       - Transient Options: transient_options.md
@@ -46,6 +52,7 @@ nav:
       - VACASK Sim Format: vacask_sim_format.md
   - Developer Guide:
       - Architecture Overview: architecture_overview.md
+      - Parallelism Architecture: parallelism_architecture.md
       - GPU Solver Architecture: gpu_solver_architecture.md
       - GPU Solver Jacobian: gpu_solver_jacobian.md
       - Sparse Solver Roadmap: sparse_solver_roadmap.md
