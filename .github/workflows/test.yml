@@ -118,7 +118,7 @@ jobs:
       - name: Install system dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y libopenblas-dev swig cmake
+          sudo apt-get install -y libsuitesparse-dev libopenblas-dev swig cmake
 
       - name: Install uv
         uses: astral-sh/setup-uv@v4
@@ -203,7 +203,7 @@ jobs:
       - name: Install system dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y libopenblas-dev swig cmake ngspice
+          sudo apt-get install -y libsuitesparse-dev libopenblas-dev swig cmake ngspice
 
       - name: Install uv
         uses: astral-sh/setup-uv@v4
@@ -305,7 +305,7 @@ jobs:
       - name: Install system dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y libopenblas-dev swig cmake
+          sudo apt-get install -y libsuitesparse-dev libopenblas-dev swig cmake
 
       - name: Install uv
         uses: astral-sh/setup-uv@v4
