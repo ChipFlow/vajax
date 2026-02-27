@@ -1515,8 +1515,9 @@ VACASK numbers on CPU use live execution; GPU comparisons use reference values.<
 </tbody>
 </table>
 <blockquote>
-<p><strong>mul64</strong> (64x64 array multiplier): ~266k MOSFETs, ~400k+ unknowns. Too large
-for CPU benchmarking; designed as a GPU stress test. CPU numbers pending.</p>
+<p><strong>mul64</strong> (64x64 array multiplier): ~266k MOSFETs, ~666k unknowns (133k nodes +
+533k internal). Requires &gt;16GB GPU VRAM for cuDSS sparse factorization — the
+Tesla T4 (16GB) runs out of memory during symbolic analysis. Needs A100 or larger.</p>
 </blockquote>
 <h3 id="gpu-vajax-acceleration">GPU: VAJAX Acceleration<a class="headerlink" href="#gpu-vajax-acceleration" title="Permanent link">&para;</a></h3>
 <table>
@@ -1574,9 +1575,9 @@ for CPU benchmarking; designed as a GPU stress test. CPU numbers pending.</p>
 </tbody>
 </table>
 <blockquote>
-<p><strong>mul64</strong> GPU numbers pending — this benchmark is designed to stress-test GPU
-sparse solver performance at ~400k+ unknowns, where GPU parallelism should
-provide the largest speedup over CPU.</p>
+<p><strong>mul64</strong> requires &gt;16GB GPU VRAM — cuDSS symbolic factorization of the 666k x 666k
+sparse Jacobian (3.3M non-zeros) exceeds Tesla T4 (16GB) memory. Needs A100 (40/80GB)
+or similar. This benchmark is excluded from T4-based CI runs.</p>
 </blockquote>
 <p>GPU results for circuits below ~500 nodes reflect GPU kernel overhead on tiny
 workloads, not simulation inefficiency. The auto-threshold (<code>gpu_threshold=500</code>)
@@ -1793,9 +1794,12 @@ around 500+ nodes.</p>
 <h3 id="mul64-133k-nodes-gpu-stress-test">mul64 (133k nodes): GPU Stress Test<a class="headerlink" href="#mul64-133k-nodes-gpu-stress-test" title="Permanent link">&para;</a></h3>
 <ul>
 <li>~266k PSP103 MOSFET evaluations per NR iteration</li>
-<li>Sparse Jacobian: ~400k+ unknowns</li>
-<li>Dense solve impossible (~1.2TB memory); sparse solver required</li>
-<li>This is the primary benchmark for GPU sparse solver optimization</li>
+<li>Sparse Jacobian: 666,409 unknowns (133k nodes + 533k internal + 130 currents)</li>
+<li>3,259,918 CSR entries (from 30.5M COO triplets)</li>
+<li>Dense solve impossible (~3.3TB memory); sparse solver required</li>
+<li>Requires &gt;16GB GPU VRAM for cuDSS symbolic factorization</li>
+<li>Tesla T4 (16GB): OOM during <code>cudssExecute analysis</code></li>
+<li>Target: A100 40GB+ or similar</li>
 </ul>
 <h3 id="c6288-5000-nodes-gpu-advantage">c6288 (5000 nodes): GPU Advantage<a class="headerlink" href="#c6288-5000-nodes-gpu-advantage" title="Permanent link">&para;</a></h3>
 <ul>
