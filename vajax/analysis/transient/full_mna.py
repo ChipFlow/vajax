@@ -1252,9 +1252,12 @@ class FullMNAStrategy(TransientStrategy):
 
             return eval_sources
 
-        # Get DC values as JAX arrays for fallback
-        vsource_dc = jnp.array(vsource_data.get("dc_values", [0.0] * n_vsources), dtype=dtype)
-        isource_dc = jnp.array(isource_data.get("dc_values", [0.0] * n_isources), dtype=dtype)
+        # Get DC values as Python lists for fallback defaults.
+        # These must stay as plain Python floats (not jnp.array) to avoid
+        # TracerIntegerConversionError when iterating >100 vsources inside
+        # lax.while_loop (JAX's _chunk_iter triggers __index__ on traced ints).
+        vsource_dc_list = vsource_data.get("dc_values", [0.0] * n_vsources)
+        isource_dc_list = isource_data.get("dc_values", [0.0] * n_isources)
 
         def eval_sources(t):
             source_values = source_fn(t)
@@ -1263,20 +1266,20 @@ class FullMNAStrategy(TransientStrategy):
             if n_vsources == 0:
                 vsource_vals = jnp.zeros(0, dtype=dtype)
             elif n_vsources == 1:
-                val = source_values.get(vsource_names[0], vsource_dc[0])
+                val = source_values.get(vsource_names[0], vsource_dc_list[0])
                 vsource_vals = jnp.array([val], dtype=dtype)
             else:
-                vals = [source_values.get(name, dc) for name, dc in zip(vsource_names, vsource_dc)]
+                vals = [source_values.get(name, dc) for name, dc in zip(vsource_names, vsource_dc_list)]
                 vsource_vals = jnp.stack(vals)
 
             # Build isource array using jnp.stack (JIT-compatible)
             if n_isources == 0:
                 isource_vals = jnp.zeros(0, dtype=dtype)
             elif n_isources == 1:
-                val = source_values.get(isource_names[0], isource_dc[0])
+                val = source_values.get(isource_names[0], isource_dc_list[0])
                 isource_vals = jnp.array([val], dtype=dtype)
             else:
-                vals = [source_values.get(name, dc) for name, dc in zip(isource_names, isource_dc)]
+                vals = [source_values.get(name, dc) for name, dc in zip(isource_names, isource_dc_list)]
                 isource_vals = jnp.stack(vals)
 
             return vsource_vals, isource_vals
