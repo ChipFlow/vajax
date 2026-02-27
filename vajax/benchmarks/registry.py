@@ -41,6 +41,7 @@ class BenchmarkInfo:
     skip_reason: str = ""
     xfail: bool = False
     xfail_reason: str = ""
+    gpu_min_vram_gb: int = 0  # Minimum GPU VRAM in GB (0 = no requirement)
 
     @property
     def uses_mosfet(self) -> bool:
@@ -211,8 +212,10 @@ def _parse_benchmark(sim_path: Path, name: str) -> BenchmarkInfo:
             info.xfail = True
             info.xfail_reason = "Node count mismatch - need node collapse"
         elif name == "mul64":
-            # Very large circuit (~266k MOSFETs), limit steps for CI
+            # Very large circuit (~266k MOSFETs, ~666k unknowns)
+            # Requires >16GB GPU VRAM for cuDSS sparse factorization
             info.max_steps = 5
+            info.gpu_min_vram_gb = 24
         elif name == "tb_dp":
             # Large SRAM, should use sparse solver
             info.max_steps = 10

@@ -127,7 +127,9 @@ jobs:
           JAX_LOG_COMPILES: "1"
         run: |
           set +e
+          # Exclude mul64: requires >16GB VRAM (666k unknowns), T4 has 16GB
           uv run python scripts/compare_vacask.py \
+            --benchmark rc,graetz,mul,ring,c6288 \
             --use-scan \
             --force-gpu \
             --analyze \

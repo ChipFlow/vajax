@@ -20,8 +20,9 @@ VACASK numbers on CPU use live execution; GPU comparisons use reference values.
 | c6288     | ~5000 |    1k |        88.060 |           76.390 |  1.2x |
 | mul64     | ~133k |    — |           — |              — |   — |
 
-> **mul64** (64x64 array multiplier): ~266k MOSFETs, ~400k+ unknowns. Too large
-> for CPU benchmarking; designed as a GPU stress test. CPU numbers pending.
+> **mul64** (64x64 array multiplier): ~266k MOSFETs, ~666k unknowns (133k nodes +
+> 533k internal). Requires >16GB GPU VRAM for cuDSS sparse factorization — the
+> Tesla T4 (16GB) runs out of memory during symbolic analysis. Needs A100 or larger.
 
 ### GPU: VAJAX Acceleration
 
@@ -33,9 +34,9 @@ VACASK numbers on CPU use live execution; GPU comparisons use reference values.
 | graetz    |     6 |          0.30 |          0.02 |       0.07x | 161x (slower) |
 | rc        |     4 |          0.24 |          0.01 |       0.05x | 257x (slower) |
 
-> **mul64** GPU numbers pending — this benchmark is designed to stress-test GPU
-> sparse solver performance at ~400k+ unknowns, where GPU parallelism should
-> provide the largest speedup over CPU.
+> **mul64** requires >16GB GPU VRAM — cuDSS symbolic factorization of the 666k x 666k
+> sparse Jacobian (3.3M non-zeros) exceeds Tesla T4 (16GB) memory. Needs A100 (40/80GB)
+> or similar. This benchmark is excluded from T4-based CI runs.
 
 GPU results for circuits below ~500 nodes reflect GPU kernel overhead on tiny
 workloads, not simulation inefficiency. The auto-threshold (`gpu_threshold=500`)
@@ -171,9 +172,12 @@ around 500+ nodes.
 ### mul64 (133k nodes): GPU Stress Test
 
 - ~266k PSP103 MOSFET evaluations per NR iteration
-- Sparse Jacobian: ~400k+ unknowns
-- Dense solve impossible (~1.2TB memory); sparse solver required
-- This is the primary benchmark for GPU sparse solver optimization
+- Sparse Jacobian: 666,409 unknowns (133k nodes + 533k internal + 130 currents)
+- 3,259,918 CSR entries (from 30.5M COO triplets)
+- Dense solve impossible (~3.3TB memory); sparse solver required
+- Requires >16GB GPU VRAM for cuDSS symbolic factorization
+- Tesla T4 (16GB): OOM during `cudssExecute analysis`
+- Target: A100 40GB+ or similar
 
 ### c6288 (5000 nodes): GPU Advantage
 
