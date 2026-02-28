@@ -573,6 +573,8 @@ def main():
             continue
 
         num_steps = int(config.t_stop / config.dt)
+        if config.max_steps is not None and num_steps > config.max_steps:
+            num_steps = config.max_steps
 
         print(f"--- {name} ({num_steps} steps, dt={config.dt:.2e}) ---")
 
