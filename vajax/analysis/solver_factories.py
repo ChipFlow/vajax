@@ -552,6 +552,7 @@ def make_spineax_full_mna_solver(
     total_limit_states: int = 0,
     options: Optional["SimulationOptions"] = None,
     max_step: float = 1e30,
+    use_csr_direct: bool = False,
 ) -> Callable:
     """Create a JIT-compiled sparse NR solver using Spineax/cuDSS for full MNA.
 
@@ -614,6 +615,7 @@ def make_spineax_full_mna_solver(
         csr_segment_ids,
         solve_fn=lambda csr_data, f_solve: spineax_solver(-f_solve, csr_data)[0],
         n_unknowns=n_unknowns,
+        use_csr_direct=use_csr_direct,
     )
 
     logger.info(f"Creating Spineax full MNA NR solver: V({n_nodes}) + I({n_vsources})")
@@ -668,6 +670,7 @@ def make_umfpack_ffi_full_mna_solver(
     total_limit_states: int = 0,
     options: Optional["SimulationOptions"] = None,
     max_step: float = 1e30,
+    use_csr_direct: bool = False,
 ) -> Callable:
     """Create a JIT-compiled UMFPACK FFI NR solver for full MNA formulation.
 
@@ -727,6 +730,7 @@ def make_umfpack_ffi_full_mna_solver(
             bcsr_indptr, bcsr_indices, csr_data, -f_solve
         ),
         n_unknowns=n_unknowns,
+        use_csr_direct=use_csr_direct,
     )
 
     logger.info(f"Creating UMFPACK FFI full MNA solver: V({n_nodes}) + I({n_vsources})")
@@ -779,11 +783,16 @@ def _make_sparse_solve_fns(
     csr_segment_ids: Optional[Array],
     solve_fn: Callable,
     n_unknowns: int,
+    use_csr_direct: bool = False,
 ) -> tuple[Callable, Callable]:
     """Create enforce_noi and linear_solve closures for sparse solvers.
 
-    Both Spineax and UMFPACK share the same COO->CSR conversion and NOI
-    enforcement logic. Only the final solve call differs (passed as solve_fn).
+    Both Spineax and UMFPACK share the same NOI enforcement logic. Only the
+    final solve call differs (passed as solve_fn).
+
+    When use_csr_direct=True, the build_system function returns CSR data
+    directly (no COO->CSR conversion needed). This eliminates the intermediate
+    COO arrays and sort/segment_sum operations.
 
     Args:
         masks: Pre-computed NOI masks from _compute_noi_masks
@@ -793,6 +802,7 @@ def _make_sparse_solve_fns(
         csr_segment_ids: Pre-computed segment IDs
         solve_fn: (csr_data, f_solve) -> delta. The backend-specific solve.
         n_unknowns: Number of node unknowns (n_nodes - 1)
+        use_csr_direct: If True, J_or_data is already CSR data (skip conversion)
 
     Returns:
         (enforce_noi_fn, linear_solve_fn) tuple of closures
@@ -804,28 +814,43 @@ def _make_sparse_solve_fns(
     noi_diag_indices = masks["noi_diag_indices"]
     noi_res_indices_arr = masks["noi_res_indices_arr"]
 
-    def enforce_noi(J_bcoo, f):
-        """No-op for sparse — NOI is enforced after COO->CSR in linear_solve."""
-        return J_bcoo, f
+    def enforce_noi(J_or_data, f):
+        """No-op for sparse — NOI is enforced in linear_solve."""
+        return J_or_data, f
 
-    def linear_solve(J_bcoo, f):
-        """Convert BCOO to CSR, enforce NOI constraints, then solve."""
-        if use_precomputed:
-            coo_vals = J_bcoo.data
-            sorted_vals = coo_vals[coo_sort_perm]
-            csr_data = jax.ops.segment_sum(sorted_vals, csr_segment_ids, num_segments=nse)
-        else:
-            J_bcoo_dedup = J_bcoo.sum_duplicates(nse=nse)
-            J_bcsr = BCSR.from_bcoo(J_bcoo_dedup)
-            csr_data = J_bcsr.data
+    if use_csr_direct:
 
-        f_solve = f
-        if noi_row_mask is not None:
-            csr_data = csr_data.at[noi_row_mask].set(0.0)
-            csr_data = csr_data.at[noi_col_mask].set(0.0)
-            csr_data = csr_data.at[noi_diag_indices].set(1.0)
-            f_solve = f.at[noi_res_indices_arr].set(0.0)
+        def linear_solve(csr_data, f):
+            """CSR data received directly. Enforce NOI constraints, then solve."""
+            f_solve = f
+            if noi_row_mask is not None:
+                csr_data = csr_data.at[noi_row_mask].set(0.0)
+                csr_data = csr_data.at[noi_col_mask].set(0.0)
+                csr_data = csr_data.at[noi_diag_indices].set(1.0)
+                f_solve = f.at[noi_res_indices_arr].set(0.0)
 
-        return solve_fn(csr_data, f_solve)
+            return solve_fn(csr_data, f_solve)
+
+    else:
+
+        def linear_solve(J_bcoo, f):
+            """Convert BCOO to CSR, enforce NOI constraints, then solve."""
+            if use_precomputed:
+                coo_vals = J_bcoo.data
+                sorted_vals = coo_vals[coo_sort_perm]
+                csr_data = jax.ops.segment_sum(sorted_vals, csr_segment_ids, num_segments=nse)
+            else:
+                J_bcoo_dedup = J_bcoo.sum_duplicates(nse=nse)
+                J_bcsr = BCSR.from_bcoo(J_bcoo_dedup)
+                csr_data = J_bcsr.data
+
+            f_solve = f
+            if noi_row_mask is not None:
+                csr_data = csr_data.at[noi_row_mask].set(0.0)
+                csr_data = csr_data.at[noi_col_mask].set(0.0)
+                csr_data = csr_data.at[noi_diag_indices].set(1.0)
+                f_solve = f.at[noi_res_indices_arr].set(0.0)
+
+            return solve_fn(csr_data, f_solve)
 
     return enforce_noi, linear_solve

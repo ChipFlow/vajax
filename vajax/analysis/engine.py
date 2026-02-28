@@ -1226,6 +1226,8 @@ class CircuitEngine:
         static_inputs_cache: Dict,
         n_unknowns: int,
         use_dense: bool = True,
+        csr_stamp_info=None,
+        batch_size=None,
     ) -> Tuple[Callable, Dict, int]:
         """Create GPU-resident build_system function for MNA formulation.
 
@@ -1241,6 +1243,8 @@ class CircuitEngine:
             gmin=self.options.gmin,
             n_unknowns=n_unknowns,
             use_dense=use_dense,
+            csr_stamp_info=csr_stamp_info,
+            batch_size=batch_size,
         )
 
     def _compute_voltage_param(
