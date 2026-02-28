@@ -610,6 +610,9 @@ def make_spineax_full_mna_solver(
         mview_id=0,
     )
 
+    # Augmented system size: node voltages + vsource branch currents
+    n_augmented = n_unknowns + n_vsources
+
     if factorize_f32:
 
         def _solve_f32_refined(csr_data, f_solve):
@@ -631,7 +634,7 @@ def make_spineax_full_mna_solver(
             x_f64 = x_f32.astype(jnp.float64)
             J_bcsr = BCSR(
                 (csr_data, bcsr_indices, bcsr_indptr),
-                shape=(n_unknowns, n_unknowns),
+                shape=(n_augmented, n_augmented),
             )
             r = f_solve + J_bcsr @ x_f64
 
