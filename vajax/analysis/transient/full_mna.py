@@ -564,17 +564,12 @@ class FullMNAStrategy(TransientStrategy):
             # Step 5: Create solver - try Spineax/cuDSS on CUDA, fall back to UMFPACK
             if on_cuda and is_spineax_available():
                 try:
-                    # Auto-enable float32 factorization for large circuits to halve VRAM.
-                    # 100k unknowns ≈ 6GB for f64 factorization, 3GB for f32.
-                    n_unknowns = n_nodes - 1 + n_vsources
-                    use_f32 = n_unknowns > 100_000
-                    if use_f32:
-                        logger.info(
-                            f"Using Spineax/cuDSS solver (GPU sparse, f32 factorization "
-                            f"for {n_unknowns} unknowns)"
-                        )
-                    else:
-                        logger.info("Using Spineax/cuDSS solver (GPU sparse)")
+                    # Always use float32 factorization with iterative refinement on GPU.
+                    # Halves VRAM, factorization is faster in f32, and one refinement
+                    # step recovers ~1e-8 to 1e-11 relative accuracy (sufficient for NR).
+                    logger.info(
+                        "Using Spineax/cuDSS solver (GPU sparse, f32 factorization)"
+                    )
                     nr_solve = make_spineax_full_mna_solver(
                         build_system_jit,
                         n_nodes,
@@ -589,7 +584,7 @@ class FullMNAStrategy(TransientStrategy):
                         total_limit_states=total_limit_states,
                         options=self.runner.options,
                         use_csr_direct=True,
-                        factorize_f32=use_f32,
+                        factorize_f32=True,
                     )
                 except (RuntimeError, Exception) as e:
                     # cuDSS may OOM during symbolic factorization for very large circuits
