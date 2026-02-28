@@ -875,14 +875,10 @@ def _make_sparse_solve_fns(
         return solve_fn(csr_data, f_solve)
 
     if use_csr_direct:
-
-        def linear_solve(csr_data, f):
-            """CSR data received directly. Enforce NOI constraints, then solve."""
-            return _apply_noi_and_solve(csr_data, f)
-
+        linear_solve = _apply_noi_and_solve
     else:
 
-        def linear_solve(J_bcoo, f):  # type: ignore[misc]
+        def _linear_solve_coo(J_bcoo, f):
             """Convert BCOO to CSR, enforce NOI constraints, then solve."""
             if use_precomputed:
                 coo_vals = J_bcoo.data
@@ -894,5 +890,7 @@ def _make_sparse_solve_fns(
                 csr_data = J_bcsr.data
 
             return _apply_noi_and_solve(csr_data, f)
+
+        linear_solve = _linear_solve_coo
 
     return enforce_noi, linear_solve
