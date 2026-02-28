@@ -440,36 +440,37 @@ class FullMNAStrategy(TransientStrategy):
             unique_rows = (unique_linear // n_augmented).astype(np.int32)
             unique_cols = (unique_linear % n_augmented).astype(np.int32)
 
+            # Build CSR indptr using bincount (vectorized)
+            row_counts = np.bincount(unique_rows, minlength=n_augmented)
             csr_indptr = np.zeros(n_augmented + 1, dtype=np.int32)
-            for row in unique_rows:
-                csr_indptr[row + 1] += 1
-            csr_indptr = np.cumsum(csr_indptr).astype(np.int32)
+            csr_indptr[1:] = np.cumsum(row_counts)
             csr_indices = unique_cols
 
             logger.info(f"Full MNA sparse: {n_coo} COO -> {nse} CSR entries")
 
-            # Validate CSR structure
-            assert csr_indptr[0] == 0, f"CSR indptr[0]={csr_indptr[0]} != 0"
-            assert csr_indptr[-1] == nse, f"CSR indptr[-1]={csr_indptr[-1]} != nse={nse}"
-            assert np.all(np.diff(csr_indptr) >= 0), "CSR indptr not monotonic"
-            assert np.all(csr_indices >= 0), f"CSR has negative col index: min={csr_indices.min()}"
-            assert np.all(csr_indices < n_augmented), (
-                f"CSR col index out of range: max={csr_indices.max()}, n={n_augmented}"
-            )
+            # Validate CSR structure (raise, not assert, so -O doesn't skip)
+            if csr_indptr[0] != 0:
+                raise ValueError(f"CSR indptr[0]={csr_indptr[0]} != 0")
+            if csr_indptr[-1] != nse:
+                raise ValueError(f"CSR indptr[-1]={csr_indptr[-1]} != nse={nse}")
+            if not np.all(np.diff(csr_indptr) >= 0):
+                raise ValueError("CSR indptr not monotonic")
+            if np.any(csr_indices < 0):
+                raise ValueError(f"CSR has negative col index: min={csr_indices.min()}")
+            if np.any(csr_indices >= n_augmented):
+                raise ValueError(
+                    f"CSR col index out of range: max={csr_indices.max()}, n={n_augmented}"
+                )
             # Check column indices are strictly sorted within each row
             # (required for valid CSR -> CSC conversion)
-            # Vectorized: check diff of consecutive indices, ignoring row boundaries
             if nse > 1:
                 col_diffs = np.diff(csr_indices)
-                # row_starts marks the first element of each row (diff across boundary is invalid)
                 row_starts = np.zeros(nse, dtype=np.bool_)
                 row_starts[csr_indptr[:-1][csr_indptr[:-1] < nse]] = True
-                # Mask out row boundaries (diff at position i compares indices[i+1] - indices[i])
-                interior_mask = ~row_starts[1:]  # diff[i] is interior if indices[i+1] isn't a row start
+                interior_mask = ~row_starts[1:]
                 bad = col_diffs[interior_mask] <= 0
                 if np.any(bad):
                     bad_idx = np.where(bad)[0][0]
-                    # Find which row this belongs to
                     all_interior = np.where(interior_mask)[0]
                     pos = all_interior[bad_idx]
                     row = np.searchsorted(csr_indptr, pos, side='right') - 1
