@@ -29,6 +29,10 @@ jobs:
             benchmarks: "c6288"
             run_tests: false
             timeout: 60
+          - name: mul64
+            benchmarks: "mul64"
+            run_tests: false
+            timeout: 90
     name: benchmark (${{ matrix.name }})
     timeout-minutes: ${{ matrix.timeout }}
     steps:
