@@ -567,9 +567,7 @@ class FullMNAStrategy(TransientStrategy):
                     # Always use float32 factorization with iterative refinement on GPU.
                     # Halves VRAM, factorization is faster in f32, and one refinement
                     # step recovers ~1e-8 to 1e-11 relative accuracy (sufficient for NR).
-                    logger.info(
-                        "Using Spineax/cuDSS solver (GPU sparse, f32 factorization)"
-                    )
+                    logger.info("Using Spineax/cuDSS solver (GPU sparse, f32 factorization)")
                     nr_solve = make_spineax_full_mna_solver(
                         build_system_jit,
                         n_nodes,
