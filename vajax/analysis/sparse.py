@@ -102,7 +102,8 @@ def build_csr_arrays(
     n_rows = shape[0]
 
     # Create linear indices for sorting (row-major order)
-    linear_idx = rows * shape[1] + cols
+    # Use int64 to avoid overflow for large matrices (e.g., 666k x 666k)
+    linear_idx = rows.astype(jnp.int64) * shape[1] + cols.astype(jnp.int64)
 
     # Sort by linear index to group duplicates
     sort_order = jnp.argsort(linear_idx)

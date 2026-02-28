@@ -217,7 +217,7 @@ def _parse_benchmark(sim_path: Path, name: str) -> BenchmarkInfo:
             info.max_steps = 5
             info.gpu_min_vram_gb = 24
             info.xfail = True
-            info.xfail_reason = "UMFPACK symbolic: invalid matrix on CI (passes locally, under investigation)"
+            info.xfail_reason = "UMFPACK symbolic: invalid matrix on CI (CSR/CSC validation added for diagnostics)"
         elif name == "tb_dp":
             # Large SRAM, should use sparse solver
             info.max_steps = 10

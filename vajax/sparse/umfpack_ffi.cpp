@@ -57,6 +57,41 @@ const char* UmfpackStatusString(int status) {
     }
 }
 
+// Validate CSR matrix structure. Returns empty string if valid, or error description.
+std::string ValidateCsr(
+    int32_t n,
+    int32_t nnz,
+    const int32_t* indptr,
+    const int32_t* indices
+) {
+    if (n <= 0) return "n=" + std::to_string(n) + " <= 0";
+    if (nnz < 0) return "nnz=" + std::to_string(nnz) + " < 0";
+    if (indptr[0] != 0) return "indptr[0]=" + std::to_string(indptr[0]) + " != 0";
+    if (indptr[n] != nnz)
+        return "indptr[n]=" + std::to_string(indptr[n]) + " != nnz=" + std::to_string(nnz);
+
+    for (int32_t i = 0; i < n; ++i) {
+        if (indptr[i + 1] < indptr[i])
+            return "indptr not monotonic at row " + std::to_string(i) +
+                   ": indptr[" + std::to_string(i) + "]=" + std::to_string(indptr[i]) +
+                   " > indptr[" + std::to_string(i + 1) + "]=" + std::to_string(indptr[i + 1]);
+        for (int32_t k = indptr[i]; k < indptr[i + 1]; ++k) {
+            if (indices[k] < 0 || indices[k] >= n)
+                return "col index out of range at row " + std::to_string(i) +
+                       " pos " + std::to_string(k) +
+                       ": indices[k]=" + std::to_string(indices[k]) +
+                       " not in [0, " + std::to_string(n - 1) + "]";
+            // Check for unsorted/duplicate column indices within a row
+            if (k > indptr[i] && indices[k] <= indices[k - 1])
+                return "col indices not strictly sorted at row " + std::to_string(i) +
+                       " pos " + std::to_string(k) +
+                       ": indices[" + std::to_string(k - 1) + "]=" + std::to_string(indices[k - 1]) +
+                       " >= indices[" + std::to_string(k) + "]=" + std::to_string(indices[k]);
+        }
+    }
+    return "";
+}
+
 // Convert CSR format to CSC format (UMFPACK requires column-major)
 // This is done in-place in the output arrays
 void CsrToCsc(
@@ -179,18 +214,41 @@ ffi::Error UmfpackSolveF64Impl(
     UmfpackCache& cache = GetCache();
     std::lock_guard<std::mutex> lock(cache.mutex);
 
+    int32_t n32 = static_cast<int32_t>(n);
+    int32_t nnz32 = static_cast<int32_t>(nnz);
+
+    // Validate CSR input before conversion
+    {
+        std::string err = ValidateCsr(n32, nnz32, indptr_ptr, indices_ptr);
+        if (!err.empty()) {
+            return ffi::Error::Internal(
+                std::string("UMFPACK: invalid CSR input (n=") +
+                std::to_string(n32) + ", nnz=" + std::to_string(nnz32) +
+                "): " + err);
+        }
+    }
+
     // Allocate temporary CSC arrays
     std::vector<int32_t> csc_indptr(n + 1);
     std::vector<int32_t> csc_indices(nnz);
     std::vector<double> csc_data(nnz);
 
     // Convert CSR to CSC
-    CsrToCsc(
-        static_cast<int32_t>(n),
-        static_cast<int32_t>(nnz),
+    CsrToCsc(n32, nnz32,
         indptr_ptr, indices_ptr, data_ptr,
         csc_indptr.data(), csc_indices.data(), csc_data.data()
     );
+
+    // Validate CSC output (transposed view: CSC is CSR of transpose)
+    {
+        std::string err = ValidateCsr(n32, nnz32, csc_indptr.data(), csc_indices.data());
+        if (!err.empty()) {
+            return ffi::Error::Internal(
+                std::string("UMFPACK: invalid CSC after conversion (n=") +
+                std::to_string(n32) + ", nnz=" + std::to_string(nnz32) +
+                "): " + err);
+        }
+    }
 
     // Symbolic factorization (reuse if sparsity pattern unchanged)
     bool need_symbolic = !cache.IsValid(n, nnz);
@@ -203,8 +261,8 @@ ffi::Error UmfpackSolveF64Impl(
         }
 
         // Store pattern for future reference
-        cache.n = static_cast<int32_t>(n);
-        cache.nnz = static_cast<int32_t>(nnz);
+        cache.n = n32;
+        cache.nnz = nnz32;
         cache.csc_indptr = csc_indptr;
         cache.csc_indices = csc_indices;
 
@@ -222,7 +280,9 @@ ffi::Error UmfpackSolveF64Impl(
 
         if (status != UMFPACK_OK) {
             return ffi::Error::Internal(
-                std::string("UMFPACK symbolic: ") + UmfpackStatusString(status));
+                std::string("UMFPACK symbolic (n=") +
+                std::to_string(n32) + ", nnz=" + std::to_string(nnz32) +
+                "): " + UmfpackStatusString(status));
         }
     }
 
@@ -345,20 +405,43 @@ ffi::Error UmfpackSolveTransposeF64Impl(
     const double* b_ptr = b.typed_data();
     double* x_ptr = x->typed_data();
 
+    int32_t n32 = static_cast<int32_t>(n);
+    int32_t nnz32 = static_cast<int32_t>(nnz);
+
     UmfpackCache& cache = GetCache();
     std::lock_guard<std::mutex> lock(cache.mutex);
+
+    // Validate CSR input
+    {
+        std::string err = ValidateCsr(n32, nnz32, indptr_ptr, indices_ptr);
+        if (!err.empty()) {
+            return ffi::Error::Internal(
+                std::string("UMFPACK transpose: invalid CSR input (n=") +
+                std::to_string(n32) + ", nnz=" + std::to_string(nnz32) +
+                "): " + err);
+        }
+    }
 
     // Convert CSR to CSC
     std::vector<int32_t> csc_indptr(n + 1);
     std::vector<int32_t> csc_indices(nnz);
     std::vector<double> csc_data(nnz);
 
-    CsrToCsc(
-        static_cast<int32_t>(n),
-        static_cast<int32_t>(nnz),
+    CsrToCsc(n32, nnz32,
         indptr_ptr, indices_ptr, data_ptr,
         csc_indptr.data(), csc_indices.data(), csc_data.data()
     );
+
+    // Validate CSC output
+    {
+        std::string err = ValidateCsr(n32, nnz32, csc_indptr.data(), csc_indices.data());
+        if (!err.empty()) {
+            return ffi::Error::Internal(
+                std::string("UMFPACK transpose: invalid CSC after conversion (n=") +
+                std::to_string(n32) + ", nnz=" + std::to_string(nnz32) +
+                "): " + err);
+        }
+    }
 
     // Reuse symbolic if available
     bool need_symbolic = !cache.IsValid(n, nnz);
@@ -369,8 +452,8 @@ ffi::Error UmfpackSolveTransposeF64Impl(
             cache.Symbolic = nullptr;
         }
 
-        cache.n = static_cast<int32_t>(n);
-        cache.nnz = static_cast<int32_t>(nnz);
+        cache.n = n32;
+        cache.nnz = nnz32;
         cache.csc_indptr = csc_indptr;
         cache.csc_indices = csc_indices;
 
@@ -382,7 +465,9 @@ ffi::Error UmfpackSolveTransposeF64Impl(
 
         if (status != UMFPACK_OK) {
             return ffi::Error::Internal(
-                std::string("UMFPACK symbolic: ") + UmfpackStatusString(status));
+                std::string("UMFPACK symbolic transpose (n=") +
+                std::to_string(n32) + ", nnz=" + std::to_string(nnz32) +
+                "): " + UmfpackStatusString(status));
         }
     }
 

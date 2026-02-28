@@ -339,6 +339,13 @@ class FullMNAStrategy(TransientStrategy):
 
     def _ensure_full_mna_solver(self, setup: TransientSetup) -> Callable:
         """Ensure full MNA solver is created and cached."""
+        from vajax.analysis.mna_builder import (
+            compute_csr_diagonal_positions,
+            compute_csr_stamp_positions,
+            compute_csr_vsource_positions,
+        )
+        from vajax.analysis.solver_factories import is_umfpack_ffi_available
+
         n_nodes = setup.n_unknowns + 1
         n_vsources = setup.n_branches
 
@@ -346,22 +353,6 @@ class FullMNAStrategy(TransientStrategy):
 
         if self._cached_full_mna_solver is not None and self._cached_full_mna_key == cache_key:
             return self._cached_full_mna_solver
-
-        # Create full MNA build_system function
-        build_system_fn, device_arrays, total_limit_states = self.runner._make_mna_build_system_fn(
-            setup.source_device_data,
-            setup.vmapped_fns,
-            setup.static_inputs_cache,
-            setup.n_unknowns,
-            use_dense=self.use_dense,
-        )
-
-        # Store device arrays and limit state size for solver
-        self._device_arrays_full_mna = device_arrays
-        self._total_limit_states = total_limit_states
-
-        # JIT compile build_system
-        build_system_jit = jax.jit(build_system_fn)
 
         # Collect NOI node indices and ALL internal device node indices
         noi_indices = []
@@ -381,6 +372,20 @@ class FullMNAStrategy(TransientStrategy):
 
         # Create full MNA solver
         if self.use_dense:
+            # Dense path: no CSR needed, use COO assembly
+            build_system_fn, device_arrays, total_limit_states = (
+                self.runner._make_mna_build_system_fn(
+                    setup.source_device_data,
+                    setup.vmapped_fns,
+                    setup.static_inputs_cache,
+                    setup.n_unknowns,
+                    use_dense=True,
+                )
+            )
+            self._device_arrays_full_mna = device_arrays
+            self._total_limit_states = total_limit_states
+            build_system_jit = jax.jit(build_system_fn)
+
             nr_solve = make_dense_full_mna_solver(
                 build_system_jit,
                 n_nodes,
@@ -393,10 +398,20 @@ class FullMNAStrategy(TransientStrategy):
                 options=self.runner.options,
             )
         else:
-            # Sparse path: compute COO→CSR mapping from trial run
+            # Sparse path: use CSR direct stamping to eliminate COO intermediates
             n_augmented = setup.n_unknowns + n_vsources
 
-            # Trial run to get sparse structure
+            # Step 1: Trial run with COO assembly to discover sparsity structure
+            build_system_coo, device_arrays, total_limit_states = (
+                self.runner._make_mna_build_system_fn(
+                    setup.source_device_data,
+                    setup.vmapped_fns,
+                    setup.static_inputs_cache,
+                    setup.n_unknowns,
+                    use_dense=False,
+                )
+            )
+
             X_trial = jnp.zeros(n_nodes + n_vsources, dtype=jnp.float64)
             vsource_trial = (
                 jnp.zeros(n_vsources, dtype=jnp.float64)
@@ -406,82 +421,177 @@ class FullMNAStrategy(TransientStrategy):
             isource_trial = jnp.zeros(0, dtype=jnp.float64)
             Q_trial = jnp.zeros(setup.n_unknowns, dtype=jnp.float64)
 
-            J_bcoo_trial, _, _, _, _, _ = build_system_fn(
-                X_trial,
-                vsource_trial,
-                isource_trial,
-                Q_trial,
-                0.0,
-                device_arrays,
-                1e-12,
-                0.0,
-                0.0,
-                0.0,
-                None,
-                0.0,
-                None,
-                None,
+            J_bcoo_trial, _, _, _, _, _ = build_system_coo(
+                X_trial, vsource_trial, isource_trial, Q_trial,
+                0.0, device_arrays, 1e-12, 0.0, 0.0, 0.0, None, 0.0, None, None,
             )
 
-            # Extract COO indices
+            # Extract COO indices and compute CSR structure
             coo_rows = np.array(J_bcoo_trial.indices[:, 0])
             coo_cols = np.array(J_bcoo_trial.indices[:, 1])
             n_coo = len(coo_rows)
 
-            # Compute linear indices for duplicate detection
-            linear_idx = coo_rows * n_augmented + coo_cols
-
-            # Sort COO by linear index (groups duplicates together)
+            linear_idx = coo_rows.astype(np.int64) * n_augmented + coo_cols.astype(np.int64)
             coo_sort_perm = np.argsort(linear_idx)
             sorted_linear = linear_idx[coo_sort_perm]
-
-            # Find unique entries
             unique_linear, coo_to_unique = np.unique(sorted_linear, return_inverse=True)
             nse = len(unique_linear)
 
-            # Convert sorted unique linear indices back to row/col
-            unique_rows = unique_linear // n_augmented
-            unique_cols = unique_linear % n_augmented
+            unique_rows = (unique_linear // n_augmented).astype(np.int32)
+            unique_cols = (unique_linear % n_augmented).astype(np.int32)
 
-            # Build CSR indptr and indices
             csr_indptr = np.zeros(n_augmented + 1, dtype=np.int32)
             for row in unique_rows:
                 csr_indptr[row + 1] += 1
             csr_indptr = np.cumsum(csr_indptr).astype(np.int32)
-            csr_indices = unique_cols.astype(np.int32)
-
-            # Segment IDs for summing duplicates
-            csr_segment_ids = coo_to_unique.astype(np.int32)
+            csr_indices = unique_cols
 
             logger.info(f"Full MNA sparse: {n_coo} COO -> {nse} CSR entries")
 
-            # Use UMFPACK FFI solver (workspace dependency, always available)
+            # Validate CSR structure
+            assert csr_indptr[0] == 0, f"CSR indptr[0]={csr_indptr[0]} != 0"
+            assert csr_indptr[-1] == nse, f"CSR indptr[-1]={csr_indptr[-1]} != nse={nse}"
+            assert np.all(np.diff(csr_indptr) >= 0), "CSR indptr not monotonic"
+            assert np.all(csr_indices >= 0), f"CSR has negative col index: min={csr_indices.min()}"
+            assert np.all(csr_indices < n_augmented), (
+                f"CSR col index out of range: max={csr_indices.max()}, n={n_augmented}"
+            )
+            # Check column indices are strictly sorted within each row
+            # (required for valid CSR -> CSC conversion)
+            # Vectorized: check diff of consecutive indices, ignoring row boundaries
+            if nse > 1:
+                col_diffs = np.diff(csr_indices)
+                # row_starts marks the first element of each row (diff across boundary is invalid)
+                row_starts = np.zeros(nse, dtype=np.bool_)
+                row_starts[csr_indptr[:-1][csr_indptr[:-1] < nse]] = True
+                # Mask out row boundaries (diff at position i compares indices[i+1] - indices[i])
+                interior_mask = ~row_starts[1:]  # diff[i] is interior if indices[i+1] isn't a row start
+                bad = col_diffs[interior_mask] <= 0
+                if np.any(bad):
+                    bad_idx = np.where(bad)[0][0]
+                    # Find which row this belongs to
+                    all_interior = np.where(interior_mask)[0]
+                    pos = all_interior[bad_idx]
+                    row = np.searchsorted(csr_indptr, pos, side='right') - 1
+                    raise ValueError(
+                        f"CSR col indices not strictly sorted in row {row}: "
+                        f"indices[{pos}]={csr_indices[pos]} "
+                        f">= indices[{pos + 1}]={csr_indices[pos + 1]}"
+                    )
+
+            # Step 2: Compute CSR stamp positions for direct stamping
+            model_csr_pos = {}
+            for model_type, (_, stamp_indices, _, _) in (
+                (mt, setup.static_inputs_cache[mt][:4]) for mt in setup.static_inputs_cache
+            ):
+                jac_row_np = np.asarray(stamp_indices["jac_row_indices"])
+                jac_col_np = np.asarray(stamp_indices["jac_col_indices"])
+                model_csr_pos[model_type] = compute_csr_stamp_positions(
+                    jac_row_np, jac_col_np, unique_linear, n_augmented
+                )
+
+            diag_positions = compute_csr_diagonal_positions(
+                setup.n_unknowns, unique_linear, n_augmented
+            )
+
+            vsource_positions = None
+            if n_vsources > 0:
+                vs_node_p = np.array(
+                    setup.source_device_data["vsource"]["node_p"], dtype=np.int32
+                )
+                vs_node_n = np.array(
+                    setup.source_device_data["vsource"]["node_n"], dtype=np.int32
+                )
+                vsource_positions = compute_csr_vsource_positions(
+                    vs_node_p, vs_node_n, setup.n_unknowns, n_vsources,
+                    unique_linear, n_augmented,
+                )
+
+            csr_stamp_info = {
+                "nse": nse,
+                "model_csr_pos": model_csr_pos,
+                "diag_positions": diag_positions,
+                "vsource_positions": vsource_positions,
+            }
+
+            # Step 3: Auto-compute batch_size for GPU
+            on_cuda = jax.default_backend() in ("cuda", "gpu")
+            batch_size = None
+            if on_cuda:
+                # Default batch_size = 32768 on GPU for large circuits
+                # device count = cache array shape[0] (5th element of static_inputs_cache tuple)
+                total_devices = sum(
+                    setup.static_inputs_cache[mt][4].shape[0]
+                    for mt in setup.static_inputs_cache
+                )
+                if total_devices > 32768:
+                    batch_size = 32768
+                    logger.info(
+                        f"GPU batched eval: {total_devices} devices "
+                        f"in batches of {batch_size}"
+                    )
+
+            # Step 4: Re-create build_system with CSR direct stamping
+            build_system_fn, device_arrays, total_limit_states = (
+                self.runner._make_mna_build_system_fn(
+                    setup.source_device_data,
+                    setup.vmapped_fns,
+                    setup.static_inputs_cache,
+                    setup.n_unknowns,
+                    use_dense=False,
+                    csr_stamp_info=csr_stamp_info,
+                    batch_size=batch_size,
+                )
+            )
+            self._device_arrays_full_mna = device_arrays
+            self._total_limit_states = total_limit_states
+            build_system_jit = jax.jit(build_system_fn)
+
             bcsr_indptr_jax = jnp.array(csr_indptr, dtype=jnp.int32)
             bcsr_indices_jax = jnp.array(csr_indices, dtype=jnp.int32)
-            coo_sort_perm_jax = jnp.array(coo_sort_perm, dtype=jnp.int32)
-            csr_segment_ids_jax = jnp.array(csr_segment_ids, dtype=jnp.int32)
 
-            # Use Spineax/cuDSS on CUDA, UMFPACK FFI otherwise
-            on_cuda = jax.default_backend() in ("cuda", "gpu")
-
+            # Step 5: Create solver - try Spineax/cuDSS on CUDA, fall back to UMFPACK
             if on_cuda and is_spineax_available():
-                logger.info("Using Spineax/cuDSS solver (GPU sparse)")
-                nr_solve = make_spineax_full_mna_solver(
-                    build_system_jit,
-                    n_nodes,
-                    n_vsources,
-                    nse,
-                    bcsr_indptr=bcsr_indptr_jax,
-                    bcsr_indices=bcsr_indices_jax,
-                    noi_indices=noi_indices,
-                    internal_device_indices=internal_device_indices,
-                    max_iterations=self.runner.options.tran_itl,
-                    abstol=self.runner.options.abstol,
-                    coo_sort_perm=coo_sort_perm_jax,
-                    csr_segment_ids=csr_segment_ids_jax,
-                    total_limit_states=total_limit_states,
-                    options=self.runner.options,
-                )
+                try:
+                    logger.info("Using Spineax/cuDSS solver (GPU sparse)")
+                    nr_solve = make_spineax_full_mna_solver(
+                        build_system_jit,
+                        n_nodes,
+                        n_vsources,
+                        nse,
+                        bcsr_indptr=bcsr_indptr_jax,
+                        bcsr_indices=bcsr_indices_jax,
+                        noi_indices=noi_indices,
+                        internal_device_indices=internal_device_indices,
+                        max_iterations=self.runner.options.tran_itl,
+                        abstol=self.runner.options.abstol,
+                        total_limit_states=total_limit_states,
+                        options=self.runner.options,
+                        use_csr_direct=True,
+                    )
+                except (RuntimeError, Exception) as e:
+                    # cuDSS may OOM during symbolic factorization for very large circuits
+                    if is_umfpack_ffi_available():
+                        logger.warning(
+                            f"cuDSS failed ({e}), falling back to UMFPACK FFI on CPU"
+                        )
+                        nr_solve = make_umfpack_ffi_full_mna_solver(
+                            build_system_jit,
+                            n_nodes,
+                            n_vsources,
+                            nse,
+                            bcsr_indptr=bcsr_indptr_jax,
+                            bcsr_indices=bcsr_indices_jax,
+                            noi_indices=noi_indices,
+                            internal_device_indices=internal_device_indices,
+                            max_iterations=self.runner.options.tran_itl,
+                            abstol=self.runner.options.abstol,
+                            total_limit_states=total_limit_states,
+                            options=self.runner.options,
+                            use_csr_direct=True,
+                        )
+                    else:
+                        raise  # Re-raise if no fallback available
             else:
                 logger.info("Using UMFPACK FFI solver (zero callback overhead)")
                 nr_solve = make_umfpack_ffi_full_mna_solver(
@@ -495,10 +605,9 @@ class FullMNAStrategy(TransientStrategy):
                     internal_device_indices=internal_device_indices,
                     max_iterations=self.runner.options.tran_itl,
                     abstol=self.runner.options.abstol,
-                    coo_sort_perm=coo_sort_perm_jax,
-                    csr_segment_ids=csr_segment_ids_jax,
                     total_limit_states=total_limit_states,
                     options=self.runner.options,
+                    use_csr_direct=True,
                 )
 
         self._cached_full_mna_solver = nr_solve
