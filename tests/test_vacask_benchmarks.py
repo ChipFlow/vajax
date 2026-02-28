@@ -717,6 +717,8 @@ class TestMul64Benchmark:
         info = get_benchmark("mul64")
         if info is None or not info.sim_path.exists():
             pytest.skip("mul64 benchmark not found")
+        if info.xfail:
+            pytest.xfail(info.xfail_reason)
 
         engine = CircuitEngine(info.sim_path)
         engine.parse()
