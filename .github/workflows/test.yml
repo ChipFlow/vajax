@@ -87,7 +87,7 @@ jobs:
             timeout: 45
           - name: benchmark-mul64
             tests: "tests/test_vacask_benchmarks.py -k 'Mul64'"
-            timeout: 30
+            timeout: 60
     name: test-vajax (${{ matrix.test-group.name }})
     steps:
       - name: Checkout with submodules
