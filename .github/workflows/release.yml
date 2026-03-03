@@ -184,35 +184,80 @@ jobs:
           path: dist/*.whl
 
   # =========================================================================
-  # Step 3: Publish to TestPyPI
+  # Step 3: Publish to TestPyPI (per-package for independent OIDC tokens)
   # =========================================================================
-  publish-testpypi:
-    needs: [build-vajax, build-osdi-py, build-openvaf-py, build-umfpack-jax]
+  publish-testpypi-vajax:
+    needs: build-vajax
     runs-on: ubuntu-latest
     environment: testpypi
     permissions:
-      id-token: write  # OIDC trusted publishing
+      id-token: write
     steps:
-      - name: Download all wheels
-        uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v4
         with:
-          pattern: wheels-*
+          name: wheels-vajax
           path: dist
-          merge-multiple: true
-
-      - name: List artifacts
-        run: ls -lh dist/
-
-      - name: Publish to TestPyPI
-        uses: pypa/gh-action-pypi-publish@release/v1
+      - uses: pypa/gh-action-pypi-publish@release/v1
         with:
           repository-url: https://test.pypi.org/legacy/
+          verbose: true
+
+  publish-testpypi-osdi-py:
+    needs: build-osdi-py
+    runs-on: ubuntu-latest
+    environment: testpypi
+    permissions:
+      id-token: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: wheels-osdi-py-*
+          path: dist
+          merge-multiple: true
+      - uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          repository-url: https://test.pypi.org/legacy/
+          verbose: true
+
+  publish-testpypi-openvaf-py:
+    needs: build-openvaf-py
+    runs-on: ubuntu-latest
+    environment: testpypi
+    permissions:
+      id-token: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: wheels-openvaf-py-*
+          path: dist
+          merge-multiple: true
+      - uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          repository-url: https://test.pypi.org/legacy/
+          verbose: true
+
+  publish-testpypi-umfpack-jax:
+    needs: build-umfpack-jax
+    runs-on: ubuntu-latest
+    environment: testpypi
+    permissions:
+      id-token: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: wheels-umfpack-jax-*
+          path: dist
+          merge-multiple: true
+      - uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          repository-url: https://test.pypi.org/legacy/
+          verbose: true
 
   # =========================================================================
   # Step 4: Publish to PyPI (manual approval gate)
   # =========================================================================
   publish-pypi:
-    needs: publish-testpypi
+    needs: [publish-testpypi-vajax, publish-testpypi-osdi-py, publish-testpypi-openvaf-py, publish-testpypi-umfpack-jax]
     runs-on: ubuntu-latest
     environment: pypi  # Requires manual approval
     permissions:
