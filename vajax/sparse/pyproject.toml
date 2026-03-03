@@ -35,8 +35,8 @@ skip = ["*-musllinux_*", "*-win32", "*_i686"]
 
 [tool.cibuildwheel.linux]
 before-all = [
-    # OpenBLAS provides the BLAS dependency for SuiteSparse
-    "yum install -y openblas-devel || apt-get install -y libopenblas-dev",
+    # EPEL required for openblas-devel on manylinux2014 (CentOS 7)
+    "yum install -y epel-release && yum install -y openblas-devel || apt-get install -y libopenblas-dev",
 ]
 
 [tool.cibuildwheel.macos]

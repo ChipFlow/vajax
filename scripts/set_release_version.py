@@ -20,30 +20,52 @@ from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 
-# Files to patch: (path, [(pattern, replacement_template)])
+# Files to patch: (path, [(pattern, replacement_template)], use_semver)
 # replacement_template uses {version} placeholder
-PATCH_TARGETS = [
+# use_semver=True converts PEP 440 pre-release to SemVer (e.g. 0.1.0a1 -> 0.1.0-a1)
+PATCH_TARGETS: list[tuple[Path, list[tuple[str, str]], bool]] = [
     (
         REPO_ROOT / "openvaf_jax/openvaf_py/pyproject.toml",
         [(r'^version\s*=\s*"[^"]*"', 'version = "{version}"')],
+        False,
     ),
     (
         REPO_ROOT / "openvaf_jax/openvaf_py/Cargo.toml",
         [(r'^version\s*=\s*"[^"]*"', 'version = "{version}"')],
+        True,
     ),
     (
         REPO_ROOT / "openvaf_jax/osdi_py/pyproject.toml",
         [(r'^version\s*=\s*"[^"]*"', 'version = "{version}"')],
+        False,
     ),
     (
         REPO_ROOT / "openvaf_jax/osdi_py/Cargo.toml",
         [(r'^version\s*=\s*"[^"]*"', 'version = "{version}"')],
+        True,
     ),
     (
         REPO_ROOT / "vajax/sparse/pyproject.toml",
         [(r'^version\s*=\s*"[^"]*"', 'version = "{version}"')],
+        False,
     ),
 ]
+
+
+def pep440_to_semver(version: str) -> str:
+    """Convert PEP 440 pre-release suffix to SemVer format for Cargo.toml.
+
+    PEP 440: 0.1.0a1, 0.1.0b2, 0.1.0rc1
+    SemVer:  0.1.0-a1, 0.1.0-b2, 0.1.0-rc1
+    Stable versions (0.1.0) pass through unchanged.
+    """
+    m = re.match(r"^(\d+\.\d+\.\d+)((?:a|b|rc)\d+)?$", version)
+    if not m:
+        return version
+    base, pre = m.group(1), m.group(2)
+    if pre:
+        return f"{base}-{pre}"
+    return base
 
 
 def get_version_from_tag(tag: str) -> str:
@@ -99,8 +121,9 @@ def main() -> int:
     print()
 
     changed = 0
-    for path, patterns in PATCH_TARGETS:
-        if patch_file(path, patterns, version):
+    for path, patterns, use_semver in PATCH_TARGETS:
+        v = pep440_to_semver(version) if use_semver else version
+        if patch_file(path, patterns, v):
             changed += 1
 
     print()

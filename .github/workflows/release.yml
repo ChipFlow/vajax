@@ -80,8 +80,6 @@ jobs:
             arch: x86_64
           - os: ubuntu-24.04-arm
             arch: aarch64
-          - os: macos-13
-            arch: x86_64
           - os: macos-14
             arch: arm64
     runs-on: ${{ matrix.os }}
@@ -120,8 +118,6 @@ jobs:
             arch: x86_64
           - os: ubuntu-24.04-arm
             arch: aarch64
-          - os: macos-13
-            arch: x86_64
           - os: macos-14
             arch: arm64
     runs-on: ${{ matrix.os }}
@@ -162,8 +158,6 @@ jobs:
             arch: x86_64
           - os: ubuntu-24.04-arm
             arch: aarch64
-          - os: macos-13
-            arch: x86_64
           - os: macos-14
             arch: arm64
     runs-on: ${{ matrix.os }}
