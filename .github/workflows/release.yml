@@ -158,11 +158,23 @@ jobs:
       - name: Set up Rust
         uses: dtolnay/rust-toolchain@stable
 
+      - name: Set up sccache
+        uses: mozilla-actions/sccache-action@v0.0.7
+        with:
+          disable_annotations: true
+
       - name: Build wheels
         uses: pypa/cibuildwheel@v2.22
         with:
           package-dir: openvaf_jax/osdi_py
           output-dir: dist
+        env:
+          # macOS: sccache available natively from host
+          CIBW_ENVIRONMENT_MACOS: "RUSTC_WRAPPER=sccache"
+          # Linux: install sccache inside manylinux container, pass GHA cache vars
+          CIBW_BEFORE_BUILD_LINUX: "pip install sccache"
+          CIBW_ENVIRONMENT_LINUX: "RUSTC_WRAPPER=sccache SCCACHE_GHA_ENABLED=true"
+          CIBW_ENVIRONMENT_PASS_LINUX: "ACTIONS_CACHE_URL ACTIONS_RUNTIME_TOKEN SCCACHE_GHA_ENABLED"
 
       - uses: actions/upload-artifact@v4
         with:
@@ -198,11 +210,21 @@ jobs:
       - name: Set up Rust
         uses: dtolnay/rust-toolchain@stable
 
+      - name: Set up sccache
+        uses: mozilla-actions/sccache-action@v0.0.7
+        with:
+          disable_annotations: true
+
       - name: Build wheels
         uses: pypa/cibuildwheel@v2.22
         with:
           package-dir: openvaf_jax/openvaf_py
           output-dir: dist
+        env:
+          CIBW_ENVIRONMENT_MACOS: "RUSTC_WRAPPER=sccache"
+          CIBW_BEFORE_BUILD_LINUX: "pip install sccache"
+          CIBW_ENVIRONMENT_LINUX: "RUSTC_WRAPPER=sccache SCCACHE_GHA_ENABLED=true"
+          CIBW_ENVIRONMENT_PASS_LINUX: "ACTIONS_CACHE_URL ACTIONS_RUNTIME_TOKEN SCCACHE_GHA_ENABLED"
 
       - uses: actions/upload-artifact@v4
         with:
@@ -233,11 +255,22 @@ jobs:
 
       - uses: astral-sh/setup-uv@v4
 
+      - name: Set up sccache
+        uses: mozilla-actions/sccache-action@v0.0.7
+        with:
+          disable_annotations: true
+
       - name: Build wheels
         uses: pypa/cibuildwheel@v2.22
         with:
           package-dir: vajax/sparse
           output-dir: dist
+        env:
+          # C++ builds: use sccache as compiler launcher
+          CIBW_ENVIRONMENT_MACOS: "CMAKE_C_COMPILER_LAUNCHER=sccache CMAKE_CXX_COMPILER_LAUNCHER=sccache"
+          CIBW_BEFORE_BUILD_LINUX: "pip install sccache"
+          CIBW_ENVIRONMENT_LINUX: "CMAKE_C_COMPILER_LAUNCHER=sccache CMAKE_CXX_COMPILER_LAUNCHER=sccache SCCACHE_GHA_ENABLED=true"
+          CIBW_ENVIRONMENT_PASS_LINUX: "ACTIONS_CACHE_URL ACTIONS_RUNTIME_TOKEN SCCACHE_GHA_ENABLED"
 
       - uses: actions/upload-artifact@v4
         with:
