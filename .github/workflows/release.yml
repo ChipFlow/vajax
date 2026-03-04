@@ -29,7 +29,7 @@ jobs:
           REQUIRED_WORKFLOWS=("Lint" "Tests")
           for workflow in "${REQUIRED_WORKFLOWS[@]}"; do
             echo "Checking: $workflow"
-            for i in $(seq 1 60); do
+            for i in $(seq 1 90); do
               # Find the latest run for this workflow on this SHA
               RUN=$(gh api "repos/${{ github.repository }}/actions/runs?head_sha=$SHA&event=push" \
                 --jq ".workflow_runs[] | select(.name == \"$workflow\") | {status, conclusion}" \
@@ -45,7 +45,7 @@ jobs:
                   exit 1
                 fi
               fi
-              echo "  $workflow: $STATUS (attempt $i/60, waiting 30s...)"
+              echo "  $workflow: $STATUS (attempt $i/90, waiting 30s...)"
               sleep 30
             done
             if [ "$STATUS" != "completed" ]; then
