@@ -61,8 +61,6 @@ jobs:
   #   - Main push: uses rc version from git describe (e.g. 0.1.2rc5)
   # =========================================================================
   set-version:
-    needs: check-ci
-    if: ${{ !cancelled() && (needs.check-ci.result == 'success' || needs.check-ci.result == 'skipped') }}
     runs-on: ubuntu-latest
     outputs:
       version: ${{ steps.version.outputs.version }}
@@ -370,7 +368,7 @@ jobs:
   # =========================================================================
   publish-pypi-vajax:
     if: startsWith(github.ref, 'refs/tags/v')
-    needs: [publish-testpypi-vajax]
+    needs: [publish-testpypi-vajax, check-ci]
     runs-on: ubuntu-latest
     environment: pypi
     permissions:
@@ -384,7 +382,7 @@ jobs:
 
   publish-pypi-osdi-py:
     if: startsWith(github.ref, 'refs/tags/v')
-    needs: [publish-testpypi-osdi-py]
+    needs: [publish-testpypi-osdi-py, check-ci]
     runs-on: ubuntu-latest
     environment: pypi
     permissions:
@@ -399,7 +397,7 @@ jobs:
 
   publish-pypi-openvaf-py:
     if: startsWith(github.ref, 'refs/tags/v')
-    needs: [publish-testpypi-openvaf-py]
+    needs: [publish-testpypi-openvaf-py, check-ci]
     runs-on: ubuntu-latest
     environment: pypi
     permissions:
@@ -414,7 +412,7 @@ jobs:
 
   publish-pypi-umfpack-jax:
     if: startsWith(github.ref, 'refs/tags/v')
-    needs: [publish-testpypi-umfpack-jax]
+    needs: [publish-testpypi-umfpack-jax, check-ci]
     runs-on: ubuntu-latest
     environment: pypi
     permissions:
