@@ -9,9 +9,7 @@ on:
 env:
   CARGO_TERM_COLOR: always
   CARGO_INCREMENTAL: 0
-  # Disabled sccache due to GitHub artifact cache outage (Dec 2025)
-  # Re-enable when service is restored
-  SCCACHE_GHA_ENABLED: "false"
+  SCCACHE_GHA_ENABLED: "true"
   RUSTC_WRAPPER: "sccache"
   # XLA compilation cache - keyed by OS and architecture to avoid mismatches
   JAX_COMPILATION_CACHE_DIR: /tmp/jax-xla-cache
@@ -79,12 +77,23 @@ jobs:
           - name: unit
             tests: "tests/test_vacask_suite.py tests/test_vacask_jax.py tests/test_ac_analysis.py tests/test_hb_analysis.py tests/test_noise_analysis.py tests/test_xfer_analysis.py"
             timeout: 30
+            extra_packages: ""
           - name: benchmark-dense
             tests: "tests/test_vacask_benchmarks.py -k 'dense and not Mul64'"
             timeout: 45
+            extra_packages: ""
           - name: benchmark-sparse
             tests: "tests/test_vacask_benchmarks.py -k 'sparse and not Mul64'"
             timeout: 45
+            extra_packages: ""
+          - name: ngspice
+            tests: "tests/test_ngspice_regression.py"
+            timeout: 15
+            extra_packages: "ngspice"
+          - name: xyce
+            tests: "tests/test_xyce_regression.py"
+            timeout: 15
+            extra_packages: ""
     name: test-vajax (${{ matrix.test-group.name }})
     steps:
       - name: Checkout with submodules
@@ -115,7 +124,7 @@ jobs:
       - name: Install system dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y libsuitesparse-dev libopenblas-dev swig cmake
+          sudo apt-get install -y libsuitesparse-dev libopenblas-dev swig cmake ${{ matrix.test-group.extra_packages }}
 
       - name: Install uv
         uses: astral-sh/setup-uv@v4
@@ -147,19 +156,35 @@ jobs:
           uv pip install scikit-build-core nanobind
           uv pip install --no-build-isolation .
 
-      - name: Run vajax tests (${{ matrix.test-group.name }})
+      - name: Run tests (${{ matrix.test-group.name }})
         timeout-minutes: ${{ matrix.test-group.timeout }}
         env:
           JAX_PLATFORMS: cpu
           VAJAX_NO_PROGRESS: "1"
         run: uv run pytest ${{ matrix.test-group.tests }} -v --tb=short --junitxml=test-results-${{ matrix.test-group.name }}.xml
 
-      - name: Run benchmark tests
-        if: matrix.test-group.name == 'unit'
-        env:
-          JAX_PLATFORMS: cpu
-          VAJAX_NO_PROGRESS: "1"
-        run: uv run pytest benchmarks/test_benchmarks.py -v --tb=short --junitxml=test-results-benchmarks.xml
+      - name: Report regression results
+        if: always() && contains(fromJSON('["ngspice", "xyce"]'), matrix.test-group.name)
+        run: |
+          XML="test-results-${{ matrix.test-group.name }}.xml"
+          echo "## ${{ matrix.test-group.name }} Regression Suite Results" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          if [ -f "$XML" ]; then
+            TESTS=$(grep -oP 'tests="\K[0-9]+' "$XML" | head -1 || echo "0")
+            FAILURES=$(grep -oP 'failures="\K[0-9]+' "$XML" | head -1 || echo "0")
+            ERRORS=$(grep -oP 'errors="\K[0-9]+' "$XML" | head -1 || echo "0")
+            SKIPPED=$(grep -oP 'skipped="\K[0-9]+' "$XML" | head -1 || echo "0")
+            PASSED=$((TESTS - FAILURES - ERRORS - SKIPPED))
+            echo "| Metric | Count |" >> $GITHUB_STEP_SUMMARY
+            echo "|--------|-------|" >> $GITHUB_STEP_SUMMARY
+            echo "| Passed | $PASSED |" >> $GITHUB_STEP_SUMMARY
+            echo "| Failed | $FAILURES |" >> $GITHUB_STEP_SUMMARY
+            echo "| Errors | $ERRORS |" >> $GITHUB_STEP_SUMMARY
+            echo "| Skipped | $SKIPPED |" >> $GITHUB_STEP_SUMMARY
+            echo "| **Total** | $TESTS |" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "No test results file found" >> $GITHUB_STEP_SUMMARY
+          fi
 
       - name: Upload test results
         uses: actions/upload-artifact@v4
@@ -168,207 +193,3 @@ jobs:
           name: test-summary-${{ matrix.test-group.name }}
           path: test-results-*.xml
           if-no-files-found: ignore
-
-  test-ngspice-regression:
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout with submodules
-        uses: actions/checkout@v4
-        with:
-          submodules: recursive
-
-      - name: Install LLVM 18
-        run: |
-          wget https://apt.llvm.org/llvm.sh
-          chmod +x llvm.sh
-          sudo ./llvm.sh 18
-          echo "LLVM_SYS_181_PREFIX=/usr/lib/llvm-18" >> $GITHUB_ENV
-
-      - name: Set up Rust
-        uses: dtolnay/rust-toolchain@stable
-
-      - name: Set up sccache
-        uses: mozilla-actions/sccache-action@v0.0.7
-        with:
-          disable_annotations: true
-
-      - name: Cache Rust dependencies
-        uses: Swatinem/rust-cache@v2
-        with:
-          workspaces: openvaf_jax/openvaf_py
-
-      - name: Install system dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y libsuitesparse-dev libopenblas-dev swig cmake ngspice
-
-      - name: Install uv
-        uses: astral-sh/setup-uv@v4
-
-      - name: Set up Python
-        run: uv python install 3.11
-
-      - name: Build openvaf-py
-        working-directory: openvaf_jax/openvaf_py
-        run: |
-          uv sync
-          uv run maturin develop --release
-
-      - name: Install vajax with dev dependencies
-        run: uv sync --extra dev
-
-      # Cache XLA compiled artifacts to speed up JAX compilation
-      - name: Cache XLA compilation artifacts
-        uses: actions/cache@v4
-        with:
-          path: /tmp/jax-xla-cache
-          key: xla-cache-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('pyproject.toml') }}
-          restore-keys: |
-            xla-cache-${{ runner.os }}-${{ runner.arch }}-
-
-      - name: Build UMFPACK FFI extension
-        working-directory: vajax/sparse
-        run: |
-          uv pip install scikit-build-core nanobind
-          uv pip install --no-build-isolation .
-
-      - name: Run ngspice regression tests
-        id: ngspice-tests
-        env:
-          JAX_PLATFORMS: cpu
-          VAJAX_NO_PROGRESS: "1"
-        run: |
-          uv run pytest tests/test_ngspice_regression.py -v --tb=short --junitxml=ngspice-results.xml 2>&1 | tee ngspice-output.txt
-          echo "exit_code=${PIPESTATUS[0]}" >> $GITHUB_OUTPUT
-
-      - name: Upload ngspice test results
-        uses: actions/upload-artifact@v4
-        if: always()
-        with:
-          name: test-summary-ngspice
-          path: ngspice-results.xml
-          if-no-files-found: ignore
-
-      - name: Report ngspice regression results
-        if: always()
-        run: |
-          echo "## ngspice Regression Suite Results" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          if [ -f ngspice-results.xml ]; then
-            TESTS=$(grep -oP 'tests="\K[0-9]+' ngspice-results.xml | head -1 || echo "0")
-            FAILURES=$(grep -oP 'failures="\K[0-9]+' ngspice-results.xml | head -1 || echo "0")
-            ERRORS=$(grep -oP 'errors="\K[0-9]+' ngspice-results.xml | head -1 || echo "0")
-            SKIPPED=$(grep -oP 'skipped="\K[0-9]+' ngspice-results.xml | head -1 || echo "0")
-            PASSED=$((TESTS - FAILURES - ERRORS - SKIPPED))
-            echo "| Metric | Count |" >> $GITHUB_STEP_SUMMARY
-            echo "|--------|-------|" >> $GITHUB_STEP_SUMMARY
-            echo "| ✅ Passed | $PASSED |" >> $GITHUB_STEP_SUMMARY
-            echo "| ❌ Failed | $FAILURES |" >> $GITHUB_STEP_SUMMARY
-            echo "| ⚠️ Errors | $ERRORS |" >> $GITHUB_STEP_SUMMARY
-            echo "| ⏭️ Skipped | $SKIPPED |" >> $GITHUB_STEP_SUMMARY
-            echo "| **Total** | $TESTS |" >> $GITHUB_STEP_SUMMARY
-          else
-            echo "⚠️ No test results file found" >> $GITHUB_STEP_SUMMARY
-          fi
-
-  test-xyce-regression:
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout with submodules
-        uses: actions/checkout@v4
-        with:
-          submodules: recursive
-
-      - name: Install LLVM 18
-        run: |
-          wget https://apt.llvm.org/llvm.sh
-          chmod +x llvm.sh
-          sudo ./llvm.sh 18
-          echo "LLVM_SYS_181_PREFIX=/usr/lib/llvm-18" >> $GITHUB_ENV
-
-      - name: Set up Rust
-        uses: dtolnay/rust-toolchain@stable
-
-      - name: Set up sccache
-        uses: mozilla-actions/sccache-action@v0.0.7
-        with:
-          disable_annotations: true
-
-      - name: Cache Rust dependencies
-        uses: Swatinem/rust-cache@v2
-        with:
-          workspaces: openvaf_jax/openvaf_py
-
-      - name: Install system dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y libsuitesparse-dev libopenblas-dev swig cmake
-
-      - name: Install uv
-        uses: astral-sh/setup-uv@v4
-
-      - name: Set up Python
-        run: uv python install 3.11
-
-      - name: Build openvaf-py
-        working-directory: openvaf_jax/openvaf_py
-        run: |
-          uv sync
-          uv run maturin develop --release
-
-      - name: Install vajax with dev dependencies
-        run: uv sync --extra dev
-
-      # Cache XLA compiled artifacts to speed up JAX compilation
-      - name: Cache XLA compilation artifacts
-        uses: actions/cache@v4
-        with:
-          path: /tmp/jax-xla-cache
-          key: xla-cache-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('pyproject.toml') }}
-          restore-keys: |
-            xla-cache-${{ runner.os }}-${{ runner.arch }}-
-
-      - name: Build UMFPACK FFI extension
-        working-directory: vajax/sparse
-        run: |
-          uv pip install scikit-build-core nanobind
-          uv pip install --no-build-isolation .
-
-      - name: Run Xyce regression tests
-        id: xyce-tests
-        env:
-          JAX_PLATFORMS: cpu
-          VAJAX_NO_PROGRESS: "1"
-        run: |
-          uv run pytest tests/test_xyce_regression.py -v --tb=short --junitxml=xyce-results.xml 2>&1 | tee xyce-output.txt
-          echo "exit_code=${PIPESTATUS[0]}" >> $GITHUB_OUTPUT
-
-      - name: Upload Xyce test results
-        uses: actions/upload-artifact@v4
-        if: always()
-        with:
-          name: test-summary-xyce
-          path: xyce-results.xml
-          if-no-files-found: ignore
-
-      - name: Report Xyce regression results
-        if: always()
-        run: |
-          echo "## Xyce Regression Suite Results" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          if [ -f xyce-results.xml ]; then
-            TESTS=$(grep -oP 'tests="\K[0-9]+' xyce-results.xml | head -1 || echo "0")
-            FAILURES=$(grep -oP 'failures="\K[0-9]+' xyce-results.xml | head -1 || echo "0")
-            ERRORS=$(grep -oP 'errors="\K[0-9]+' xyce-results.xml | head -1 || echo "0")
-            SKIPPED=$(grep -oP 'skipped="\K[0-9]+' xyce-results.xml | head -1 || echo "0")
-            PASSED=$((TESTS - FAILURES - ERRORS - SKIPPED))
-            echo "| Metric | Count |" >> $GITHUB_STEP_SUMMARY
-            echo "|--------|-------|" >> $GITHUB_STEP_SUMMARY
-            echo "| ✅ Passed | $PASSED |" >> $GITHUB_STEP_SUMMARY
-            echo "| ❌ Failed | $FAILURES |" >> $GITHUB_STEP_SUMMARY
-            echo "| ⚠️ Errors | $ERRORS |" >> $GITHUB_STEP_SUMMARY
-            echo "| ⏭️ Skipped | $SKIPPED |" >> $GITHUB_STEP_SUMMARY
-            echo "| **Total** | $TESTS |" >> $GITHUB_STEP_SUMMARY
-          else
-            echo "⚠️ No test results file found" >> $GITHUB_STEP_SUMMARY
-          fi
