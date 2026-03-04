@@ -518,29 +518,29 @@ wheels = [
 
 [[package]]
 name = "jax-cuda12-pjrt"
-version = "0.9.0"
+version = "0.9.1"
 source = { registry = "https://pypi.org/simple" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/4c/59/440f469a331bd20780e32e159a2e88692f60db904120fe9658f4bb2b3c59/jax_cuda12_pjrt-0.9.0-py3-none-manylinux_2_27_aarch64.whl", hash = "sha256:23e574b8275b6015285742720f1ad7dbc6f0e1595cb09e3bb21d87817953953f", size = 148940205, upload-time = "2026-01-20T22:27:08.24Z" },
-    { url = "https://files.pythonhosted.org/packages/65/62/92d38feb8b536ca24610908dc23fe08e12f2c51eb722fd333e8572343cc6/jax_cuda12_pjrt-0.9.0-py3-none-manylinux_2_27_x86_64.whl", hash = "sha256:bdb3eabee435ac967aff8b2eeda2f7b9cd81ed003f127df4d6f1e55fa5d94684", size = 154911830, upload-time = "2026-01-20T22:27:14.003Z" },
+    { url = "https://files.pythonhosted.org/packages/1b/b8/b725d6ae617b5b6d988eb3b8672e997fff52f1749b3b138c371ae6cf7c2d/jax_cuda12_pjrt-0.9.1-py3-none-manylinux_2_27_aarch64.whl", hash = "sha256:31284cd1c279612cebcf2e9383db9cc2e0703ad8ef56c887476b40331fed7c93", size = 149993391, upload-time = "2026-03-02T11:22:08.125Z" },
+    { url = "https://files.pythonhosted.org/packages/a7/2c/8ddb471091b46de99bba7eaa7f4e3983f9c8e74e310e585ff08915ce8b7a/jax_cuda12_pjrt-0.9.1-py3-none-manylinux_2_27_x86_64.whl", hash = "sha256:6447fe3d661b1d824ae7329914c4ac05fe54aeab68c7a7ca23c4f5306dec2e1f", size = 156039796, upload-time = "2026-03-02T11:22:13.316Z" },
 ]
 
 [[package]]
 name = "jax-cuda12-plugin"
-version = "0.9.0"
+version = "0.9.1"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "jax-cuda12-pjrt" },
 ]
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/d5/3b/eacb05b1adced9df3ba2a0c80eb0dc349d065c588b56e082ee4cc1aef601/jax_cuda12_plugin-0.9.0-cp311-cp311-manylinux_2_27_aarch64.whl", hash = "sha256:a1c3f310494f9f7be62f2b8425705c3c466f2a621b4e4dbdbfb15ad9a7afbdc0", size = 5640073, upload-time = "2026-01-20T22:27:17.042Z" },
-    { url = "https://files.pythonhosted.org/packages/c1/5b/613eb8dc6ff57d5689c5680e1374641d850e7d470024e4c25760b82b11fb/jax_cuda12_plugin-0.9.0-cp311-cp311-manylinux_2_27_x86_64.whl", hash = "sha256:89387777e1721aaabdeda18a577afc7cfe4ee0ab1c37b3261bd472ab8df072f7", size = 5636670, upload-time = "2026-01-20T22:27:18.825Z" },
-    { url = "https://files.pythonhosted.org/packages/dc/12/c31201a0873c6c4ac4510d94983c8e5e67641d99027dd5888925a0083d63/jax_cuda12_plugin-0.9.0-cp312-cp312-manylinux_2_27_aarch64.whl", hash = "sha256:de2eafa6ebad54103f09c71100e4e46f7ea097e8d119459ef91e8e5b14cb9fa2", size = 5634516, upload-time = "2026-01-20T22:27:21.122Z" },
-    { url = "https://files.pythonhosted.org/packages/58/26/e33a3d0c6987a41509edf0a89770507824696cb3c3e52f554ee2b6840a0a/jax_cuda12_plugin-0.9.0-cp312-cp312-manylinux_2_27_x86_64.whl", hash = "sha256:34936d77ed6859da08c2e818a5154cc7efb58451d9d04c3ecd5b44d3605fbdf2", size = 5634244, upload-time = "2026-01-20T22:27:22.676Z" },
-    { url = "https://files.pythonhosted.org/packages/6d/a3/908e25a2491399730bbb7ae05fb395a8773a74f657a16bb75d6309bc9da8/jax_cuda12_plugin-0.9.0-cp313-cp313-manylinux_2_27_aarch64.whl", hash = "sha256:98d7f06d6ed31ffe5483603582ffdfc80b131bd7e397e612b624e21bf69de2e2", size = 5634780, upload-time = "2026-01-20T22:27:23.939Z" },
-    { url = "https://files.pythonhosted.org/packages/38/76/acd2a639f24f2b65de6213b9790de977b6ab5fe292e5be54fddc38dfb62e/jax_cuda12_plugin-0.9.0-cp313-cp313-manylinux_2_27_x86_64.whl", hash = "sha256:66790a20947f7f646a2a4a9c5ef821756d2c33fb99de2a80e61288c08dc1789a", size = 5633810, upload-time = "2026-01-20T22:27:25.183Z" },
-    { url = "https://files.pythonhosted.org/packages/92/c1/f1b1eb865530076c4cd3e9afaedbf64003601a339a7acda726e57781ba33/jax_cuda12_plugin-0.9.0-cp313-cp313t-manylinux_2_27_aarch64.whl", hash = "sha256:91f65c5c8e3bb59e85dfc0f932db620802689ddb9134a6c99b194815631c41b1", size = 5648176, upload-time = "2026-01-20T22:27:26.712Z" },
-    { url = "https://files.pythonhosted.org/packages/9a/dc/5b0c842e87c9fefff0d13f77ce232ca7a78ea4925cea5aad24ed2c9b8bb0/jax_cuda12_plugin-0.9.0-cp313-cp313t-manylinux_2_27_x86_64.whl", hash = "sha256:ef73888eee27b04ff21b9c4f824c45b3e185f4f18bc3759d6dde6c6227adc463", size = 5642913, upload-time = "2026-01-20T22:27:27.995Z" },
+    { url = "https://files.pythonhosted.org/packages/fc/f8/e68f50e086374c1344da58821c54bbafd552edff3885191e2ee91b0b7c56/jax_cuda12_plugin-0.9.1-cp311-cp311-manylinux_2_27_aarch64.whl", hash = "sha256:39e0adb0a4cbd27c0adf987078c629fa047542a26580fb8b253f0d8ba03bc1d9", size = 5658632, upload-time = "2026-03-02T11:22:16.475Z" },
+    { url = "https://files.pythonhosted.org/packages/1b/f4/256897448878c2d188c0453acffed10313dc7808bea462d791d054df686c/jax_cuda12_plugin-0.9.1-cp311-cp311-manylinux_2_27_x86_64.whl", hash = "sha256:a8deeaeac245639b4dc8de61e0960efa432ff5b0e95cf75ad2e8d6b80c9aca25", size = 5657237, upload-time = "2026-03-02T11:22:17.908Z" },
+    { url = "https://files.pythonhosted.org/packages/63/3e/df484dc2f9c42ad2344ff677ab5cb28c05420990a2697708ea0c32ef23bd/jax_cuda12_plugin-0.9.1-cp312-cp312-manylinux_2_27_aarch64.whl", hash = "sha256:2843ca4278617a199f9f0a3d992d8684fabe8beaf988ff793ec19d836bdcadc4", size = 5652156, upload-time = "2026-03-02T11:22:19.536Z" },
+    { url = "https://files.pythonhosted.org/packages/4f/4e/cd2aa23847bb3c631d9c55ff35fda51c0c5d0410159df897b22c6c02ff5c/jax_cuda12_plugin-0.9.1-cp312-cp312-manylinux_2_27_x86_64.whl", hash = "sha256:f4c21de4507b1c442f4e10beb123e4b916055bff4c0102729aa2a49f2ed0fc88", size = 5654547, upload-time = "2026-03-02T11:22:21.365Z" },
+    { url = "https://files.pythonhosted.org/packages/95/80/0d15d44900bbe2c6276537dc62c8ec49cb08d77b11f8a948b398a3d17eec/jax_cuda12_plugin-0.9.1-cp313-cp313-manylinux_2_27_aarch64.whl", hash = "sha256:d1bf3374819c8a87e90df04b7144272e5ac0727a5e1fc4872531c52e387c0e38", size = 5652459, upload-time = "2026-03-02T11:22:22.728Z" },
+    { url = "https://files.pythonhosted.org/packages/ca/25/7257a5e4b94634495c138b57f15e77573c440f5128fd44882ae798c70181/jax_cuda12_plugin-0.9.1-cp313-cp313-manylinux_2_27_x86_64.whl", hash = "sha256:389c896216a6d4af78709a8f4ca75916ab4ff7bbf4b1af5c09dce9823c003b73", size = 5654488, upload-time = "2026-03-02T11:22:23.978Z" },
+    { url = "https://files.pythonhosted.org/packages/45/5b/eadf6199ec61d0640c00c41bb6152c67c2b4b116f7c118ab1eec7034d13e/jax_cuda12_plugin-0.9.1-cp313-cp313t-manylinux_2_27_aarch64.whl", hash = "sha256:6c7a92b7890de3b3cf9f16a017d4ce7f364ef7d3003da86a59d941a2da4a0bda", size = 5665206, upload-time = "2026-03-02T11:22:26.471Z" },
+    { url = "https://files.pythonhosted.org/packages/8d/30/302d9331fe44db041efe042d70fa963c88eaa32e92b4c241a2229a6fea76/jax_cuda12_plugin-0.9.1-cp313-cp313t-manylinux_2_27_x86_64.whl", hash = "sha256:0a5d2c6604c8fec04df575190f13908a4aa588fb715c338839099d7cb8f90ad5", size = 5663128, upload-time = "2026-03-02T11:22:27.809Z" },
 ]
 
 [[package]]
