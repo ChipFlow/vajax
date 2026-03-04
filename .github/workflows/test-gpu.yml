@@ -65,10 +65,18 @@ jobs:
 
       - name: Install CUDA toolkit
         run: |
-          # The runner has NVIDIA drivers but not the CUDA toolkit (nvcc).
+          # The runner has NVIDIA drivers but not the full CUDA toolkit.
+          # JAX 0.9.x requires nvcc, cudart, cuDNN, cuFFT, cuSOLVER, cuSPARSE, cuBLAS.
           # NVIDIA apt repo is already configured on the runner.
           sudo apt-get update
-          sudo apt-get install -y cuda-nvcc-12-6 cuda-cudart-dev-12-6 libcudnn9-cuda-12
+          sudo apt-get install -y \
+            cuda-nvcc-12-6 \
+            cuda-cudart-dev-12-6 \
+            libcudnn9-cuda-12 \
+            libcufft-12-6 \
+            libcusolver-12-6 \
+            libcusparse-12-6 \
+            libcublas-12-6
           echo "/usr/local/cuda-12.6/bin" >> $GITHUB_PATH
 
       - name: Install system dependencies
