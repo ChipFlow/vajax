@@ -29,9 +29,9 @@ cuda12 = [
     # JAX 0.9+ uses jax-cuda12-plugin for CUDA support
     "jax-cuda12-plugin>=0.9.0; sys_platform != 'darwin'",
     # Spineax: cuDSS sparse solver with cached symbolic factorization
-    # Using ChipFlow fork with jaxlib compatibility fix
+    # Published as spineax-vajax to avoid name clash with upstream
     # Note: Only works on Linux with CUDA
-    "spineax @ git+https://github.com/robtaylor/spineax.git",
+    "spineax-vajax[cuda12]",
 ]
 # UMFPACK solver for CPU sparse solving (requires libsuitesparse-dev + swig)
 # Falls back to klujax if not available
@@ -89,10 +89,12 @@ allow-direct-references = true
 [tool.hatch.build.targets.wheel]
 packages = ["vajax", "openvaf_jax"]
 exclude = ["openvaf_jax/openvaf_py/target", "openvaf_jax/osdi_py/target"]
+artifacts = ["vajax/devices/models/*.va"]
 
 [tool.hatch.build.targets.sdist]
 include = [
     "vajax/**/*.py",
+    "vajax/devices/models/*.va",
     "vajax/benchmarks/data/*",
     "openvaf_jax/**/*.py",
 ]

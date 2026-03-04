@@ -1,0 +1,22 @@
+// VAJAX inductor model
+// SPDX-License-Identifier: Apache-2.0
+// Copyright 2026 ChipFlow
+//
+// Simple two-terminal inductor with flux-based formulation.
+
+`include "constants.vams"
+`include "disciplines.vams"
+
+module inductor(A, B);
+    inout A, B;
+    electrical A, B;
+
+    branch (A, B) br;
+
+    (* desc = "Inductance", type = "instance", units = "H" *)
+    parameter real l = 1e-9 from (0:inf);
+
+    analog begin
+        V(br) <+ l * ddt(I(br));
+    end
+endmodule

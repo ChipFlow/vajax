@@ -1,0 +1,30 @@
+// VAJAX resistor model
+// SPDX-License-Identifier: Apache-2.0
+// Copyright 2026 ChipFlow
+//
+// Simple two-terminal resistor with thermal noise.
+
+`include "constants.vams"
+`include "disciplines.vams"
+
+module resistor(A, B);
+    inout A, B;
+    electrical A, B;
+
+    branch (A, B) br;
+
+    (* desc = "Resistance", type = "instance", units = "Ohm" *)
+    parameter real r = 1.0 from (0:inf);
+
+    (* desc = "Enable thermal noise", type = "model" *)
+    parameter integer has_noise = 1;
+
+    real i;
+
+    analog begin
+        I(br) <+ V(br) / r;
+        i = V(br) / r;
+        if (has_noise)
+            I(br) <+ white_noise(4.0 * `P_K * $temperature / r, "thermal");
+    end
+endmodule

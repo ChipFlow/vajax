@@ -78,18 +78,27 @@ COMPILED_MODEL_CACHE: Dict[str, Any] = {}
 # OpenVAF model sources: model_type -> (base_path_key, relative_path)
 MODEL_PATHS = {
     "psp103": ("integration_tests", "PSP103/psp103.va"),
-    "resistor": ("vacask", "resistor.va"),
-    "capacitor": ("vacask", "capacitor.va"),
+    "resistor": ("bundled", "resistor.va"),
+    "capacitor": ("bundled", "capacitor.va"),
+    "inductor": ("bundled", "inductor.va"),
     "diode": ("vacask", "diode.va"),
     "sp_diode": ("vacask", "spice/sn/diode.va"),
 }
 
 
+# Bundled models ship inside the vajax package
+_BUNDLED_MODELS_DIR = Path(__file__).parent.parent / "devices" / "models"
+
+
 # Base paths for VA model sources
 def _get_base_paths() -> Dict[str, Path]:
-    """Get base paths for VA model sources."""
+    """Get base paths for VA model sources.
+
+    Priority: bundled models (vajax/devices/models/) first, then vendor/.
+    """
     project_root = Path(__file__).parent.parent.parent
     return {
+        "bundled": _BUNDLED_MODELS_DIR,
         "integration_tests": project_root / "vendor" / "OpenVAF" / "integration_tests",
         "vacask": project_root / "vendor" / "VACASK" / "devices",
     }
