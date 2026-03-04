@@ -4,6 +4,7 @@ dynamic = ["version"]
 description = "JAX-based analog circuit simulator with Verilog-A support"
 authors = [{name = "ChipFlow"}]
 requires-python = ">=3.11,<3.14"
+license = "Apache-2.0"
 dependencies = [
     "jax>=0.9.0",
     "jaxtyping>=0.2.0",
@@ -15,6 +16,13 @@ dependencies = [
     "jaxlib>=0.9.0",
     "umfpack-jax",
 ]
+
+[project.urls]
+Homepage = "https://github.com/ChipFlow/vajax"
+Documentation = "https://chipflow.github.io/vajax/"
+Repository = "https://github.com/ChipFlow/vajax"
+Issues = "https://github.com/ChipFlow/vajax/issues"
+Changelog = "https://github.com/ChipFlow/vajax/releases"
 
 [tool.uv.workspace]
 members = ["openvaf_jax/openvaf_py", "openvaf_jax/osdi_py", "vajax/sparse"]

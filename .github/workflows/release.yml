@@ -254,30 +254,68 @@ jobs:
           verbose: true
 
   # =========================================================================
-  # Step 4: Publish to PyPI (manual approval gate)
+  # Step 4: Publish to PyPI (per-package for independent OIDC tokens)
   # =========================================================================
-  publish-pypi:
-    needs: [publish-testpypi-vajax, publish-testpypi-osdi-py, publish-testpypi-openvaf-py, publish-testpypi-umfpack-jax]
+  publish-pypi-vajax:
+    needs: [publish-testpypi-vajax]
     runs-on: ubuntu-latest
-    environment: pypi  # Requires manual approval
+    environment: pypi
     permissions:
-      id-token: write  # OIDC trusted publishing
+      id-token: write
     steps:
-      - name: Download all wheels
-        uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v4
         with:
-          pattern: wheels-*
+          name: wheels-vajax
+          path: dist
+      - uses: pypa/gh-action-pypi-publish@release/v1
+
+  publish-pypi-osdi-py:
+    needs: [publish-testpypi-osdi-py]
+    runs-on: ubuntu-latest
+    environment: pypi
+    permissions:
+      id-token: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: wheels-osdi-py-*
           path: dist
           merge-multiple: true
+      - uses: pypa/gh-action-pypi-publish@release/v1
 
-      - name: Publish to PyPI
-        uses: pypa/gh-action-pypi-publish@release/v1
+  publish-pypi-openvaf-py:
+    needs: [publish-testpypi-openvaf-py]
+    runs-on: ubuntu-latest
+    environment: pypi
+    permissions:
+      id-token: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: wheels-openvaf-py-*
+          path: dist
+          merge-multiple: true
+      - uses: pypa/gh-action-pypi-publish@release/v1
+
+  publish-pypi-umfpack-jax:
+    needs: [publish-testpypi-umfpack-jax]
+    runs-on: ubuntu-latest
+    environment: pypi
+    permissions:
+      id-token: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: wheels-umfpack-jax-*
+          path: dist
+          merge-multiple: true
+      - uses: pypa/gh-action-pypi-publish@release/v1
 
   # =========================================================================
   # Step 5: Create GitHub Release
   # =========================================================================
   github-release:
-    needs: publish-pypi
+    needs: [publish-pypi-vajax, publish-pypi-osdi-py, publish-pypi-openvaf-py, publish-pypi-umfpack-jax]
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -301,10 +339,37 @@ jobs:
             dist/*
 
   # =========================================================================
-  # Step 6: Update Homebrew tap
+  # Step 6: Build and deploy docs to GitHub Pages
+  # =========================================================================
+  deploy-docs:
+    needs: [publish-pypi-vajax, publish-pypi-osdi-py, publish-pypi-openvaf-py, publish-pypi-umfpack-jax]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: astral-sh/setup-uv@v4
+      - run: uv python install 3.12
+
+      - name: Install docs dependencies
+        run: uv sync --extra docs --no-install-workspace --no-build-package openvaf-py --no-build-package osdi-py --no-build-package umfpack-jax
+
+      - name: Build docs
+        run: .venv/bin/mkdocs build --site-dir ./site
+
+      - name: Deploy to GitHub Pages
+        uses: peaceiris/actions-gh-pages@v4
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          publish_dir: ./site
+          publish_branch: gh-pages
+
+  # =========================================================================
+  # Step 7: Update Homebrew tap
   # =========================================================================
   update-homebrew:
-    needs: [publish-pypi, set-version]
+    needs: [publish-pypi-vajax, publish-pypi-osdi-py, publish-pypi-openvaf-py, publish-pypi-umfpack-jax, set-version]
     runs-on: ubuntu-latest
     steps:
       - name: Trigger Homebrew tap update

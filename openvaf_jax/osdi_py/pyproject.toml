@@ -7,10 +7,17 @@ name = "osdi-py"
 version = "0.1.0"
 description = "Python bindings for OSDI (Open Simulator Device Interface) shared libraries"
 requires-python = ">=3.10"
+license = "Apache-2.0"
 classifiers = [
     "Programming Language :: Rust",
     "Programming Language :: Python :: Implementation :: CPython",
 ]
+
+[project.urls]
+Homepage = "https://github.com/ChipFlow/vajax"
+Documentation = "https://chipflow.github.io/vajax/packages/osdi-py/"
+Repository = "https://github.com/ChipFlow/vajax/tree/main/openvaf_jax/osdi_py"
+Issues = "https://github.com/ChipFlow/vajax/issues"
 
 [tool.maturin]
 features = ["pyo3/extension-module"]

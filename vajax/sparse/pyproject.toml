@@ -13,6 +13,13 @@ dependencies = [
     "numpy>=1.24.0",
 ]
 readme = "README.md"
+license = "Apache-2.0"
+
+[project.urls]
+Homepage = "https://github.com/ChipFlow/vajax"
+Documentation = "https://chipflow.github.io/vajax/packages/umfpack-jax/"
+Repository = "https://github.com/ChipFlow/vajax/tree/main/vajax/sparse"
+Issues = "https://github.com/ChipFlow/vajax/issues"
 
 [build-system]
 requires = [

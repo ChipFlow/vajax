@@ -62,4 +62,8 @@ nav:
       - OSDI Parameter Architecture: osdi_parameter_architecture.md
       - OSDI Inputs: vacask_osdi_inputs.md
       - Code Generation Backends: sim_back_vs_openvaf_jax.md
+  - Packages:
+      - openvaf-py: packages/openvaf-py.md
+      - osdi-py: packages/osdi-py.md
+      - umfpack-jax: packages/umfpack-jax.md
   - CI Status: ci-status.md
