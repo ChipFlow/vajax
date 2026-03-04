@@ -58,7 +58,7 @@ jobs:
       - name: Run tests
         working-directory: openvaf_jax/openvaf_py
         timeout-minutes: 90
-        run: uv run pytest tests/ -v --tb=short --durations=20 --log-cli-level=INFO --junitxml=test-results-openvaf-py.xml
+        run: uv run pytest tests/ -n auto -v --tb=short --durations=20 --junitxml=test-results-openvaf-py.xml
 
       - name: Upload test results
         uses: actions/upload-artifact@v4

@@ -41,6 +41,7 @@ cache-keys = [
 dev = [
     "maturin>=1.0,<2.0",
     "pytest>=7.0",
+    "pytest-xdist>=3.0",
     "numpy>=1.20",
     "jax>=0.4",
     "jaxlib>=0.4",
