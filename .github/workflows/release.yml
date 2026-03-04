@@ -207,12 +207,9 @@ jobs:
       - name: Install wheels in fresh venv
         run: |
           uv venv /tmp/test-venv --python 3.12
-          # Install all built wheels (no deps first to verify packaging)
+          # Use --find-links so uv picks the correct platform wheel automatically
           uv pip install --python /tmp/test-venv/bin/python \
-            --find-links wheels/ --no-deps wheels/*.whl
-          # Then resolve remaining deps
-          uv pip install --python /tmp/test-venv/bin/python \
-            --find-links wheels/ vajax
+            --find-links wheels/ vajax openvaf-py osdi-py umfpack-jax
 
       - name: Verify imports and bundled models
         env:
