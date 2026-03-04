@@ -128,9 +128,10 @@ jobs:
           JAX_LOG_COMPILES: "1"
         run: |
           set +e
-          # mul64 triggers cuDSS→UMFPACK CPU fallback (needs >16GB VRAM)
+          # Skip mul64: needs >16GB VRAM, falls back to UMFPACK (CPU-only FFI)
+          # which can't run on CUDA platform with --force-gpu
           uv run python scripts/compare_vacask.py \
-            --benchmark rc,graetz,mul,ring,c6288,mul64 \
+            --benchmark rc,graetz,mul,ring,c6288 \
             --use-scan \
             --force-gpu \
             --analyze \
