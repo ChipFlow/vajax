@@ -128,10 +128,11 @@ jobs:
           JAX_LOG_COMPILES: "1"
         run: |
           set +e
-          # Skip mul64: needs >16GB VRAM, falls back to UMFPACK (CPU-only FFI)
-          # which can't run on CUDA platform with --force-gpu
+          # Skip c6288/mul64 with --force-gpu: both need sparse solvers
+          # that fall back to UMFPACK (CPU-only FFI) on this GPU runner.
+          # c6288 needs cuDSS which isn't working, mul64 needs >16GB VRAM.
           uv run python scripts/compare_vacask.py \
-            --benchmark rc,graetz,mul,ring,c6288 \
+            --benchmark rc,graetz,mul,ring \
             --use-scan \
             --force-gpu \
             --analyze \
