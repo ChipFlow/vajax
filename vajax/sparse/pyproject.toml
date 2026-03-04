@@ -9,7 +9,7 @@ description = "UMFPACK FFI bindings for JAX - high-performance sparse direct sol
 authors = [{name = "ChipFlow"}]
 requires-python = ">=3.11"
 dependencies = [
-    "jax>=0.4.29",
+    "jax>=0.4.29,<0.10",
     "numpy>=1.24.0",
 ]
 readme = "README.md"
@@ -25,7 +25,7 @@ Issues = "https://github.com/ChipFlow/vajax/issues"
 requires = [
     "scikit-build-core>=0.8",
     "nanobind>=1.8",
-    "jax>=0.4.29",
+    "jax>=0.4.29,<0.10",
 ]
 build-backend = "scikit_build_core.build"
 
