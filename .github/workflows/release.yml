@@ -261,16 +261,13 @@ jobs:
           import vajax
           print(f'vajax {vajax.__version__} imported OK')
 
-          from vajax.devices import MODEL_PATHS
+          from vajax.analysis.openvaf_models import MODEL_PATHS, _BUNDLED_MODELS_DIR
           print(f'MODEL_PATHS has {len(MODEL_PATHS)} entries')
 
-          from pathlib import Path
-          import vajax.devices
-          models_dir = Path(vajax.devices.__file__).parent / 'models'
           missing = []
           for name, (base_key, rel_path) in MODEL_PATHS.items():
               if base_key == 'bundled':
-                  if not (models_dir / rel_path).exists():
+                  if not (_BUNDLED_MODELS_DIR / rel_path).exists():
                       missing.append(name)
           assert not missing, f'Missing bundled models: {missing}'
           print(f'All bundled models present')
