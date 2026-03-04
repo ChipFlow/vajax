@@ -16,7 +16,7 @@ env:
 
 jobs:
   test-openvaf-py:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-latest-4-cores
     steps:
       - name: Checkout with submodules
         uses: actions/checkout@v4
