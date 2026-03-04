@@ -1141,6 +1141,17 @@
   
 </li>
         
+          <li class="md-nav__item">
+  <a href="#gpu-benchmarks" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        GPU Benchmarks
+      
+    </span>
+  </a>
+  
+</li>
+        
       </ul>
     </nav>
   
@@ -1214,6 +1225,17 @@
   
 </li>
         
+          <li class="md-nav__item">
+  <a href="#gpu-benchmarks" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        GPU Benchmarks
+      
+    </span>
+  </a>
+  
+</li>
+        
       </ul>
     </nav>
   
@@ -1240,8 +1262,8 @@
 
 
 <h1 id="vajax-ci-summary">VAJAX CI Summary<a class="headerlink" href="#vajax-ci-summary" title="Permanent link">&para;</a></h1>
-<p><em>Last updated: 2026-03-04 20:11 UTC</em></p>
-<p><em>Commit: <a href="https://github.com/ChipFlow/vajax/commit/13c4104b8535bda8e992e601936281d4292b2999">13c4104b</a></em></p>
+<p><em>Last updated: 2026-03-04 20:53 UTC</em></p>
+<p><em>Commit: <a href="https://github.com/ChipFlow/vajax/commit/1af6626fb4e5092860e4afb22389b1993bf071e6">1af6626f</a></em></p>
 <h2 id="test-coverage">Test Coverage<a class="headerlink" href="#test-coverage" title="Permanent link">&para;</a></h2>
 <table>
 <thead>
@@ -1395,7 +1417,53 @@
 </tr>
 </tbody>
 </table>
-<p><em>No gpu benchmarks benchmark data available.</em></p>
+<h3 id="gpu-benchmarks">GPU Benchmarks<a class="headerlink" href="#gpu-benchmarks" title="Permanent link">&para;</a></h3>
+<table>
+<thead>
+<tr>
+<th>Benchmark</th>
+<th>Steps</th>
+<th>VAJAX (ms/step)</th>
+<th>VACASK (ms/step)</th>
+<th>Ratio</th>
+<th>Startup</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>rc</td>
+<td>1,000,000</td>
+<td>0.2388</td>
+<td>0.0009</td>
+<td>255.31x</td>
+<td>5.8s</td>
+</tr>
+<tr>
+<td>graetz</td>
+<td>1,000,000</td>
+<td>0.3134</td>
+<td>0.0019</td>
+<td>165.80x</td>
+<td>12.9s</td>
+</tr>
+<tr>
+<td>mul</td>
+<td>500,000</td>
+<td>0.4585</td>
+<td>0.0019</td>
+<td>236.36x</td>
+<td>8.5s</td>
+</tr>
+<tr>
+<td>ring</td>
+<td>19,999</td>
+<td>1.4624</td>
+<td>0.0453</td>
+<td>32.30x</td>
+<td>339.1s</td>
+</tr>
+</tbody>
+</table>
 <hr />
 <p><a href="https://github.com/ChipFlow/vajax/actions">View workflows</a> | 
 <a href="https://github.com/ChipFlow/vajax">Repository</a></p>
