@@ -122,6 +122,8 @@ jobs:
       - run: uv python install 3.12
 
       - name: Build sdist and wheel
+        env:
+          SETUPTOOLS_SCM_PRETEND_VERSION: ${{ needs.set-version.outputs.version }}
         run: uv build
 
       - uses: actions/upload-artifact@v4
