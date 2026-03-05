@@ -11,8 +11,6 @@
       
       
       
-        <link rel="prev" href="../packages/umfpack-jax/">
-      
       
       
         
@@ -23,7 +21,7 @@
     
     
       
-        <title>CI Status - VAJAX</title>
+        <title>Memory Management - VAJAX</title>
       
     
     
@@ -74,7 +72,7 @@
     <div data-md-component="skip">
       
         
-        <a href="#vajax-ci-summary" class="md-skip">
+        <a href="#memory-management" class="md-skip">
           Skip to content
         </a>
       
@@ -110,7 +108,7 @@
         <div class="md-header__topic" data-md-component="header-topic">
           <span class="md-ellipsis">
             
-              CI Status
+              Memory Management
             
           </span>
         </div>
@@ -1045,37 +1043,10 @@
       
   
   
-    
   
   
-  
-    <li class="md-nav__item md-nav__item--active">
-      
-      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
-      
-      
-        
-      
-      
-        <label class="md-nav__link md-nav__link--active" for="__toc">
-          
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    CI Status
-  
-
-    
-  </span>
-  
-  
-
-          <span class="md-nav__icon md-icon"></span>
-        </label>
-      
-      <a href="./" class="md-nav__link md-nav__link--active">
+    <li class="md-nav__item">
+      <a href="../ci-status/" class="md-nav__link">
         
   
   
@@ -1091,76 +1062,6 @@
   
 
       </a>
-      
-        
-
-<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
-  
-  
-  
-    
-  
-  
-    <label class="md-nav__title" for="__toc">
-      <span class="md-nav__icon md-icon"></span>
-      Table of contents
-    </label>
-    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
-      
-        <li class="md-nav__item">
-  <a href="#test-coverage" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Test Coverage
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#performance" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Performance
-      
-    </span>
-  </a>
-  
-    <nav class="md-nav" aria-label="Performance">
-      <ul class="md-nav__list">
-        
-          <li class="md-nav__item">
-  <a href="#cpu-benchmarks" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        CPU Benchmarks
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#gpu-benchmarks" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        GPU Benchmarks
-      
-    </span>
-  </a>
-  
-</li>
-        
-      </ul>
-    </nav>
-  
-</li>
-      
-    </ul>
-  
-</nav>
-      
     </li>
   
 
@@ -1192,33 +1093,22 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
-  <a href="#test-coverage" class="md-nav__link">
+  <a href="#memory-consumers" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Test Coverage
+        Memory Consumers
       
     </span>
   </a>
   
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#performance" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Performance
-      
-    </span>
-  </a>
-  
-    <nav class="md-nav" aria-label="Performance">
+    <nav class="md-nav" aria-label="Memory Consumers">
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
-  <a href="#cpu-benchmarks" class="md-nav__link">
+  <a href="#1-rust-vamodule-100-800-mb-per-large-model" class="md-nav__link">
     <span class="md-ellipsis">
       
-        CPU Benchmarks
+        1. Rust VaModule (~100-800 MB per large model)
       
     </span>
   </a>
@@ -1226,10 +1116,32 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#gpu-benchmarks" class="md-nav__link">
+  <a href="#2-openvaf-mir-data-10-50-mb-per-model" class="md-nav__link">
     <span class="md-ellipsis">
       
-        GPU Benchmarks
+        2. OpenVAF MIR Data (~10-50 MB per model)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#3-jax-xla-compilation-cache-50-200-mb-per-jitd-function" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        3. JAX XLA Compilation Cache (~50-200 MB per JIT'd function)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#4-persistent-on-disk-caches" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        4. Persistent On-Disk Caches
       
     </span>
   </a>
@@ -1238,6 +1150,139 @@
         
       </ul>
     </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#api-reference" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        API Reference
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="API Reference">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#vajaxclear_cachesinclude_persistentfalse" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        vajax.clear_caches(include_persistent=False)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#vajaxrelease_modelmodel_type" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        vajax.release_model(model_type)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#vajaxcleanup_disk_cachemax_age_days30" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        vajax.cleanup_disk_cache(max_age_days=30)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#engineclear_cache" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        engine.clear_cache()
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#memory-strategy-for-common-use-cases" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Memory Strategy for Common Use Cases
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Memory Strategy for Common Use Cases">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#running-many-circuits-with-the-same-model" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Running many circuits with the same model
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#switching-between-different-models" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Switching between different models
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#long-running-server-batch-processing" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Long-running server / batch processing
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#ci-test-environments" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        CI / test environments
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#rust-allocator-behaviour" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Rust Allocator Behaviour
+      
+    </span>
+  </a>
   
 </li>
       
@@ -1261,185 +1306,126 @@
   
 
 
-<h1 id="vajax-ci-summary">VAJAX CI Summary<a class="headerlink" href="#vajax-ci-summary" title="Permanent link">&para;</a></h1>
-<p><em>Last updated: 2026-03-05 12:27 UTC</em></p>
-<p><em>Commit: <a href="https://github.com/ChipFlow/vajax/commit/e57ca6da41f34f8f2b8dcb34aed859acbeb88abc">e57ca6da</a></em></p>
-<h2 id="test-coverage">Test Coverage<a class="headerlink" href="#test-coverage" title="Permanent link">&para;</a></h2>
-<table>
-<thead>
-<tr>
-<th>Suite</th>
-<th>Passed</th>
-<th>Failed</th>
-<th>Errors</th>
-<th>Skipped</th>
-<th>Total</th>
-<th>Time</th>
-</tr>
-</thead>
-<tbody>
-<tr>
-<td>benchmark-dense</td>
-<td>5</td>
-<td>0</td>
-<td>0</td>
-<td>1</td>
-<td>6</td>
-<td>501.2s</td>
-</tr>
-<tr>
-<td>benchmark-sparse</td>
-<td>6</td>
-<td>0</td>
-<td>0</td>
-<td>1</td>
-<td>7</td>
-<td>586.8s</td>
-</tr>
-<tr>
-<td>ngspice</td>
-<td>0</td>
-<td>0</td>
-<td>0</td>
-<td>71</td>
-<td>71</td>
-<td>246.7s</td>
-</tr>
-<tr>
-<td>unit</td>
-<td>72</td>
-<td>0</td>
-<td>0</td>
-<td>5</td>
-<td>77</td>
-<td>22.2s</td>
-</tr>
-<tr>
-<td>xyce</td>
-<td>39</td>
-<td>0</td>
-<td>0</td>
-<td>1890</td>
-<td>1929</td>
-<td>78.6s</td>
-</tr>
-<tr>
-<td><strong>Total</strong></td>
-<td><strong>122</strong></td>
-<td><strong>0</strong></td>
-<td><strong>0</strong></td>
-<td><strong>1968</strong></td>
-<td><strong>2090</strong></td>
-<td>1435.5s</td>
-</tr>
-</tbody>
-</table>
-<h2 id="performance">Performance<a class="headerlink" href="#performance" title="Permanent link">&para;</a></h2>
-<h3 id="cpu-benchmarks">CPU Benchmarks<a class="headerlink" href="#cpu-benchmarks" title="Permanent link">&para;</a></h3>
-<table>
-<thead>
-<tr>
-<th>Benchmark</th>
-<th>Steps</th>
-<th>VAJAX (ms/step)</th>
-<th>VACASK (ms/step)</th>
-<th>Ratio</th>
-<th>Startup</th>
-</tr>
-</thead>
-<tbody>
-<tr>
-<td>rc</td>
-<td>1,000,000</td>
-<td>0.0202</td>
-<td>0.0019</td>
-<td>10.86x</td>
-<td>4.2s</td>
-</tr>
-<tr>
-<td>graetz</td>
-<td>1,000,000</td>
-<td>0.0327</td>
-<td>0.0038</td>
-<td>8.70x</td>
-<td>9.3s</td>
-</tr>
-<tr>
-<td>mul</td>
-<td>500,000</td>
-<td>0.0406</td>
-<td>0.0039</td>
-<td>10.54x</td>
-<td>7.1s</td>
-</tr>
-<tr>
-<td>ring</td>
-<td>19,999</td>
-<td>0.6108</td>
-<td>0.1070</td>
-<td>5.71x</td>
-<td>176.7s</td>
-</tr>
-<tr>
-<td>tb_dp</td>
-<td>10</td>
-<td>0.1047</td>
-<td>N/A</td>
-<td>N/A</td>
-<td>9.4s</td>
-</tr>
-</tbody>
-</table>
-<h3 id="gpu-benchmarks">GPU Benchmarks<a class="headerlink" href="#gpu-benchmarks" title="Permanent link">&para;</a></h3>
-<table>
-<thead>
-<tr>
-<th>Benchmark</th>
-<th>Steps</th>
-<th>VAJAX (ms/step)</th>
-<th>VACASK (ms/step)</th>
-<th>Ratio</th>
-<th>Startup</th>
-</tr>
-</thead>
-<tbody>
-<tr>
-<td>rc</td>
-<td>1,000,000</td>
-<td>0.2407</td>
-<td>0.0009</td>
-<td>257.38x</td>
-<td>3.9s</td>
-</tr>
-<tr>
-<td>graetz</td>
-<td>1,000,000</td>
-<td>0.3045</td>
-<td>0.0019</td>
-<td>161.11x</td>
-<td>8.7s</td>
-</tr>
-<tr>
-<td>mul</td>
-<td>500,000</td>
-<td>0.4465</td>
-<td>0.0019</td>
-<td>230.18x</td>
-<td>6.7s</td>
-</tr>
-<tr>
-<td>ring</td>
-<td>19,999</td>
-<td>1.4682</td>
-<td>0.0453</td>
-<td>32.43x</td>
-<td>171.5s</td>
-</tr>
-</tbody>
-</table>
-<hr />
-<p><a href="https://github.com/ChipFlow/vajax/actions">View workflows</a> | 
-<a href="https://github.com/ChipFlow/vajax">Repository</a></p>
+<h1 id="memory-management">Memory Management<a class="headerlink" href="#memory-management" title="Permanent link">&para;</a></h1>
+<p>VAJAX compiles Verilog-A models via OpenVAF (Rust) and generates JAX functions
+for GPU-accelerated simulation. Both the compilation and JIT compilation steps
+allocate significant memory. This document explains the memory lifecycle and how
+to manage it.</p>
+<h2 id="memory-consumers">Memory Consumers<a class="headerlink" href="#memory-consumers" title="Permanent link">&para;</a></h2>
+<h3 id="1-rust-vamodule-100-800-mb-per-large-model">1. Rust VaModule (~100-800 MB per large model)<a class="headerlink" href="#1-rust-vamodule-100-800-mb-per-large-model" title="Permanent link">&para;</a></h3>
+<p>When <code>openvaf_py.compile_va()</code> compiles a Verilog-A file, it produces a
+<code>VaModule</code> — a Rust-backed object containing the parsed model IR. Large models
+like BSIM4 or PSP103 allocate hundreds of megabytes in native (Rust) memory.</p>
+<p><strong>Key behaviour</strong>: The Rust allocator (jemalloc/system) retains freed pages for
+internal reuse but rarely returns them to the OS. This means RSS (Resident Set
+Size) only grows — even after <code>del module; gc.collect()</code>, the process RSS stays
+high. However, the freed memory IS reused by subsequent Rust allocations (e.g.,
+compiling the same model again uses +0 additional RSS).</p>
+<h3 id="2-openvaf-mir-data-10-50-mb-per-model">2. OpenVAF MIR Data (~10-50 MB per model)<a class="headerlink" href="#2-openvaf-mir-data-10-50-mb-per-model" title="Permanent link">&para;</a></h3>
+<p>The <code>OpenVAFToJAX</code> translator parses the VaModule's MIR (Mid-level IR) into
+Python data structures for code generation. This includes instruction lists,
+constant tables, DAE system metadata, and parsed CFG blocks.</p>
+<p>After all <code>translate_*()</code> calls complete, MIR data is no longer needed but
+stays in memory unless explicitly released via <code>translator.release_mir_data()</code>.</p>
+<h3 id="3-jax-xla-compilation-cache-50-200-mb-per-jitd-function">3. JAX XLA Compilation Cache (~50-200 MB per JIT'd function)<a class="headerlink" href="#3-jax-xla-compilation-cache-50-200-mb-per-jitd-function" title="Permanent link">&para;</a></h3>
+<p>Each <code>jax.jit()</code> call compiles a Python function to XLA HLO and then to machine
+code. For large models, a single JIT'd eval function can use 200+ MB. These are
+cached by JAX in-memory.</p>
+<p><code>jax.clear_caches()</code> frees this memory. Per-function clearing is available via
+<code>jitted_fn.clear_cache()</code>.</p>
+<h3 id="4-persistent-on-disk-caches">4. Persistent On-Disk Caches<a class="headerlink" href="#4-persistent-on-disk-caches" title="Permanent link">&para;</a></h3>
+<ul>
+<li><strong>OpenVAF MIR cache</strong> (<code>~/.cache/vajax/openvaf/</code>): Serialized MIR data to
+  skip recompilation on subsequent runs.</li>
+<li><strong>JAX XLA cache</strong> (configured via <code>jax_compilation_cache_dir</code>): Compiled HLO
+  artifacts to skip XLA compilation.</li>
+</ul>
+<h2 id="api-reference">API Reference<a class="headerlink" href="#api-reference" title="Permanent link">&para;</a></h2>
+<h3 id="vajaxclear_cachesinclude_persistentfalse"><code>vajax.clear_caches(include_persistent=False)</code><a class="headerlink" href="#vajaxclear_cachesinclude_persistentfalse" title="Permanent link">&para;</a></h3>
+<p>Nuclear option — clears everything:
+- Releases MIR data and Rust module references from all cached models
+- Clears the global <code>COMPILED_MODEL_CACHE</code>
+- Clears openvaf_jax function caches
+- Clears JAX XLA in-memory caches
+- Runs <code>gc.collect()</code></p>
+<p>Use this when switching to a completely different simulation or to free maximum
+memory. After calling this, models must be recompiled from scratch.</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="kn">import</span><span class="w"> </span><span class="nn">vajax</span>
+<a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a>
+<a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a><span class="n">engine</span> <span class="o">=</span> <span class="n">vajax</span><span class="o">.</span><span class="n">CircuitEngine</span><span class="p">(</span><span class="n">sim_file</span><span class="p">)</span>
+<a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a><span class="n">engine</span><span class="o">.</span><span class="n">run_transient</span><span class="p">()</span>
+<a id="__codelineno-0-5" name="__codelineno-0-5" href="#__codelineno-0-5"></a>
+<a id="__codelineno-0-6" name="__codelineno-0-6" href="#__codelineno-0-6"></a><span class="c1"># Free all memory</span>
+<a id="__codelineno-0-7" name="__codelineno-0-7" href="#__codelineno-0-7"></a><span class="n">stats</span> <span class="o">=</span> <span class="n">vajax</span><span class="o">.</span><span class="n">clear_caches</span><span class="p">()</span>
+<a id="__codelineno-0-8" name="__codelineno-0-8" href="#__codelineno-0-8"></a><span class="c1"># stats = {&#39;openvaf_compiled_models&#39;: 3, &#39;models_mir_released&#39;: 2, ...}</span>
+</code></pre></div>
+<h3 id="vajaxrelease_modelmodel_type"><code>vajax.release_model(model_type)</code><a class="headerlink" href="#vajaxrelease_modelmodel_type" title="Permanent link">&para;</a></h3>
+<p>Selective release — frees the heavy Rust/MIR memory for one model while keeping
+other models cached. The model's compiled JAX functions and metadata remain in
+cache, so re-running the same circuit topology is fast. However, running a
+different circuit topology with the same model type will require recompilation.</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a><span class="c1"># Simulate with BSIM4</span>
+<a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a><span class="n">engine1</span> <span class="o">=</span> <span class="n">vajax</span><span class="o">.</span><span class="n">CircuitEngine</span><span class="p">(</span><span class="n">bsim4_circuit</span><span class="p">)</span>
+<a id="__codelineno-1-3" name="__codelineno-1-3" href="#__codelineno-1-3"></a><span class="n">engine1</span><span class="o">.</span><span class="n">run_transient</span><span class="p">()</span>
+<a id="__codelineno-1-4" name="__codelineno-1-4" href="#__codelineno-1-4"></a>
+<a id="__codelineno-1-5" name="__codelineno-1-5" href="#__codelineno-1-5"></a><span class="c1"># Free BSIM4&#39;s ~800MB of Rust data, keep other models</span>
+<a id="__codelineno-1-6" name="__codelineno-1-6" href="#__codelineno-1-6"></a><span class="n">vajax</span><span class="o">.</span><span class="n">release_model</span><span class="p">(</span><span class="s1">&#39;bsim4&#39;</span><span class="p">)</span>
+<a id="__codelineno-1-7" name="__codelineno-1-7" href="#__codelineno-1-7"></a>
+<a id="__codelineno-1-8" name="__codelineno-1-8" href="#__codelineno-1-8"></a><span class="c1"># Simulate with PSP103</span>
+<a id="__codelineno-1-9" name="__codelineno-1-9" href="#__codelineno-1-9"></a><span class="n">engine2</span> <span class="o">=</span> <span class="n">vajax</span><span class="o">.</span><span class="n">CircuitEngine</span><span class="p">(</span><span class="n">psp103_circuit</span><span class="p">)</span>
+<a id="__codelineno-1-10" name="__codelineno-1-10" href="#__codelineno-1-10"></a><span class="n">engine2</span><span class="o">.</span><span class="n">run_transient</span><span class="p">()</span>
+</code></pre></div>
+<h3 id="vajaxcleanup_disk_cachemax_age_days30"><code>vajax.cleanup_disk_cache(max_age_days=30)</code><a class="headerlink" href="#vajaxcleanup_disk_cachemax_age_days30" title="Permanent link">&para;</a></h3>
+<p>Time-based LRU cleanup of the persistent on-disk OpenVAF cache. Removes cache
+entries whose newest file is older than <code>max_age_days</code>.</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a><span class="c1"># Clean up entries older than 7 days</span>
+<a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a><span class="n">result</span> <span class="o">=</span> <span class="n">vajax</span><span class="o">.</span><span class="n">cleanup_disk_cache</span><span class="p">(</span><span class="n">max_age_days</span><span class="o">=</span><span class="mi">7</span><span class="p">)</span>
+<a id="__codelineno-2-3" name="__codelineno-2-3" href="#__codelineno-2-3"></a><span class="c1"># result = {&#39;removed&#39;: [&#39;psp103_a1b2c3d4&#39;], &#39;kept&#39;: [&#39;resistor_e5f6g7h8&#39;]}</span>
+</code></pre></div>
+<h3 id="engineclear_cache"><code>engine.clear_cache()</code><a class="headerlink" href="#engineclear_cache" title="Permanent link">&para;</a></h3>
+<p>Instance-level cache clearing on a <code>CircuitEngine</code>. Delegates to
+<code>vajax.clear_caches()</code> for global caches and also clears engine-specific state.</p>
+<h2 id="memory-strategy-for-common-use-cases">Memory Strategy for Common Use Cases<a class="headerlink" href="#memory-strategy-for-common-use-cases" title="Permanent link">&para;</a></h2>
+<h3 id="running-many-circuits-with-the-same-model">Running many circuits with the same model<a class="headerlink" href="#running-many-circuits-with-the-same-model" title="Permanent link">&para;</a></h3>
+<p>Keep the cache — compilation is expensive, reuse is free:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a><span class="k">for</span> <span class="n">sim_file</span> <span class="ow">in</span> <span class="n">circuit_files</span><span class="p">:</span>
+<a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a>    <span class="n">engine</span> <span class="o">=</span> <span class="n">vajax</span><span class="o">.</span><span class="n">CircuitEngine</span><span class="p">(</span><span class="n">sim_file</span><span class="p">)</span>
+<a id="__codelineno-3-3" name="__codelineno-3-3" href="#__codelineno-3-3"></a>    <span class="n">engine</span><span class="o">.</span><span class="n">run_transient</span><span class="p">()</span>
+<a id="__codelineno-3-4" name="__codelineno-3-4" href="#__codelineno-3-4"></a>    <span class="c1"># Don&#39;t clear caches — the compiled model is reused</span>
+</code></pre></div>
+<h3 id="switching-between-different-models">Switching between different models<a class="headerlink" href="#switching-between-different-models" title="Permanent link">&para;</a></h3>
+<p>Release the old model before loading the new one:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a><span class="n">vajax</span><span class="o">.</span><span class="n">release_model</span><span class="p">(</span><span class="s1">&#39;bsim4&#39;</span><span class="p">)</span>
+<a id="__codelineno-4-2" name="__codelineno-4-2" href="#__codelineno-4-2"></a><span class="n">engine</span> <span class="o">=</span> <span class="n">vajax</span><span class="o">.</span><span class="n">CircuitEngine</span><span class="p">(</span><span class="n">psp103_circuit</span><span class="p">)</span>
+</code></pre></div>
+<h3 id="long-running-server-batch-processing">Long-running server / batch processing<a class="headerlink" href="#long-running-server-batch-processing" title="Permanent link">&para;</a></h3>
+<p>Periodically clean up:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a><span class="c1"># After each batch</span>
+<a id="__codelineno-5-2" name="__codelineno-5-2" href="#__codelineno-5-2"></a><span class="n">vajax</span><span class="o">.</span><span class="n">clear_caches</span><span class="p">()</span>
+<a id="__codelineno-5-3" name="__codelineno-5-3" href="#__codelineno-5-3"></a>
+<a id="__codelineno-5-4" name="__codelineno-5-4" href="#__codelineno-5-4"></a><span class="c1"># On startup, clean stale disk cache</span>
+<a id="__codelineno-5-5" name="__codelineno-5-5" href="#__codelineno-5-5"></a><span class="n">vajax</span><span class="o">.</span><span class="n">cleanup_disk_cache</span><span class="p">(</span><span class="n">max_age_days</span><span class="o">=</span><span class="mi">7</span><span class="p">)</span>
+</code></pre></div>
+<h3 id="ci-test-environments">CI / test environments<a class="headerlink" href="#ci-test-environments" title="Permanent link">&para;</a></h3>
+<p>Clear between test modules to prevent OOM:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a><span class="nd">@pytest</span><span class="o">.</span><span class="n">fixture</span><span class="p">(</span><span class="n">autouse</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+<a id="__codelineno-6-2" name="__codelineno-6-2" href="#__codelineno-6-2"></a><span class="k">def</span><span class="w"> </span><span class="nf">_cleanup</span><span class="p">():</span>
+<a id="__codelineno-6-3" name="__codelineno-6-3" href="#__codelineno-6-3"></a>    <span class="k">yield</span>
+<a id="__codelineno-6-4" name="__codelineno-6-4" href="#__codelineno-6-4"></a>    <span class="n">jax</span><span class="o">.</span><span class="n">clear_caches</span><span class="p">()</span>
+<a id="__codelineno-6-5" name="__codelineno-6-5" href="#__codelineno-6-5"></a>    <span class="n">gc</span><span class="o">.</span><span class="n">collect</span><span class="p">()</span>
+</code></pre></div>
+<h2 id="rust-allocator-behaviour">Rust Allocator Behaviour<a class="headerlink" href="#rust-allocator-behaviour" title="Permanent link">&para;</a></h2>
+<p>The Rust allocator retains freed pages internally rather than returning them to
+the OS via <code>munmap</code>. This is normal and expected — it allows memory to be reused
+efficiently by subsequent allocations.</p>
+<p><strong>Implications:</strong>
+- Process RSS only grows, never shrinks (on both Linux and macOS)
+- <code>del module; gc.collect()</code> frees memory for Rust reuse but RSS stays flat
+- Compiling the same model after deletion reuses freed pages (+0 MB RSS)
+- Compiling a different model may or may not reuse freed pages depending on
+  allocation sizes</p>
+<p>This behaviour was verified empirically: compiling BSIM4 (RSS +800 MB),
+deleting, then recompiling BSIM4 shows +0 MB additional RSS.</p>
 
 
 
