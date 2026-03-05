@@ -117,6 +117,7 @@ def release_model_memory(model_types: Optional[List[str]] = None) -> dict:
     gc.collect()
     return stats
 
+
 # OpenVAF model sources: model_type -> (base_path_key, relative_path)
 MODEL_PATHS = {
     "psp103": ("integration_tests", "PSP103/psp103.va"),

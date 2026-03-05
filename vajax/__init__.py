@@ -281,9 +281,7 @@ def clear_caches(include_persistent: bool = False) -> dict:
     stats["openvaf_compiled_models"] = len(COMPILED_MODEL_CACHE)
     release_stats = release_model_memory()
     stats["models_mir_released"] = sum(1 for s in release_stats.values() if s["mir_released"])
-    stats["models_module_released"] = sum(
-        1 for s in release_stats.values() if s["module_released"]
-    )
+    stats["models_module_released"] = sum(1 for s in release_stats.values() if s["module_released"])
     COMPILED_MODEL_CACHE.clear()
 
     # 2. Clear openvaf_jax function caches (exec'd functions + vmapped JIT)
