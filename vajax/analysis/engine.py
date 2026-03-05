@@ -188,6 +188,28 @@ class TransientResult:
         return list(self.currents.keys())
 
 
+@dataclass
+class DCSweepResult:
+    """Result of a DC sweep analysis.
+
+    Attributes:
+        sweep_parameter: Name of the swept source
+        sweep_values: Array of sweep values (Volts or Amps)
+        voltages: Dict mapping node name to voltage array (one per sweep point)
+        currents: Dict mapping source name to current array (one per sweep point)
+    """
+
+    sweep_parameter: str
+    sweep_values: Array
+    voltages: Dict[str, Array]
+    currents: Dict[str, Array]
+
+    @property
+    def num_points(self) -> int:
+        """Number of sweep points."""
+        return len(self.sweep_values)
+
+
 class CircuitEngine:
     """Core circuit simulation engine for VAJAX.
 
@@ -448,6 +470,9 @@ class CircuitEngine:
 
         logger.info(f"Node mapping: {self.num_nodes} nodes ({t3 - t2:.1f}s)")
 
+        # Resolve load statements to model paths
+        self._resolve_load_statements()
+
         # Build devices
         self._build_devices()
         t4 = time.perf_counter()
@@ -458,6 +483,60 @@ class CircuitEngine:
         self._extract_analysis_params()
 
         return self
+
+    def _resolve_load_statements(self):
+        """Resolve load statements from the netlist to model paths.
+
+        Load statements like `load "mymodel.va"` are resolved by:
+        1. Checking relative to the netlist file directory
+        2. Checking bundled models directory
+        3. Checking vendor directories
+
+        Any resolved paths are added to self.OPENVAF_MODELS so that
+        models referenced by the load statement can be compiled.
+        """
+        if not self.circuit.loads:
+            return
+
+        from vajax.analysis.openvaf_models import _get_base_paths
+
+        # Don't mutate the class-level dict — create instance copy
+        if self.OPENVAF_MODELS is MODEL_PATHS:
+            self.OPENVAF_MODELS = dict(MODEL_PATHS)
+
+        base_paths = _get_base_paths()
+        netlist_dir = self.sim_path.parent if self.sim_path else None
+
+        for load_path in self.circuit.loads:
+            # Extract model name from filename (e.g., "resistor.va" -> "resistor")
+            load_file = Path(load_path)
+            model_name = load_file.stem.lower()
+
+            # Skip if already known
+            if model_name in self.OPENVAF_MODELS:
+                continue
+
+            # 1. Try relative to netlist directory
+            if netlist_dir:
+                candidate = netlist_dir / load_path
+                if candidate.exists():
+                    # Store as absolute path with special "absolute" base key
+                    self.OPENVAF_MODELS[model_name] = ("absolute", str(candidate))
+                    logger.info(f"  Load resolved: {load_path} -> {candidate}")
+                    continue
+
+            # 2. Try each base path
+            resolved = False
+            for base_key, base_path in base_paths.items():
+                candidate = base_path / load_path
+                if candidate.exists():
+                    self.OPENVAF_MODELS[model_name] = (base_key, load_path)
+                    logger.info(f"  Load resolved: {load_path} -> {candidate}")
+                    resolved = True
+                    break
+
+            if not resolved:
+                logger.debug(f"  Load unresolved: {load_path} (not found in search paths)")
 
     def _get_device_type(self, model_name: str) -> str:
         """Map model name to device type (cached)."""
@@ -1307,6 +1386,198 @@ class CircuitEngine:
         v1 = V[node1_idx] if node1_idx < len(V) else 0.0
         v2 = V[node2_idx] if node2_idx < len(V) else 0.0
         return v1 - v2
+
+    # =========================================================================
+    # DC Sweep Analysis
+    # =========================================================================
+
+    def run_dc_sweep(
+        self,
+        source: str,
+        start: float,
+        stop: float,
+        step: Optional[float] = None,
+        points: Optional[int] = None,
+    ) -> "DCSweepResult":
+        """Sweep a source DC value and re-solve the operating point at each step.
+
+        Args:
+            source: Name of the voltage or current source to sweep (e.g., 'v1', 'iin')
+            start: Starting value of the sweep (Volts or Amps)
+            stop: Ending value of the sweep (Volts or Amps)
+            step: Step size. Provide either step or points, not both.
+            points: Number of points. Provide either step or points, not both.
+
+        Returns:
+            DCSweepResult with sweep values and node voltages/branch currents
+        """
+        import numpy as np
+
+        if step is None and points is None:
+            raise ValueError("Must provide either 'step' or 'points'")
+        if step is not None and points is not None:
+            raise ValueError("Provide either 'step' or 'points', not both")
+
+        # Build sweep values
+        if points is not None:
+            sweep_values = np.linspace(start, stop, points)
+        else:
+            assert step is not None
+            sweep_values = np.arange(start, stop + step * 0.5, step)
+
+        logger.info(
+            f"DC sweep: {source} from {start} to {stop} ({len(sweep_values)} points)"
+        )
+
+        # Compile OpenVAF models if needed
+        if not self._compiled_models:
+            compile_openvaf_models(
+                devices=self.devices,
+                compiled_models=self._compiled_models,
+                model_paths=self.OPENVAF_MODELS,
+                log_fn=lambda msg: logger.info(msg),
+            )
+
+        # Set up solver infrastructure (reuse AC operating point setup)
+        setup = self._build_transient_setup(backend="cpu", use_dense=True)
+        n_total = setup["n_total"]
+        n_unknowns = setup["n_unknowns"]
+        device_internal_nodes = setup["device_internal_nodes"]
+        source_device_data = setup["source_device_data"]
+        vmapped_fns = setup["vmapped_fns"]
+        static_inputs_cache = setup["static_inputs_cache"]
+
+        # Count sources
+        n_vsources = len(source_device_data.get("vsource", {}).get("names", []))
+        n_isources = len(source_device_data.get("isource", {}).get("names", []))
+
+        # Find the source to sweep
+        source_lower = source.lower()
+        sweep_is_vsource = False
+        sweep_idx = -1
+
+        vsource_idx = 0
+        isource_idx = 0
+        for dev in self.devices:
+            if dev["model"] == "vsource":
+                if dev["name"].lower() == source_lower:
+                    sweep_is_vsource = True
+                    sweep_idx = vsource_idx
+                    break
+                vsource_idx += 1
+            elif dev["model"] == "isource":
+                if dev["name"].lower() == source_lower:
+                    sweep_is_vsource = False
+                    sweep_idx = isource_idx
+                    break
+                isource_idx += 1
+
+        if sweep_idx < 0:
+            available = [d["name"] for d in self.devices if d["model"] in ("vsource", "isource")]
+            raise ValueError(
+                f"Source '{source}' not found. Available sources: {available}"
+            )
+
+        # Get baseline DC source values
+        vsource_dc_vals, isource_dc_vals = self._get_dc_source_values(n_vsources, n_isources)
+
+        # Create NR solver
+        build_system_fn, device_arrays, total_limit_states = self._make_mna_build_system_fn(
+            source_device_data, vmapped_fns, static_inputs_cache, n_unknowns, use_dense=True
+        )
+        build_system_jit = jax.jit(build_system_fn)
+
+        # Collect NOI and internal node indices
+        noi_indices = []
+        all_internal_indices = []
+        if device_internal_nodes:
+            for dev_name, internal_nodes in device_internal_nodes.items():
+                for node_name, node_idx in internal_nodes.items():
+                    all_internal_indices.append(node_idx)
+                    if node_name == "node4":
+                        noi_indices.append(node_idx)
+        noi_indices_arr = jnp.array(noi_indices, dtype=jnp.int32) if noi_indices else None
+        internal_device_indices = (
+            jnp.array(sorted(set(all_internal_indices)), dtype=jnp.int32)
+            if all_internal_indices
+            else None
+        )
+
+        nr_solve = make_dense_full_mna_solver(
+            build_system_jit,
+            n_total,
+            n_vsources,
+            noi_indices=noi_indices_arr,
+            internal_device_indices=internal_device_indices,
+            max_iterations=self.options.op_itl,
+            abstol=self.options.abstol,
+            total_limit_states=total_limit_states,
+            options=self.options,
+        )
+        nr_solve = jax.jit(nr_solve)
+
+        Q_prev = jnp.zeros(n_unknowns, dtype=get_float_dtype())
+
+        # Initialize X
+        vdd_value = self._get_vdd_value() or 1.0
+        mid_rail = vdd_value / 2.0
+        X = jnp.zeros(n_total + n_vsources, dtype=get_float_dtype())
+        X = X.at[1:n_total].set(mid_rail)
+
+        # Storage for results
+        all_voltages = {name: [] for name in self.node_names}
+        all_currents = {}
+        if source_device_data.get("vsource"):
+            for name in source_device_data["vsource"]["names"]:
+                all_currents[name] = []
+
+        converged_count = 0
+
+        for i, val in enumerate(sweep_values):
+            # Update the swept source value
+            if sweep_is_vsource:
+                vs_vals = vsource_dc_vals.at[sweep_idx].set(float(val))
+                is_vals = isource_dc_vals
+            else:
+                vs_vals = vsource_dc_vals
+                is_vals = isource_dc_vals.at[sweep_idx].set(float(val))
+
+            # Solve DC operating point (use previous solution as initial guess)
+            X_new, nr_iters, is_converged, max_f, _, _, _, _, _ = nr_solve(
+                X, vs_vals, is_vals, Q_prev, 0.0, device_arrays,
+            )
+
+            if is_converged:
+                converged_count += 1
+                X = X_new  # Use as initial guess for next point
+
+            V = X_new[:n_total]
+
+            # Extract node voltages
+            for name, node_idx in self.node_names.items():
+                voltage = float(V[node_idx]) if node_idx < len(V) else 0.0
+                all_voltages[name].append(voltage)
+
+            # Extract branch currents from augmented unknowns
+            if source_device_data.get("vsource"):
+                for j, name in enumerate(source_device_data["vsource"]["names"]):
+                    current = float(X_new[n_total + j])
+                    all_currents[name].append(current)
+
+        logger.info(
+            f"DC sweep complete: {converged_count}/{len(sweep_values)} points converged"
+        )
+
+        # Convert to arrays
+        voltages_out = {name: jnp.array(vals) for name, vals in all_voltages.items()}
+        currents_out = {name: jnp.array(vals) for name, vals in all_currents.items()}
+
+        return DCSweepResult(
+            sweep_parameter=source,
+            sweep_values=jnp.array(sweep_values),
+            voltages=voltages_out,
+            currents=currents_out,
+        )
 
     # =========================================================================
     # AC (Small-Signal) Analysis

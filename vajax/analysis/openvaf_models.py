@@ -380,10 +380,12 @@ def compile_openvaf_models(
                 model_info = model_paths.get(model_type)
                 if model_info:
                     base_key, va_path = model_info
-                    base_path = base_paths.get(base_key)
-                    if base_path:
-                        full_path = base_path / va_path
-                        if full_path.exists():
+                    if base_key == "absolute":
+                        full_path = Path(va_path)
+                    else:
+                        base_path = base_paths.get(base_key)
+                        full_path = base_path / va_path if base_path else None
+                    if full_path and full_path.exists():
                             from openvaf_jax.cache import compute_va_hash
 
                             current_hash = compute_va_hash(full_path)
@@ -410,11 +412,14 @@ def compile_openvaf_models(
             raise ValueError(f"Unknown OpenVAF model type: {model_type}")
 
         base_key, va_path = model_info
-        base_path = base_paths.get(base_key)
-        if not base_path:
-            raise ValueError(f"Unknown base path key: {base_key}")
-
-        full_path = base_path / va_path
+        if base_key == "absolute":
+            # Absolute path from load statement resolution
+            full_path = Path(va_path)
+        else:
+            base_path = base_paths.get(base_key)
+            if not base_path:
+                raise ValueError(f"Unknown base path key: {base_key}")
+            full_path = base_path / va_path
         if not full_path.exists():
             raise FileNotFoundError(f"VA model not found: {full_path}")
 

@@ -5,7 +5,7 @@ using OpenVAF-compiled devices.
 """
 
 # Public API - main entry points
-from vajax.analysis.engine import CircuitEngine, TransientResult, warmup_models
+from vajax.analysis.engine import CircuitEngine, DCSweepResult, TransientResult, warmup_models
 
 # Transient configuration
 from vajax.analysis.transient import AdaptiveConfig
@@ -44,6 +44,7 @@ from vajax.analysis.hb import HBConfig, HBResult
 __all__ = [
     # Core
     "CircuitEngine",
+    "DCSweepResult",
     "TransientResult",
     "warmup_models",
     # Transient configuration
