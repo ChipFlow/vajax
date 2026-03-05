@@ -5,17 +5,18 @@
 [![Lint](https://github.com/ChipFlow/vajax/actions/workflows/lint.yml/badge.svg)](https://github.com/ChipFlow/vajax/actions/workflows/lint.yml)
 [![Benchmark](https://github.com/ChipFlow/vajax/actions/workflows/benchmark-comparison.yml/badge.svg)](https://github.com/ChipFlow/vajax/actions/workflows/benchmark-comparison.yml)
 
-A proof-of-concept GPU-accelerated analog circuit simulator built on JAX, demonstrating:
-- **Automatic differentiation** for computing device Jacobians without explicit derivatives
-- **GPU acceleration** for large circuits using JAX's JIT compilation
-- **Verilog-A model integration** via OpenVAF/OSDI bindings for PDK compatibility
-- **SAX-inspired functional device model API**
+An open-source GPU-accelerated analog circuit simulator. Run your existing
+Verilog-A models — including production PDK models like PSP103 — on GPUs for
+dramatic speedups on large circuits.
 
-## Current Status
+**Why VAJAX?**
 
-VAJAX is in active development as a proof-of-concept. All VACASK benchmark circuits are passing.
+- **Use your existing models** — Verilog-A models are compiled directly to GPU code via [OpenVAF](https://openvaf.semimod.de/), no manual porting required
+- **GPU acceleration where it matters** — Large circuits (1000+ nodes) run **2.9x faster** than C++ simulators on GPU
+- **Drop-in analysis** — DC, transient, AC, noise, transfer function, corner sweeps, and harmonic balance
+- **Open source** — Apache-2.0 licensed, no license servers
 
-**[Documentation & benchmark results →](https://docs.chipflow.io/vajax/)**
+**Coming from Spectre or ngspice?** See the [migration guide](docs/for_spectre_users.md).
 
 ### Help Us Improve
 
@@ -23,6 +24,13 @@ Are you an analog designer evaluating VAJAX? We'd love your feedback! Send us yo
 circuits and simulation traces (from Spectre, ngspice, or any SPICE simulator) and
 we'll add them to our validation test suite. Open an [issue](https://github.com/ChipFlow/vajax/issues)
 or email us.
+
+## Current Status
+
+VAJAX is in active development. All [VACASK](https://github.com/nickg/vacask) benchmark
+circuits are passing.
+
+**[Documentation & benchmark results →](https://docs.chipflow.io/vajax/)**
 
 ## Validation: Three-Way Comparison
 
@@ -222,10 +230,12 @@ vajax/
 
 ### Key Design Principles
 
-1. **Functional devices**: All device models are pure JAX functions that take terminal voltages and parameters, returning current/conductance stamps
-2. **Automatic differentiation**: Jacobians computed via JAX autodiff - no explicit derivatives needed
-3. **Vectorized evaluation**: Devices grouped by type and evaluated in parallel with `jax.vmap`
+1. **Verilog-A to JAX compilation**: Device models are compiled from Verilog-A source to JAX functions via OpenVAF's IR — residuals and Jacobians are computed explicitly, no hand-written derivatives needed
+2. **Vectorized evaluation**: Devices grouped by type and evaluated in parallel with `jax.vmap`
+3. **GPU-first hot path**: Simulation loops use `lax.while_loop` and `lax.scan` to stay on-device
 4. **Sparse scalability**: Auto-switches to sparse matrices for large circuits
+
+For architecture details, see the [developer guide](docs/architecture_overview.md).
 
 ### Device Model Interface
 
@@ -254,7 +264,7 @@ model nmos psp103va
 | VSource | Built-in | DC, pulse, sine, PWL voltage sources |
 | ISource | Built-in | DC, pulse current sources |
 | PSP103 | `psp103.va` | Production MOSFET model (OpenVAF) |
-| Any VA | OpenVAF | Any Verilog-A model via OSDI interface |
+| Any VA | OpenVAF | Any Verilog-A model compiled to JAX |
 
 ## Analysis Types
 
@@ -339,7 +349,9 @@ acxf_result = engine.run_acxf(out="vout", freq_start=1e3, freq_stop=1e9)
 
 ## Verilog-A Integration
 
-VAJAX can use production PDK models via OpenVAF:
+VAJAX compiles Verilog-A models directly to JAX functions via OpenVAF's intermediate
+representation. This means production PDK models (PSP103, BSIM, EKV, etc.) run natively
+on GPU without manual porting:
 
 ```python
 from vajax.devices.verilog_a import compile_va, VerilogADevice
