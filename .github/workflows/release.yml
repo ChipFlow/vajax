@@ -378,6 +378,8 @@ jobs:
   publish-testpypi-vajax:
     needs: [build-vajax, test-wheel-install, check-ci]
     runs-on: ubuntu-latest
+    continue-on-error: true
+    concurrency: publish-testpypi-vajax
     environment: testpypi
     permissions:
       id-token: write
@@ -395,6 +397,8 @@ jobs:
   publish-testpypi-osdi-py:
     needs: [build-osdi-py, test-wheel-install, check-ci]
     runs-on: ubuntu-latest
+    continue-on-error: true
+    concurrency: publish-testpypi-osdi-py
     environment: testpypi
     permissions:
       id-token: write
@@ -413,6 +417,8 @@ jobs:
   publish-testpypi-openvaf-py:
     needs: [build-openvaf-py, test-wheel-install, check-ci]
     runs-on: ubuntu-latest
+    continue-on-error: true
+    concurrency: publish-testpypi-openvaf-py
     environment: testpypi
     permissions:
       id-token: write
@@ -431,6 +437,8 @@ jobs:
   publish-testpypi-umfpack-jax:
     needs: [build-umfpack-jax, test-wheel-install, check-ci]
     runs-on: ubuntu-latest
+    continue-on-error: true
+    concurrency: publish-testpypi-umfpack-jax
     environment: testpypi
     permissions:
       id-token: write
@@ -453,6 +461,7 @@ jobs:
     if: startsWith(github.ref, 'refs/tags/v')
     needs: [publish-testpypi-vajax, check-ci]
     runs-on: ubuntu-latest
+    concurrency: publish-pypi-vajax
     environment: pypi
     permissions:
       id-token: write
@@ -467,6 +476,7 @@ jobs:
     if: startsWith(github.ref, 'refs/tags/v')
     needs: [publish-testpypi-osdi-py, check-ci]
     runs-on: ubuntu-latest
+    concurrency: publish-pypi-osdi-py
     environment: pypi
     permissions:
       id-token: write
@@ -482,6 +492,7 @@ jobs:
     if: startsWith(github.ref, 'refs/tags/v')
     needs: [publish-testpypi-openvaf-py, check-ci]
     runs-on: ubuntu-latest
+    concurrency: publish-pypi-openvaf-py
     environment: pypi
     permissions:
       id-token: write
@@ -497,6 +508,7 @@ jobs:
     if: startsWith(github.ref, 'refs/tags/v')
     needs: [publish-testpypi-umfpack-jax, check-ci]
     runs-on: ubuntu-latest
+    concurrency: publish-pypi-umfpack-jax
     environment: pypi
     permissions:
       id-token: write
