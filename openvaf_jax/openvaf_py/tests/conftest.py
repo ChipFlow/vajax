@@ -20,6 +20,27 @@ import pytest
 
 import openvaf_jax
 
+# ---------------------------------------------------------------------------
+# Memory management: clear JAX caches between test modules to prevent
+# unbounded memory growth in long-lived pytest-xdist workers.
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture(autouse=True, scope="module")
+def _clear_jax_caches_between_modules():
+    """Clear JAX compilation caches after each test module.
+
+    xdist workers are long-lived processes that accumulate XLA compilation
+    artifacts across test modules. Large models (BSIM4, PSP103, HiSIMHV)
+    each use 1-2 GB peak RSS; without cleanup, 4 workers can exhaust 32 GB.
+    """
+    import gc
+
+    yield  # run the module's tests
+    jax.clear_caches()
+    gc.collect()
+
+
 # Path to OpenVAF integration tests (in vendor submodule at project root)
 # Path: tests/conftest.py -> openvaf_py -> openvaf_jax -> vajax (root) -> vendor
 PROJECT_ROOT = Path(__file__).parent.parent.parent.parent

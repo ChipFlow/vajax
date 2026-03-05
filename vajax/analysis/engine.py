@@ -333,18 +333,17 @@ class CircuitEngine:
     def clear_cache(self):
         """Clear all cached data to free memory.
 
-        Call this to release:
-        - Compiled OpenVAF models
-        - Cached JIT-compiled NR solvers
-        - JAX internal compilation caches
-        """
-        import gc
+        Clears instance-level caches (compiled models, solver state) and
+        delegates to ``vajax.clear_caches()`` for global/JAX caches.
 
+        See Also:
+            ``vajax.clear_caches()`` for clearing all global caches without
+            a CircuitEngine instance.
+        """
         # Clear instance caches
         self._compiled_models.clear()
         self._model_params_cache.clear()
         self._device_type_cache.clear()
-        # Note: _SPICE_NUMBER_CACHE is module-level and not cleared here
         if hasattr(self, "_cached_nr_solve"):
             del self._cached_nr_solve
         if hasattr(self, "_cached_solver_key"):
@@ -355,11 +354,10 @@ class CircuitEngine:
         self._transient_setup_key = None
         self._prepared = False
 
-        # Clear JAX compilation caches
-        jax.clear_caches()
+        # Clear global and JAX caches
+        import vajax
 
-        # Force garbage collection
-        gc.collect()
+        vajax.clear_caches()
 
         logger.info("Cleared caches and freed memory")
 

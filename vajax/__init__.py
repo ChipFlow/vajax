@@ -246,6 +246,74 @@ def build_simparams(metadata: dict, values: dict | None = None) -> list:
     return simparams
 
 
+def clear_caches(include_persistent: bool = False) -> dict:
+    """Clear all in-memory caches to free memory.
+
+    Call this after completing a simulation to reclaim memory, especially
+    in long-running processes or when processing many different circuits.
+
+    Args:
+        include_persistent: If True, also clear the persistent on-disk
+            OpenVAF compilation cache (~/.cache/vajax/openvaf/).
+            The JAX XLA disk cache is NOT cleared (delete the directory
+            manually if needed).
+
+    Returns:
+        Dict with counts of cleared cache entries for diagnostics.
+
+    Example:
+        >>> engine = vajax.CircuitEngine(sim_file)
+        >>> engine.parse()
+        >>> engine.prepare()
+        >>> result = engine.run_transient()
+        >>> # Done with this circuit, free memory
+        >>> stats = vajax.clear_caches()
+        >>> print(stats)
+        {'openvaf_compiled_models': 3, 'openvaf_exec_fns': 5, ...}
+    """
+    import gc
+
+    stats = {}
+
+    # 1. Clear global compiled model cache
+    from vajax.analysis.openvaf_models import COMPILED_MODEL_CACHE
+
+    stats["openvaf_compiled_models"] = len(COMPILED_MODEL_CACHE)
+    COMPILED_MODEL_CACHE.clear()
+
+    # 2. Clear openvaf_jax function caches (exec'd functions + vmapped JIT)
+    try:
+        from openvaf_jax.cache import cache_stats as _cache_stats
+        from openvaf_jax.cache import clear_cache as _clear_openvaf_cache
+
+        cs = _cache_stats()
+        stats["openvaf_exec_fns"] = cs.get("exec_fn_count", 0)
+        stats["openvaf_vmapped_jit"] = cs.get("vmapped_jit_count", 0)
+        _clear_openvaf_cache()
+    except ImportError:
+        pass
+
+    # 3. Clear persistent disk cache if requested
+    if include_persistent:
+        try:
+            from openvaf_jax.cache import clear_persistent_cache
+
+            clear_persistent_cache()
+            stats["persistent_cache_cleared"] = True
+        except ImportError:
+            pass
+
+    # 4. Clear JAX compilation caches (in-memory only, not disk)
+    jax.clear_caches()
+    stats["jax_caches_cleared"] = True
+
+    # 5. Force garbage collection
+    gc.collect()
+
+    logger.info(f"Cleared all caches: {stats}")
+    return stats
+
+
 # Core simulation API
 from vajax.analysis import CircuitEngine, TransientResult, warmup_models
 
@@ -264,6 +332,8 @@ __all__ = [
     "CircuitEngine",
     "TransientResult",
     "warmup_models",
+    # Cache management
+    "clear_caches",
     # Precision configuration
     "configure_precision",
     "get_precision_info",
