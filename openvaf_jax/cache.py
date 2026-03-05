@@ -278,3 +278,49 @@ def clear_persistent_cache():
         shutil.rmtree(cache_dir)
         cache_dir.mkdir(parents=True, exist_ok=True)
         logger.info("Cleared persistent OpenVAF cache")
+
+
+def cleanup_persistent_cache(max_age_days: int = 30) -> dict:
+    """Remove persistent cache entries older than max_age_days.
+
+    Uses the most recent file modification time within each model's cache
+    directory to determine age.
+
+    Args:
+        max_age_days: Maximum age in days before a cache entry is removed.
+
+    Returns:
+        Dict with cleanup stats: {"removed": [...], "kept": [...]}
+    """
+    import shutil
+    import time
+
+    cache_dir = get_persistent_cache_dir()
+    if not cache_dir.exists():
+        return {"removed": [], "kept": []}
+
+    cutoff = time.time() - (max_age_days * 86400)
+    removed = []
+    kept = []
+
+    for entry in cache_dir.iterdir():
+        if not entry.is_dir():
+            continue
+        # Find newest file in the cache entry
+        newest_mtime = 0.0
+        for f in entry.rglob("*"):
+            if f.is_file():
+                newest_mtime = max(newest_mtime, f.stat().st_mtime)
+        if newest_mtime == 0.0:
+            newest_mtime = entry.stat().st_mtime
+
+        if newest_mtime < cutoff:
+            shutil.rmtree(entry)
+            removed.append(entry.name)
+            logger.info(f"Removed stale cache entry: {entry.name}")
+        else:
+            kept.append(entry.name)
+
+    if removed:
+        logger.info(f"Cache cleanup: removed {len(removed)}, kept {len(kept)}")
+    return {"removed": removed, "kept": kept}

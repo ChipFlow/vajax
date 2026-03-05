@@ -275,10 +275,15 @@ def clear_caches(include_persistent: bool = False) -> dict:
 
     stats = {}
 
-    # 1. Clear global compiled model cache
-    from vajax.analysis.openvaf_models import COMPILED_MODEL_CACHE
+    # 1. Release heavy MIR/Rust memory from cached models, then clear cache
+    from vajax.analysis.openvaf_models import COMPILED_MODEL_CACHE, release_model_memory
 
     stats["openvaf_compiled_models"] = len(COMPILED_MODEL_CACHE)
+    release_stats = release_model_memory()
+    stats["models_mir_released"] = sum(1 for s in release_stats.values() if s["mir_released"])
+    stats["models_module_released"] = sum(
+        1 for s in release_stats.values() if s["module_released"]
+    )
     COMPILED_MODEL_CACHE.clear()
 
     # 2. Clear openvaf_jax function caches (exec'd functions + vmapped JIT)
@@ -314,6 +319,57 @@ def clear_caches(include_persistent: bool = False) -> dict:
     return stats
 
 
+def release_model(model_type: str) -> dict:
+    """Release heavy memory for a specific model while keeping others cached.
+
+    Use this when switching between different models (e.g., finishing with BSIM4
+    and moving to PSP103) to free the ~100s MB of Rust/MIR data without clearing
+    the entire cache.
+
+    The model's compiled JAX functions and metadata are preserved in cache, but
+    generating split functions for a new circuit topology will require
+    recompilation. Call clear_caches() to fully reset.
+
+    Args:
+        model_type: The model type to release (e.g., 'psp103', 'bsim4').
+
+    Returns:
+        Dict with release stats for the model.
+
+    Example:
+        >>> engine1 = vajax.CircuitEngine(bsim4_circuit)
+        >>> engine1.run_transient()
+        >>> vajax.release_model('bsim4')  # Free ~800MB of BSIM4 MIR/Rust data
+        >>> engine2 = vajax.CircuitEngine(psp103_circuit)
+        >>> engine2.run_transient()
+    """
+    from vajax.analysis.openvaf_models import release_model_memory
+
+    stats = release_model_memory([model_type])
+    return stats.get(model_type, {"mir_released": False, "module_released": False})
+
+
+def cleanup_disk_cache(max_age_days: int = 30) -> dict:
+    """Remove stale on-disk OpenVAF compilation cache entries.
+
+    Entries older than max_age_days are removed based on their most recent
+    file modification time. This is useful for long-running systems to prevent
+    unbounded disk usage.
+
+    Args:
+        max_age_days: Maximum age in days before removal (default: 30).
+
+    Returns:
+        Dict with {"removed": [...], "kept": [...]}.
+    """
+    try:
+        from openvaf_jax.cache import cleanup_persistent_cache
+
+        return cleanup_persistent_cache(max_age_days)
+    except ImportError:
+        return {"removed": [], "kept": []}
+
+
 # Core simulation API
 from vajax.analysis import CircuitEngine, TransientResult, warmup_models
 
@@ -334,6 +390,8 @@ __all__ = [
     "warmup_models",
     # Cache management
     "clear_caches",
+    "release_model",
+    "cleanup_disk_cache",
     # Precision configuration
     "configure_precision",
     "get_precision_info",

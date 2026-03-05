@@ -75,6 +75,48 @@ except ImportError:
 # Keyed by model_type, contains translator, functions, metadata
 COMPILED_MODEL_CACHE: Dict[str, Any] = {}
 
+
+def release_model_memory(model_types: Optional[List[str]] = None) -> dict:
+    """Release heavy MIR data and Rust module references from cached models.
+
+    After calling this, the translator's parsed MIR and VaModule (Rust-backed,
+    ~100s MB for large models like BSIM4) are freed. The compiled model remains
+    usable for simulation (split functions, caches, metadata are preserved), but
+    cannot generate new split functions for different circuit topologies.
+
+    To restore full functionality, clear the cache and recompile the model.
+
+    Args:
+        model_types: List of model types to release, or None for all cached models.
+
+    Returns:
+        Dict with stats: {model_type: {"mir_released": bool, "module_released": bool}}
+    """
+    import gc
+
+    targets = model_types if model_types is not None else list(COMPILED_MODEL_CACHE.keys())
+    stats = {}
+    for model_type in targets:
+        compiled = COMPILED_MODEL_CACHE.get(model_type)
+        if compiled is None:
+            continue
+        model_stats = {"mir_released": False, "module_released": False}
+        translator = compiled.get("translator")
+        if translator is not None:
+            if translator.mir_data is not None or translator.eval_mir is not None:
+                translator.release_mir_data()
+                model_stats["mir_released"] = True
+            if translator.module is not None:
+                translator.module = None
+                model_stats["module_released"] = True
+        module = compiled.get("module")
+        if module is not None:
+            compiled.pop("module", None)
+            model_stats["module_released"] = True
+        stats[model_type] = model_stats
+    gc.collect()
+    return stats
+
 # OpenVAF model sources: model_type -> (base_path_key, relative_path)
 MODEL_PATHS = {
     "psp103": ("integration_tests", "PSP103/psp103.va"),
@@ -241,16 +283,22 @@ def warmup_models(
         t4 = time.perf_counter()
         log(f"  {model_type}: eval_fn generated in {t4 - t3:.1f}s")
 
-        # Cache the compiled model
+        # Cache the compiled model (extract nodes before releasing translator)
+        nodes = list(translator.module.nodes)
         compiled = {
-            "translator": translator,
             "init_fn": init_fn,
             "init_meta": init_meta,
             "eval_fn": eval_fn,
             "eval_meta": eval_meta,
             "param_names": init_meta["param_names"],
-            "nodes": translator.module.nodes,
+            "nodes": nodes,
         }
+
+        # Release MIR data — all translate_*() calls are done
+        translator.release_mir_data()
+        translator.module = None
+        del translator
+
         COMPILED_MODEL_CACHE[model_type] = compiled
         results[model_type] = compiled
 
