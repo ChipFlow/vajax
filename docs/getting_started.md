@@ -28,8 +28,7 @@ brew install vajax
 pip install vajax
 ```
 
-GPU note: macOS Metal backend is supported but automatically falls back to CPU
-for linear algebra operations. Float32 precision only on Metal.
+GPU note: macOS GPU acceleration via Metal is in development. Currently runs on CPU.
 
 ### Windows
 
@@ -190,7 +189,7 @@ result = engine.run_transient()
 
 ## Known Limitations
 
-- **Float32 only on Metal/TPU** backends (float64 on CPU/CUDA)
+- **macOS GPU** — Metal backend is in development; currently CPU-only
 - **No interactive waveform viewer** built-in (use matplotlib or export to raw files)
 
 ## Importing SPICE Netlists

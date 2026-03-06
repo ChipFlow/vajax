@@ -82,7 +82,8 @@ uv run python scripts/profile_gpu.py --benchmark ring,c6288
 
 Precision is auto-configured on import via `vajax/__init__.py`:
 - **CPU/CUDA**: Float64 enabled (`jax_enable_x64=True`) for numerical accuracy
-- **Metal/TPU**: Float32 (`jax_enable_x64=False`) since these backends don't support float64 natively
+- **Metal**: Not yet supported (GPU backend in development). Auto-config sets float32 but Metal path is untested.
+- **TPU**: Float32 (`jax_enable_x64=False`) — TPU doesn't support float64 natively
 
 To check or override precision:
 ```python

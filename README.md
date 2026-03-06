@@ -409,8 +409,7 @@ JAX_PLATFORMS=cpu uv run pytest tests/test_vacask_suite.py -v
 Full support. CUDA GPU acceleration with `pip install "vajax[cuda12]"`.
 
 ### macOS
-CPU and Metal backends. Metal doesn't support `triangular_solve`, so
-automatically falls back to CPU. Float32 only (Metal doesn't support float64).
+CPU backend. GPU acceleration via Metal is in development.
 
 ### Windows (GPU via WSL2)
 
@@ -441,7 +440,6 @@ WSL2 — no separate Linux CUDA driver install needed.
 ### Precision
 Auto-configured based on backend:
 - CPU/CUDA: Float64 enabled for numerical precision
-- Metal/TPU: Float32 (backends don't support float64 natively)
 - Use `vajax.configure_precision(force_x64=True/False)` to override
 
 ## Documentation
