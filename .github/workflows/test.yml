@@ -11,12 +11,12 @@ env:
   CARGO_INCREMENTAL: 0
   SCCACHE_GHA_ENABLED: "false"
   RUSTC_WRAPPER: "sccache"
-  # XLA compilation cache - keyed by OS and architecture to avoid mismatches
-  JAX_COMPILATION_CACHE_DIR: /tmp/jax-xla-cache
 
 jobs:
   test-openvaf-py:
     runs-on: ubuntu-latest-8-cores
+    env:
+      JAX_COMPILATION_CACHE_DIR: /tmp/jax-xla-cache
     steps:
       - name: Checkout with submodules
         uses: actions/checkout@v4
@@ -70,6 +70,8 @@ jobs:
 
   test-vajax:
     runs-on: ubuntu-latest
+    env:
+      JAX_COMPILATION_CACHE_DIR: /tmp/jax-xla-cache
     strategy:
       fail-fast: false
       matrix:
@@ -192,4 +194,74 @@ jobs:
         with:
           name: test-summary-${{ matrix.test-group.name }}
           path: test-results-*.xml
+          if-no-files-found: ignore
+
+  test-vajax-windows:
+    runs-on: windows-latest
+    name: test-vajax (windows)
+    steps:
+      - name: Checkout with submodules
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Set up sccache
+        uses: mozilla-actions/sccache-action@v0.0.7
+        with:
+          disable_annotations: true
+
+      - name: Cache Rust dependencies
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: openvaf_jax/openvaf_py
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v4
+
+      - name: Set up Python
+        run: uv python install 3.11
+
+      - name: Build openvaf-py
+        working-directory: openvaf_jax/openvaf_py
+        run: |
+          uv sync
+          uv run maturin develop --release
+
+      - name: Install vajax with dev dependencies
+        run: uv sync --extra dev
+
+      - name: Run core tests
+        timeout-minutes: 30
+        env:
+          JAX_PLATFORMS: cpu
+          VAJAX_NO_PROGRESS: "1"
+          JAX_COMPILATION_CACHE_DIR: ${{ runner.temp }}\jax-xla-cache
+        run: >-
+          uv run pytest
+          tests/test_vacask_suite.py
+          tests/test_vacask_jax.py
+          tests/test_ac_analysis.py
+          tests/test_hb_analysis.py
+          tests/test_noise_analysis.py
+          tests/test_xfer_analysis.py
+          tests/test_dc_sweep.py
+          -v --tb=short
+          --junitxml=test-results-windows.xml
+
+      - name: Verify CLI
+        env:
+          JAX_PLATFORMS: cpu
+        run: |
+          uv run vajax --version
+          uv run vajax info
+
+      - name: Upload test results
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: test-summary-windows
+          path: test-results-windows.xml
           if-no-files-found: ignore
