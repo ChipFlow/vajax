@@ -399,6 +399,82 @@ jobs:
           print(f'openvaf_py imported OK')
           "
 
+  test-wheel-install-windows:
+    needs: [build-vajax, build-openvaf-py, build-osdi-py, build-umfpack-jax]
+    runs-on: windows-latest
+    continue-on-error: true
+    steps:
+      - uses: astral-sh/setup-uv@v4
+        with:
+          enable-cache: true
+      - run: uv python install 3.12
+
+      - name: Download all wheels
+        uses: actions/download-artifact@v4
+        with:
+          pattern: wheels-*
+          path: wheels
+          merge-multiple: true
+
+      - name: List available wheels
+        run: Get-ChildItem -Recurse wheels/ -Filter *.whl | Select-Object Name
+        shell: pwsh
+
+      - name: Install wheels in fresh venv
+        run: |
+          uv venv ${{ runner.temp }}\test-venv --python 3.12
+          uv pip install --python ${{ runner.temp }}\test-venv\Scripts\python.exe --find-links wheels/ vajax openvaf-py osdi-py
+          uv pip install --python ${{ runner.temp }}\test-venv\Scripts\python.exe --find-links wheels/ umfpack-jax || echo "umfpack-jax not available for Windows (expected if wheel build failed)"
+        shell: pwsh
+
+      - name: Verify imports
+        env:
+          JAX_PLATFORMS: cpu
+        run: |
+          & "${{ runner.temp }}\test-venv\Scripts\python.exe" -c @"
+          import vajax
+          print(f'vajax {vajax.__version__} imported OK')
+          from vajax.analysis.openvaf_models import MODEL_PATHS, _BUNDLED_MODELS_DIR
+          print(f'MODEL_PATHS has {len(MODEL_PATHS)} entries')
+          missing = []
+          for name, (base_key, rel_path) in MODEL_PATHS.items():
+              if base_key == 'bundled':
+                  if not (_BUNDLED_MODELS_DIR / rel_path).exists():
+                      missing.append(name)
+          assert not missing, f'Missing bundled models: {missing}'
+          print('All bundled models present')
+          import openvaf_py
+          print('openvaf_py imported OK')
+          "@
+        shell: pwsh
+
+      - name: Run simple simulation
+        env:
+          JAX_PLATFORMS: cpu
+        run: |
+          & "${{ runner.temp }}\test-venv\Scripts\python.exe" -c @"
+          import tempfile, os
+          from pathlib import Path
+          sim_content = '''RC Circuit
+          resistor r1 in out r=1k
+          capacitor c1 out 0 c=1n
+          vsource v1 in 0 type=pulse val0=0.0 val1=1.0 td=1n tr=1n tf=1n pw=50n per=100n
+          .tran 0.1n 200n
+          '''
+          sim_file = Path(tempfile.mktemp(suffix='.sim'))
+          sim_file.write_text(sim_content)
+          from vajax import CircuitEngine
+          engine = CircuitEngine(str(sim_file))
+          engine.parse()
+          engine.prepare(t_stop=200e-9, dt=0.1e-9)
+          result = engine.run_transient()
+          print(f'Simulation OK: {len(result.times)} time points')
+          assert len(result.times) > 10, f'Too few time points: {len(result.times)}'
+          print('Windows end-to-end test PASSED')
+          os.unlink(sim_file)
+          "@
+        shell: pwsh
+
   # =========================================================================
   # Step 3: Publish to TestPyPI (every push to main + tag releases)
   # =========================================================================
