@@ -405,12 +405,44 @@ JAX_PLATFORMS=cpu uv run pytest tests/test_vacask_suite.py -v
 
 ## Platform Notes
 
-- **macOS**: Metal GPU backend doesn't support `triangular_solve`, automatically falls back to CPU
-- **Linux + CUDA**: CUDA libraries are auto-preloaded for GPU detection
-- **Precision**: Auto-configured based on backend:
-  - CPU/CUDA: Float64 enabled for numerical precision
-  - Metal/TPU: Float32 (backends don't support float64 natively)
-  - Use `vajax.configure_precision(force_x64=True/False)` to override
+### Linux
+Full support. CUDA GPU acceleration with `pip install "vajax[cuda12]"`.
+
+### macOS
+CPU and Metal backends. Metal doesn't support `triangular_solve`, so
+automatically falls back to CPU. Float32 only (Metal doesn't support float64).
+
+### Windows (GPU via WSL2)
+
+VAJAX runs natively on Windows for CPU simulations (`pip install vajax`).
+For GPU acceleration, use [WSL2](https://learn.microsoft.com/en-us/windows/wsl/install)
+— JAX's CUDA backend requires Linux. Most analog designers are comfortable with
+Linux environments, and WSL2 provides native GPU passthrough with no performance
+penalty:
+
+```powershell
+# 1. Install WSL2 (one-time, from PowerShell as admin)
+wsl --install -d Ubuntu-24.04
+
+# 2. Inside WSL2, install VAJAX with CUDA
+pip install "vajax[cuda12]"
+
+# 3. Verify GPU detection
+python -c "import jax; print(jax.devices())"
+# [CudaDevice(id=0)]
+
+# 4. Run simulations — your Windows filesystem is at /mnt/c/
+vajax /mnt/c/Users/you/circuits/my_circuit.sim
+```
+
+Your NVIDIA GPU driver on Windows automatically provides CUDA support inside
+WSL2 — no separate Linux CUDA driver install needed.
+
+### Precision
+Auto-configured based on backend:
+- CPU/CUDA: Float64 enabled for numerical precision
+- Metal/TPU: Float32 (backends don't support float64 natively)
+- Use `vajax.configure_precision(force_x64=True/False)` to override
 
 ## Documentation
 

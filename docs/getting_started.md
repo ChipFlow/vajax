@@ -5,25 +5,59 @@ This guide walks you through installing VAJAX and running your first circuit sim
 ## Prerequisites
 
 - Python 3.11-3.13
+- For GPU acceleration: Linux with NVIDIA CUDA 12+ (or Windows with WSL2)
 
 ## Installation
 
-### From PyPI (recommended)
+### Linux
 
 ```bash
 pip install vajax
 
-# With GPU support (Linux + NVIDIA CUDA 12)
+# With CUDA GPU support
 pip install "vajax[cuda12]"
 ```
 
-This installs VAJAX and all dependencies (JAX, openvaf-py, umfpack-jax).
-
-### On macOS (via Homebrew)
+### macOS
 
 ```bash
+# Via Homebrew
 brew install vajax
+
+# Or via pip
+pip install vajax
 ```
+
+GPU note: macOS Metal backend is supported but automatically falls back to CPU
+for linear algebra operations. Float32 precision only on Metal.
+
+### Windows
+
+VAJAX works on Windows for CPU simulations:
+
+```powershell
+pip install vajax
+```
+
+For **GPU acceleration**, use WSL2 — JAX's CUDA backend requires Linux, and
+WSL2 provides native GPU passthrough with no performance penalty. If you've
+used EDA tools on Linux, you'll feel right at home:
+
+```powershell
+# 1. Install WSL2 with Ubuntu (one-time, PowerShell as admin)
+wsl --install -d Ubuntu-24.04
+
+# 2. Open Ubuntu and install VAJAX with CUDA
+pip install "vajax[cuda12]"
+
+# 3. Verify GPU is detected
+python -c "import jax; print(jax.devices())"
+# [CudaDevice(id=0)]
+```
+
+Your Windows NVIDIA driver automatically provides CUDA inside WSL2 — no
+separate Linux driver install is needed. Your Windows files are accessible
+at `/mnt/c/`.
 
 ### From Source (for development)
 
@@ -156,7 +190,6 @@ result = engine.run_transient()
 
 ## Known Limitations
 
-- **No DC sweep analysis** yet (only DC operating point as part of other analyses)
 - **Float32 only on Metal/TPU** backends (float64 on CPU/CUDA)
 - **No interactive waveform viewer** built-in (use matplotlib or export to raw files)
 
