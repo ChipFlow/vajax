@@ -50,9 +50,12 @@ Simple RC circuit demonstrating basic transient behavior. VAJAX matches VACASK a
 ![Ring Oscillator Comparison](docs/images/ring_three_way_comparison.png)
 
 ### C6288 16-bit Multiplier
-Large-scale benchmark with ~86,000 nodes. Uses sparse solver for memory efficiency. Demonstrates VAJAX scaling to production-sized circuits.
+Large-scale benchmark with ~86,000 transistors (~5,000 nodes). Uses sparse solver for memory efficiency. Demonstrates VAJAX scaling to production-sized circuits.
 
 ![C6288 Comparison](docs/images/c6288_three_way_comparison.png)
+
+### Mul64 64-bit Multiplier
+Our largest benchmark: ~266,000 PSP103 MOSFETs with ~666,000 unknowns. Requires sparse solver and 24GB+ GPU VRAM. The fact that a JAX-based simulator can handle a circuit of this scale — with production MOSFET models — is a significant milestone.
 
 Generate comparison plots:
 ```bash
@@ -74,11 +77,13 @@ per-step timing against VACASK (C++ reference simulator) on CI runners.
 | mul       |     8 |  500k |         0.041 |            0.004 | 10.9x | 0.00%     |
 | ring      |    47 |   20k |         0.511 |            0.109 |  4.7x | -         |
 | c6288     | ~5000 |    1k |        88.060 |           76.390 |  1.2x | 2.01%     |
+| mul64     | ~133k |   15  |      8324.949 |          timeout |   —   | -         |
 
 ### GPU Performance
 
 | Benchmark | Nodes | JAX GPU (ms/step) | JAX CPU (ms/step) | GPU Speedup | vs VACASK CPU |
 |-----------|------:|-------------------:|-------------------:|------------:|--------------:|
+| mul64     | ~133k |            648.00  |           8324.95  |     12.8x   |   **VACASK timeout** |
 | c6288     | ~5000 |             19.81  |             88.06  |      4.4x   |   **2.9x faster** |
 | ring      |    47 |              1.49  |              0.51  |      0.3x   | below threshold |
 | rc        |     4 |              0.24  |              0.01  |      0.05x  | below threshold |
@@ -92,7 +97,9 @@ prevents this in normal usage.
 
 **Where VAJAX excels:** Large circuits (1000+ nodes) on GPU, where matrix
 operations dominate and GPU parallelism pays off. The c6288 benchmark (16-bit
-multiplier, ~5000 nodes) runs **2.9x faster than VACASK** on GPU.
+multiplier, ~5000 nodes) runs **2.9x faster than VACASK** on GPU. The mul64
+benchmark (~266k transistors, ~133k nodes) achieves **12.8x GPU speedup** over
+CPU — and VACASK times out entirely on this circuit.
 
 **Where VACASK is faster:** Small circuits on CPU. VAJAX carries a per-step
 fixed overhead of ~5-12 microseconds from:
@@ -291,6 +298,23 @@ result = engine.run_transient()
 # Access results
 times = result.times           # Array of time points
 voltages = result.voltages     # Dict of node_name -> voltage array
+```
+
+### DC Sweep
+
+```python
+# Sweep V1 from 0 to 1V
+dc_result = engine.run_dc_sweep(
+    source="v1",       # Source to sweep
+    start=0.0,         # Start value (V or A)
+    stop=1.0,          # Stop value
+    points=101,        # Number of points
+)
+
+# Access results
+sweep_values = dc_result.sweep_values   # Array of swept values
+voltages = dc_result.voltages           # Dict of node_name -> voltage array
+currents = dc_result.currents           # Dict of source_name -> current array
 ```
 
 ### AC Analysis
