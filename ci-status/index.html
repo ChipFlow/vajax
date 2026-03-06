@@ -1127,6 +1127,23 @@
     </span>
   </a>
   
+    <nav class="md-nav" aria-label="Performance">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#gpu-benchmarks" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        GPU Benchmarks
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
 </li>
       
     </ul>
@@ -1183,6 +1200,23 @@
     </span>
   </a>
   
+    <nav class="md-nav" aria-label="Performance">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#gpu-benchmarks" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        GPU Benchmarks
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
 </li>
       
     </ul>
@@ -1206,7 +1240,7 @@
 
 
 <h1 id="vajax-ci-summary">VAJAX CI Summary<a class="headerlink" href="#vajax-ci-summary" title="Permanent link">&para;</a></h1>
-<p><em>Last updated: 2026-03-06 16:34 UTC</em></p>
+<p><em>Last updated: 2026-03-06 16:36 UTC</em></p>
 <p><em>Commit: <a href="https://github.com/ChipFlow/vajax/commit/16be3162ac466845ceac576518bbe527e384f7e5">16be3162</a></em></p>
 <h2 id="test-coverage">Test Coverage<a class="headerlink" href="#test-coverage" title="Permanent link">&para;</a></h2>
 <table>
@@ -1298,7 +1332,53 @@
 </table>
 <h2 id="performance">Performance<a class="headerlink" href="#performance" title="Permanent link">&para;</a></h2>
 <p><em>No cpu benchmarks benchmark data available.</em></p>
-<p><em>No gpu benchmarks benchmark data available.</em></p>
+<h3 id="gpu-benchmarks">GPU Benchmarks<a class="headerlink" href="#gpu-benchmarks" title="Permanent link">&para;</a></h3>
+<table>
+<thead>
+<tr>
+<th>Benchmark</th>
+<th>Steps</th>
+<th>VAJAX (ms/step)</th>
+<th>VACASK (ms/step)</th>
+<th>Ratio</th>
+<th>Startup</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>rc</td>
+<td>1,000,000</td>
+<td>0.2390</td>
+<td>0.0009</td>
+<td>255.54x</td>
+<td>3.9s</td>
+</tr>
+<tr>
+<td>graetz</td>
+<td>1,000,000</td>
+<td>0.3111</td>
+<td>0.0019</td>
+<td>164.59x</td>
+<td>8.7s</td>
+</tr>
+<tr>
+<td>mul</td>
+<td>500,000</td>
+<td>0.4552</td>
+<td>0.0019</td>
+<td>234.66x</td>
+<td>6.6s</td>
+</tr>
+<tr>
+<td>ring</td>
+<td>19,999</td>
+<td>1.4682</td>
+<td>0.0453</td>
+<td>32.43x</td>
+<td>171.3s</td>
+</tr>
+</tbody>
+</table>
 <hr />
 <p><a href="https://github.com/ChipFlow/vajax/actions">View workflows</a> | 
 <a href="https://github.com/ChipFlow/vajax">Repository</a></p>
