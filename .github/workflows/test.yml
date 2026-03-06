@@ -150,7 +150,7 @@ jobs:
           uv run maturin develop --release
 
       - name: Install vajax with dev dependencies
-        run: uv sync --extra dev
+        run: uv sync --extra dev --extra umfpack
 
       - name: Build UMFPACK FFI extension
         working-directory: vajax/sparse
@@ -231,7 +231,7 @@ jobs:
           uv run maturin develop --release
 
       - name: Install vajax with dev dependencies
-        run: uv sync --extra dev
+        run: uv sync --extra dev --no-build-package umfpack-jax
 
       - name: Run core tests
         timeout-minutes: 30

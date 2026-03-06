@@ -14,7 +14,6 @@ dependencies = [
     "openvaf-py",
     "simpleeval>=1.0.0",
     "jaxlib>=0.9.0",
-    "umfpack-jax",
 ]
 
 [project.urls]
@@ -71,7 +70,6 @@ dev = [
     "beartype>=0.18.0",
     "ruff",
     "pyright",
-    "scikit-umfpack>=0.4.2",  # Requires libsuitesparse-dev + swig
     "osdi-py",  # For OSDI vs JAX comparison tests
 ]
 
