@@ -818,6 +818,8 @@ class EvalFunctionBuilder(FunctionBuilder):
         simparam_params: Optional[Dict[int, str]] = None,
         use_limit_functions: bool = False,
         limit_param_map: Optional[Dict[int, Tuple[str, str]]] = None,
+        concrete_shared_values: Optional[List[float]] = None,
+        concrete_shared_cache: Optional[List[float]] = None,
     ) -> Tuple[str, List[str]]:
         """Build eval function with split params and optional split cache.
 
@@ -838,6 +840,13 @@ class EvalFunctionBuilder(FunctionBuilder):
                             for limit-related params (prev_state, enable_lim, new_state,
                             enable_integration). These are read from limit_state_in or
                             set to constants instead of shared/device params.
+            concrete_shared_values: If provided, concrete float values for each
+                            shared param index. When set, shared params are emitted
+                            as Python literals instead of shared_params[N] lookups.
+                            This enables JAX trace-time constant folding, eliminating
+                            jnp.where branches that depend on static parameters.
+            concrete_shared_cache: If provided, concrete float values for each
+                            shared cache index. Same inlining behavior as above.
 
         Returns:
             Tuple of (function_name, code_lines)
@@ -897,11 +906,11 @@ class EvalFunctionBuilder(FunctionBuilder):
             body.append(assign("v3", ctx.zero()))
             ctx.defined_vars.add("v3")
 
-        # Map params from split arrays
-        self._emit_param_mapping(body, ctx, idx_mapping)
+        # Map params from split arrays (inline concrete values when provided)
+        self._emit_param_mapping(body, ctx, idx_mapping, concrete_shared_values)
 
-        # Map cache values
-        self._emit_cache_mapping(body, ctx, cache_idx_mapping)
+        # Map cache values (inline concrete values when provided)
+        self._emit_cache_mapping(body, ctx, cache_idx_mapping, concrete_shared_cache)
 
         # Pre-initialize all output variables to 0.0 to avoid NameError
         # for variables only assigned in conditional branches (NMOS/PMOS paths)
@@ -980,7 +989,11 @@ class EvalFunctionBuilder(FunctionBuilder):
         return fn_name, code_str.split("\n")
 
     def _emit_param_mapping(
-        self, body: List[ast.stmt], ctx: CodeGenContext, idx_mapping: Dict[int, Tuple[str, any]]
+        self,
+        body: List[ast.stmt],
+        ctx: CodeGenContext,
+        idx_mapping: Dict[int, Tuple[str, any]],
+        concrete_shared_values: Optional[List[float]] = None,
     ):
         """Emit parameter mapping from split arrays.
 
@@ -991,6 +1004,9 @@ class EvalFunctionBuilder(FunctionBuilder):
                 - source='shared': value is new index in shared_params
                 - source='device': value is new index in device_params
                 - source='simparam': value is simparam name (e.g., '$abstime')
+            concrete_shared_values: If provided, concrete float values for each
+                shared param. When set, shared params are emitted as Python literals
+                (e.g., `v123 = 1.5e-6`) instead of `v123 = shared_params[42]`.
         """
         for i, param in enumerate(self.mir_func.params):
             var_name = f"{ctx.var_prefix}{param}"
@@ -998,9 +1014,16 @@ class EvalFunctionBuilder(FunctionBuilder):
             if i in idx_mapping:
                 source, value = idx_mapping[i]
                 if source == "shared":
-                    body.append(
-                        assign(var_name, subscript(ast_name("shared_params"), ast_const(value)))
-                    )
+                    if concrete_shared_values is not None:
+                        # Inline as Python literal for trace-time constant folding
+                        body.append(assign(var_name, ast_const(concrete_shared_values[value])))
+                    else:
+                        body.append(
+                            assign(
+                                var_name,
+                                subscript(ast_name("shared_params"), ast_const(value)),
+                            )
+                        )
                 elif source == "device":
                     body.append(
                         assign(var_name, subscript(ast_name("device_params"), ast_const(value)))
@@ -1037,10 +1060,19 @@ class EvalFunctionBuilder(FunctionBuilder):
         body: List[ast.stmt],
         ctx: CodeGenContext,
         cache_idx_mapping: Dict[int, Tuple[str, int]],
+        concrete_shared_cache: Optional[List[float]] = None,
     ):
         """Emit cache value mapping from split cache arrays.
 
         Always uses split cache format (shared_cache, device_cache) for uniform interface.
+
+        Args:
+            body: List to append statements to
+            ctx: Code generation context
+            cache_idx_mapping: Maps cache index to (source, new_index)
+            concrete_shared_cache: If provided, concrete float values for each
+                shared cache entry. When set, shared cache values are emitted as
+                Python literals instead of shared_cache[N] lookups.
         """
         for cache_idx, mapping in enumerate(self.cache_mapping):
             eval_param_idx = mapping["eval_param"]
@@ -1050,9 +1082,18 @@ class EvalFunctionBuilder(FunctionBuilder):
             if cache_idx in cache_idx_mapping:
                 source, new_idx = cache_idx_mapping[cache_idx]
                 if source == "shared_cache":
-                    body.append(
-                        assign(var_name, subscript(ast_name("shared_cache"), ast_const(new_idx)))
-                    )
+                    if concrete_shared_cache is not None:
+                        # Inline as Python literal for trace-time constant folding
+                        body.append(
+                            assign(var_name, ast_const(concrete_shared_cache[new_idx]))
+                        )
+                    else:
+                        body.append(
+                            assign(
+                                var_name,
+                                subscript(ast_name("shared_cache"), ast_const(new_idx)),
+                            )
+                        )
                 else:
                     body.append(
                         assign(var_name, subscript(ast_name("device_cache"), ast_const(new_idx)))
