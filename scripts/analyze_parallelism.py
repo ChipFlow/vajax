@@ -42,7 +42,6 @@ import scipy.io
 import scipy.sparse as sp
 import scipy.sparse.linalg
 
-
 # ---------------------------------------------------------------------------
 # Elimination tree
 # ---------------------------------------------------------------------------
@@ -401,7 +400,6 @@ def matrix_structure_analysis(A: sp.spmatrix) -> dict:
 def rcm_analysis(A: sp.spmatrix) -> dict:
     """Analyze effect of Reverse Cuthill-McKee ordering."""
     A_sym = symmetrize_pattern(A)
-    n = A_sym.shape[0]
 
     try:
         perm = sp.csgraph.reverse_cuthill_mckee(A_sym, symmetric_mode=True)
@@ -438,7 +436,6 @@ def analyze_device_scatter(engine) -> dict:
     """
     setup = engine._build_transient_setup(backend="cpu", use_dense=True)
     static_inputs_cache = setup["static_inputs_cache"]
-    openvaf_by_type = setup["openvaf_by_type"]
     n_unknowns = setup["n_unknowns"]
 
     model_info = {}
@@ -648,7 +645,6 @@ def analyze_matrix(
         stability = check_pattern_stability(all_matrices)
 
     # Compute parallelism summary
-    widths = etree_stats["level_widths"]
     # "Work" at each level = width (number of independent columns)
     # Total sequential steps = height
     # Total work = n (all columns must be processed)
@@ -730,11 +726,9 @@ def analyze_eval_branches(engine) -> dict:
         elif n_devices > 1:
             # No static varying params — all devices identical
             n_unique_configs = 1
-            config_indices = np.zeros(n_devices, dtype=int)
             config_sizes = [n_devices]
         else:
             n_unique_configs = 1
-            config_indices = np.zeros(1, dtype=int)
             config_sizes = [1]
 
         # Check device_cache uniformity
@@ -928,7 +922,7 @@ def analyze_benchmark(
         matrices.append(mat)
 
     # --- Analyze ---
-    print(f"\nAnalyzing first captured matrix...")
+    print("\nAnalyzing first captured matrix...")
     analysis = analyze_matrix(matrices[0], name=benchmark_name, all_matrices=matrices)
 
     # Add device scatter info
@@ -1014,7 +1008,7 @@ def write_analysis(analysis: dict, output_dir: Path):
         f.write(f"Diagonal dominance: {mat['diagonal_dominance']['pct']:.1f}% of rows\n\n")
 
         et = analysis["elimination_tree"]
-        f.write(f"--- Elimination Tree ---\n")
+        f.write("--- Elimination Tree ---\n")
         f.write(f"Height (sequential steps): {et['height']}\n")
         f.write(f"Leaves: {et['n_leaves']}\n")
         f.write(f"Max parallelism (widest level): {et['max_parallelism']}\n")
@@ -1024,14 +1018,14 @@ def write_analysis(analysis: dict, output_dir: Path):
         f.write(f"Subtree sizes: min={st['min']}, max={st['max']}, median={st['median']:.0f}\n\n")
 
         sn = analysis["supernodes"]
-        f.write(f"--- Supernodes ---\n")
+        f.write("--- Supernodes ---\n")
         f.write(f"Count: {sn['count']} supernodes\n")
         f.write(f"Largest: {sn['largest']} columns\n")
         f.write(f"Mean size: {sn['mean_size']:.1f}\n")
         f.write(f"Size distribution: {sn['size_histogram']}\n\n")
 
         fi = analysis["fill_in"]
-        f.write(f"--- Fill-in (LU factorization) ---\n")
+        f.write("--- Fill-in (LU factorization) ---\n")
         f.write(f"Original nnz: {fi['original_nnz']}\n")
         for order_name, order_data in fi["orderings"].items():
             if "error" not in order_data:
@@ -1046,13 +1040,13 @@ def write_analysis(analysis: dict, output_dir: Path):
 
         rcm = analysis.get("rcm_ordering", {})
         if rcm.get("permutation_available"):
-            f.write(f"--- RCM Ordering ---\n")
+            f.write("--- RCM Ordering ---\n")
             f.write(f"Bandwidth: {rcm['bandwidth_original']} -> {rcm['bandwidth_rcm']} ")
             f.write(f"({rcm['bandwidth_reduction_pct']:.1f}% reduction)\n\n")
 
         ps = analysis.get("pattern_stability")
         if ps:
-            f.write(f"--- Pattern Stability ---\n")
+            f.write("--- Pattern Stability ---\n")
             f.write(f"Fixed pattern: {ps['is_fixed']} ({ps['n_samples']} samples)\n")
             if ps.get("value_variation"):
                 vv = ps["value_variation"]
@@ -1062,7 +1056,7 @@ def write_analysis(analysis: dict, output_dir: Path):
 
         dp = analysis.get("device_parallelism")
         if dp:
-            f.write(f"--- Device Evaluation Parallelism ---\n")
+            f.write("--- Device Evaluation Parallelism ---\n")
             f.write(f"Total devices: {dp['total_devices']}\n")
             for mt, mi in dp["model_types"].items():
                 f.write(f"  {mt}: {mi['n_devices']} devices, ")
@@ -1075,7 +1069,7 @@ def write_analysis(analysis: dict, output_dir: Path):
 
         es = analysis.get("eval_specialization")
         if es:
-            f.write(f"--- Eval Branch Specialization ---\n")
+            f.write("--- Eval Branch Specialization ---\n")
             for mt, info in es.items():
                 f.write(f"  {mt}: {info['n_devices']} devices\n")
                 f.write(f"    Params: {info['n_shared_params']} shared, ")
@@ -1089,11 +1083,11 @@ def write_analysis(analysis: dict, output_dir: Path):
                     for vp in info["varying_static_params"]:
                         f.write(f"      {vp['name']} ({vp['kind']}): {vp['n_unique']} unique values\n")
                 f.write(f"    {info['specialization_note']}\n")
-            f.write(f"\n")
+            f.write("\n")
 
         notes = analysis.get("iree_notes")
         if notes:
-            f.write(f"--- IREE/Baspacho Notes ---\n")
+            f.write("--- IREE/Baspacho Notes ---\n")
             f.write(f"{notes['recommendation']}\n")
 
     print(f"  Summary: {summary_path}")
