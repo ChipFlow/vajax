@@ -45,7 +45,7 @@ jobs:
           sudo apt-get install -y \
             cmake ninja-build \
             flex bison libfl-dev \
-            libsuitesparse-dev \
+            libsuitesparse-dev libopenblas-dev \
             ccache \
             bc
 
@@ -116,7 +116,13 @@ jobs:
           echo "OPENVAF_DIR=${{ github.workspace }}/vendor/OpenVAF/target/release" >> "$GITHUB_ENV"
 
       - name: Install vajax
-        run: uv sync --extra dev
+        run: uv sync --extra dev --extra umfpack
+
+      - name: Build UMFPACK FFI extension
+        working-directory: vajax/sparse
+        run: |
+          uv pip install scikit-build-core nanobind
+          uv pip install --no-build-isolation .
 
       - name: Run VAJAX tests
         if: matrix.run_tests
