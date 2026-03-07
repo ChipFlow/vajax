@@ -4,7 +4,7 @@ This guide walks you through installing VAJAX and running your first circuit sim
 
 ## Prerequisites
 
-- Python 3.11-3.13
+- Python 3.11+
 - For GPU acceleration: Linux with NVIDIA CUDA 12+ (or Windows with WSL2)
 
 ## Installation
