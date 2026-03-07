@@ -1274,6 +1274,8 @@ class OpenVAFToJAX:
         varying_cache_indices: Optional[List[int]] = None,
         use_limit_functions: bool = False,
         limit_param_map: Optional[Dict[int, Tuple[str, str]]] = None,
+        concrete_shared_values: Optional[List[float]] = None,
+        concrete_shared_cache: Optional[List[float]] = None,
     ) -> Tuple[Callable, Dict]:
         """Generate a vmappable eval function with split params and cache (internal API).
 
@@ -1291,6 +1293,12 @@ class OpenVAFToJAX:
             limit_param_map: Dict mapping original param indices to (kind, name) tuples
                             for limit-related params (prev_state, enable_lim, new_state,
                             enable_integration). Excluded from shared/device params.
+            concrete_shared_values: If provided, concrete float values for each
+                            shared param. Inlined as Python literals for trace-time
+                            constant folding, eliminating jnp.where branches that
+                            depend on static parameters.
+            concrete_shared_cache: If provided, concrete float values for each
+                            shared cache entry. Same inlining behavior as above.
 
         Returns:
             Tuple of (eval_fn, metadata)
@@ -1316,8 +1324,12 @@ class OpenVAFToJAX:
         assert self.dae_data is not None, "dae_data released, call before release_mir_data()"
 
         t0 = time.perf_counter()
+        n_inlined_params = len(concrete_shared_values) if concrete_shared_values else 0
+        n_inlined_cache = len(concrete_shared_cache) if concrete_shared_cache else 0
         logger.info(
-            f"    translate_eval_array_with_cache_split: generating code (limit_funcs={use_limit_functions})..."
+            f"    translate_eval_array_with_cache_split: generating code "
+            f"(limit_funcs={use_limit_functions}, "
+            f"inlined_params={n_inlined_params}, inlined_cache={n_inlined_cache})..."
         )
 
         # Build the eval function
@@ -1336,6 +1348,8 @@ class OpenVAFToJAX:
             varying_cache_indices,
             use_limit_functions=use_limit_functions,
             limit_param_map=limit_param_map,
+            concrete_shared_values=concrete_shared_values,
+            concrete_shared_cache=concrete_shared_cache,
         )
 
         t1 = time.perf_counter()
@@ -1359,6 +1373,8 @@ class OpenVAFToJAX:
                 df.write(f"# use_limit_functions={use_limit_functions}\n")
                 df.write(f"# shared_indices={shared_indices}\n")
                 df.write(f"# varying_indices={varying_indices}\n")
+                df.write(f"# concrete_shared_values={concrete_shared_values is not None} ({n_inlined_params} values)\n")
+                df.write(f"# concrete_shared_cache={concrete_shared_cache is not None} ({n_inlined_cache} values)\n")
                 df.write(code)
             logger.info(f"    Generated code dumped to {dump_path}")
 
