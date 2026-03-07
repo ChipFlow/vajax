@@ -682,6 +682,123 @@ def analyze_matrix(
 
 
 # ---------------------------------------------------------------------------
+# Device eval branch analysis
+# ---------------------------------------------------------------------------
+
+
+def analyze_eval_branches(engine) -> dict:
+    """Analyze jnp.where branches in compiled device eval functions.
+
+    For each model type, checks the compiled model's parameter split to determine:
+    - How many device configurations exist (e.g., NMOS vs PMOS)
+    - Whether all eval branches are statically determinable at setup time
+    - How much specialization is possible
+
+    This does NOT require dumping/parsing generated code — it analyzes the
+    actual shared_params, device_params, and device_cache arrays to determine
+    how many unique device variants exist.
+    """
+    result = {}
+
+    for model_type, compiled in engine._compiled_models.items():
+        if "shared_params" not in compiled:
+            continue
+
+        sp = np.asarray(compiled["shared_params"])
+        dp = np.asarray(compiled["device_params"])
+        sc = np.asarray(compiled.get("shared_cache", np.array([])))
+        dc = np.asarray(compiled.get("device_cache", np.empty((dp.shape[0], 0))))
+        vp = np.asarray(compiled.get("voltage_positions_in_varying", np.array([], dtype=int)))
+
+        n_devices = dp.shape[0]
+        n_varying = dp.shape[1] if dp.ndim > 1 else 0
+        n_voltages = len(vp)
+        n_static_varying = n_varying - n_voltages
+
+        # Identify non-voltage varying param columns
+        voltage_cols = set(vp.tolist()) if len(vp) > 0 else set()
+        static_cols = sorted(set(range(n_varying)) - voltage_cols)
+
+        # Count unique device configurations (static params only)
+        if static_cols and n_devices > 1:
+            static_dp = dp[:, static_cols]
+            unique_configs, config_indices, config_counts = np.unique(
+                static_dp, axis=0, return_inverse=True, return_counts=True
+            )
+            n_unique_configs = len(unique_configs)
+            config_sizes = config_counts.tolist()
+        elif n_devices > 1:
+            # No static varying params — all devices identical
+            n_unique_configs = 1
+            config_indices = np.zeros(n_devices, dtype=int)
+            config_sizes = [n_devices]
+        else:
+            n_unique_configs = 1
+            config_indices = np.zeros(1, dtype=int)
+            config_sizes = [1]
+
+        # Check device_cache uniformity
+        n_cache_cols = dc.shape[1] if dc.ndim > 1 else 0
+        if n_cache_cols > 0 and n_devices > 1:
+            cache_uniform = int(np.sum(np.all(dc == dc[0:1, :], axis=0)))
+            cache_varying = n_cache_cols - cache_uniform
+
+            # Count unique cache configurations
+            unique_dc, dc_indices = np.unique(dc, axis=0, return_inverse=True)
+            n_unique_cache = len(unique_dc)
+        else:
+            cache_uniform = n_cache_cols
+            cache_varying = 0
+            n_unique_cache = 1
+
+        # Get param names for the varying columns if available
+        param_names = compiled.get("param_names", [])
+        param_kinds = compiled.get("param_kinds", [])
+        varying_indices = compiled.get("varying_indices", [])
+
+        varying_param_info = []
+        for col_idx, orig_idx in enumerate(varying_indices):
+            if col_idx in voltage_cols:
+                continue
+            name = param_names[orig_idx] if orig_idx < len(param_names) else f"param_{orig_idx}"
+            kind = param_kinds[orig_idx] if orig_idx < len(param_kinds) else "unknown"
+            if n_devices > 1:
+                vals = dp[:, col_idx]
+                unique_vals = np.unique(vals)
+                varying_param_info.append({
+                    "name": name,
+                    "kind": kind,
+                    "n_unique": len(unique_vals),
+                    "values": unique_vals.tolist() if len(unique_vals) <= 10 else f"{len(unique_vals)} values",
+                })
+
+        result[model_type] = {
+            "n_devices": n_devices,
+            "n_shared_params": len(sp),
+            "n_varying_params": n_varying,
+            "n_voltage_params": n_voltages,
+            "n_static_varying_params": n_static_varying,
+            "n_shared_cache": len(sc) if sc.ndim == 1 else (sc.shape[1] if sc.ndim > 1 else 0),
+            "n_device_cache_cols": n_cache_cols,
+            "cache_uniform_cols": cache_uniform,
+            "cache_varying_cols": cache_varying,
+            "n_unique_param_configs": n_unique_configs,
+            "n_unique_cache_configs": n_unique_cache,
+            "config_sizes": config_sizes,
+            "varying_static_params": varying_param_info,
+            "specialization_note": (
+                f"All {n_devices} devices can be grouped into {n_unique_configs} "
+                f"specialized eval variant(s). Branches conditioned on shared_params "
+                f"({len(sp)} params) and device configuration ({n_static_varying} "
+                f"static varying params) can be resolved at compile time, eliminating "
+                f"jnp.where overhead for straight-line GPU kernels."
+            ),
+        }
+
+    return result
+
+
+# ---------------------------------------------------------------------------
 # Benchmark mode: run simulation and analyze
 # ---------------------------------------------------------------------------
 
@@ -831,6 +948,11 @@ def analyze_benchmark(
         },
     }
 
+    # Eval branch specialization analysis
+    print("\nAnalyzing eval function branches...")
+    branch_analysis = analyze_eval_branches(engine)
+    analysis["eval_specialization"] = branch_analysis
+
     # Add compilation note for IREE
     analysis["iree_notes"] = {
         "pattern_is_fixed": analysis.get("pattern_stability", {}).get("is_fixed", True),
@@ -950,6 +1072,24 @@ def write_analysis(analysis: dict, output_dir: Path):
             f.write(f"Scatter conflicts: {sc['conflict_positions']}/{sc['total_positions']} positions ")
             f.write(f"({sc['conflict_pct']:.1f}%), max fan-in={sc['max_fan_in']}\n")
             f.write(f"Fan-in distribution: {sc['fan_in_distribution']}\n\n")
+
+        es = analysis.get("eval_specialization")
+        if es:
+            f.write(f"--- Eval Branch Specialization ---\n")
+            for mt, info in es.items():
+                f.write(f"  {mt}: {info['n_devices']} devices\n")
+                f.write(f"    Params: {info['n_shared_params']} shared, ")
+                f.write(f"{info['n_voltage_params']} voltage, ")
+                f.write(f"{info['n_static_varying_params']} static-varying\n")
+                f.write(f"    Cache: {info['n_shared_cache']} shared, ")
+                f.write(f"{info['cache_varying_cols']} device-varying\n")
+                f.write(f"    Unique device configs: {info['n_unique_param_configs']}")
+                f.write(f" (sizes: {info['config_sizes']})\n")
+                if info.get("varying_static_params"):
+                    for vp in info["varying_static_params"]:
+                        f.write(f"      {vp['name']} ({vp['kind']}): {vp['n_unique']} unique values\n")
+                f.write(f"    {info['specialization_note']}\n")
+            f.write(f"\n")
 
         notes = analysis.get("iree_notes")
         if notes:
