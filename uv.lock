@@ -2265,16 +2265,17 @@ wheels = [
 
 [[package]]
 name = "spineax-vajax"
-version = "0.0.2"
+version = "0.0.3"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "equinox" },
     { name = "jaxtyping" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/1c/06/c66a5675214e8384691e31db007616f5acad04c1f992e9b841b018a5e23f/spineax_vajax-0.0.2.tar.gz", hash = "sha256:a15dda9fec25ebe8fe8e84ac4eb8f902a013a7b7fe8b25162e6940fc32102d2d", size = 33587, upload-time = "2026-03-04T11:39:51.181Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/5b/03/a4a52838a8c928176b51b1df256d4dfc40fc7c9f5aaaa4b1c72edb3dd785/spineax_vajax-0.0.3.tar.gz", hash = "sha256:30c92317daebc59edf38b351c7e301e2f0b17b136b443bc1033748ec99cecb07", size = 34286, upload-time = "2026-03-08T01:26:09.032Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/6f/74/ec1cb0444a8a970f15de12db4fd2aab1bf8f7f62980c16c4859bc95b2b3d/spineax_vajax-0.0.2-cp311-cp311-manylinux_2_24_x86_64.manylinux_2_28_x86_64.whl", hash = "sha256:3e13eed29bf7121c842d492c6ad4e7cba395a5c20530b44f107063da9c44019e", size = 257704, upload-time = "2026-03-04T11:39:47.947Z" },
-    { url = "https://files.pythonhosted.org/packages/10/b1/6fe88f043e15fd59d9a5c6288c163ba3af99f8d2ab980a8d4010eeddf4d6/spineax_vajax-0.0.2-cp312-cp312-manylinux_2_24_x86_64.manylinux_2_28_x86_64.whl", hash = "sha256:fce02b56bd305444ebd3a6d202feb378e19a4e2f9001fc640f8314b9c8dfbc41", size = 253443, upload-time = "2026-03-04T11:39:49.639Z" },
+    { url = "https://files.pythonhosted.org/packages/58/de/755ebb70460ca91c8e7b3b4f25c63b595bc6d7c268013029c428f78ddc4c/spineax_vajax-0.0.3-cp311-cp311-manylinux_2_24_x86_64.manylinux_2_28_x86_64.whl", hash = "sha256:d0ffb82dd22baf27e9e5d2d3f0a33d78495cbe64ff14b29997dc94a37d4cf42c", size = 289989, upload-time = "2026-03-08T01:26:04.481Z" },
+    { url = "https://files.pythonhosted.org/packages/0e/aa/5a4ca777353e7b17d18286984afd7593772dbc2877e34d23ad48834966a2/spineax_vajax-0.0.3-cp312-cp312-manylinux_2_24_x86_64.manylinux_2_28_x86_64.whl", hash = "sha256:24bd93617a8efd14e143ae4feaff73e83be26a2e07809f2a20a0073f16dc63a1", size = 285735, upload-time = "2026-03-08T01:26:06.187Z" },
+    { url = "https://files.pythonhosted.org/packages/7c/a8/0da490035d2eda32ac03a91b8d91354b459b687b2a8431d6af873b864652/spineax_vajax-0.0.3-cp313-cp313-manylinux_2_24_x86_64.manylinux_2_28_x86_64.whl", hash = "sha256:a3e50bb5ae2297d74fa76c1f788b3c697663875bae6f90d5da85f0dc3dbcdc14", size = 285754, upload-time = "2026-03-08T01:26:07.543Z" },
 ]
 
 [[package]]

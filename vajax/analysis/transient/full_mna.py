@@ -562,6 +562,8 @@ class FullMNAStrategy(TransientStrategy):
             bcsr_indices_jax = jnp.array(csr_indices, dtype=jnp.int32)
 
             # Step 5: Create solver - try Spineax/cuDSS on CUDA, fall back to UMFPACK
+            # Note: UMFPACK FFI only works on CPU — its JAX FFI handler is not
+            # registered for CUDA, so we cannot use it as a GPU fallback.
             if on_cuda and is_spineax_available():
                 try:
                     # Always use float32 factorization with iterative refinement on GPU.
@@ -585,26 +587,19 @@ class FullMNAStrategy(TransientStrategy):
                         factorize_f32=True,
                     )
                 except (RuntimeError, Exception) as e:
-                    # cuDSS may OOM during symbolic factorization for very large circuits
-                    if is_umfpack_ffi_available():
-                        logger.warning(f"cuDSS failed ({e}), falling back to UMFPACK FFI on CPU")
-                        nr_solve = make_umfpack_ffi_full_mna_solver(
-                            build_system_jit,
-                            n_nodes,
-                            n_vsources,
-                            nse,
-                            bcsr_indptr=bcsr_indptr_jax,
-                            bcsr_indices=bcsr_indices_jax,
-                            noi_indices=noi_indices,
-                            internal_device_indices=internal_device_indices,
-                            max_iterations=self.runner.options.tran_itl,
-                            abstol=self.runner.options.abstol,
-                            total_limit_states=total_limit_states,
-                            options=self.runner.options,
-                            use_csr_direct=True,
-                        )
-                    else:
-                        raise  # Re-raise if no fallback available
+                    # cuDSS may OOM during symbolic factorization for very large circuits.
+                    # UMFPACK FFI only works on CPU, so only fall back if not on CUDA.
+                    raise RuntimeError(
+                        f"cuDSS sparse solver failed on CUDA ({e}). "
+                        f"UMFPACK FFI cannot run on GPU. "
+                        f"Either fix cuDSS/Spineax installation or use CPU for sparse circuits."
+                    ) from e
+            elif on_cuda:
+                raise RuntimeError(
+                    "Sparse solver required on CUDA but Spineax/cuDSS is not available. "
+                    "UMFPACK FFI only works on CPU. "
+                    "Install spineax-vajax with cuDSS support, or run without --force-gpu."
+                )
             else:
                 logger.info("Using UMFPACK FFI solver (zero callback overhead)")
                 nr_solve = make_umfpack_ffi_full_mna_solver(
