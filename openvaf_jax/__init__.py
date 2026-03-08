@@ -1332,6 +1332,37 @@ class OpenVAFToJAX:
             f"inlined_params={n_inlined_params}, inlined_cache={n_inlined_cache})..."
         )
 
+        # Build SCCP known values from concrete shared params and cache
+        # This enables dead branch elimination at codegen time
+        sccp_known_values: Optional[Dict[str, Any]] = None
+        if concrete_shared_values is not None or concrete_shared_cache is not None:
+            sccp_known_values = {}
+
+            # Map shared params to MIR value IDs
+            if concrete_shared_values is not None:
+                for j, orig_idx in enumerate(shared_indices):
+                    value_id = self.param_idx_to_val.get(orig_idx)
+                    if value_id:
+                        sccp_known_values[value_id] = concrete_shared_values[j]
+
+            # Map shared cache entries to MIR value IDs
+            if concrete_shared_cache is not None and shared_cache_indices:
+                for j, cache_col_idx in enumerate(shared_cache_indices):
+                    mapping = self.cache_mapping[cache_col_idx]
+                    eval_param_idx = mapping["eval_param"]
+                    value_id = self.param_idx_to_val.get(eval_param_idx)
+                    if value_id:
+                        sccp_known_values[value_id] = concrete_shared_cache[j]
+
+            if not sccp_known_values:
+                sccp_known_values = None
+            else:
+                logger.info(
+                    f"    SCCP: {len(sccp_known_values)} known values "
+                    f"({n_inlined_params} from params, "
+                    f"{len(sccp_known_values) - n_inlined_params} from cache)"
+                )
+
         # Build the eval function
         eval_param_names = list(self.module.param_names)
         builder = EvalFunctionBuilder(
@@ -1339,6 +1370,7 @@ class OpenVAFToJAX:
             self.dae_data,
             self.cache_mapping,
             self.param_idx_to_val,
+            sccp_known_values=sccp_known_values,
             eval_param_names=eval_param_names,
         )
         fn_name, code_lines = builder.build_with_cache_split(
@@ -1353,6 +1385,22 @@ class OpenVAFToJAX:
         )
 
         t1 = time.perf_counter()
+
+        # Log SCCP statistics
+        if builder.sccp is not None:
+            dead_blocks = builder.sccp.get_dead_blocks()
+            total_blocks = len(self.eval_mir.blocks)
+            n_constants = sum(1 for v in builder.sccp.lattice.values() if v.is_constant())
+            static_branches = sum(
+                1
+                for b in self.eval_mir.blocks
+                if builder.sccp.get_static_branch_direction(b) is not None
+            )
+            logger.info(
+                f"    SCCP results: {len(dead_blocks)}/{total_blocks} blocks dead, "
+                f"{static_branches} static branches, {n_constants} constants propagated"
+            )
+
         logger.info(
             f"    translate_eval_array_with_cache_split: code generated ({len(code_lines)} lines) in {t1 - t0:.1f}s"
         )
@@ -1373,8 +1421,16 @@ class OpenVAFToJAX:
                 df.write(f"# use_limit_functions={use_limit_functions}\n")
                 df.write(f"# shared_indices={shared_indices}\n")
                 df.write(f"# varying_indices={varying_indices}\n")
-                df.write(f"# concrete_shared_values={concrete_shared_values is not None} ({n_inlined_params} values)\n")
-                df.write(f"# concrete_shared_cache={concrete_shared_cache is not None} ({n_inlined_cache} values)\n")
+                df.write(
+                    f"# concrete_shared_values={concrete_shared_values is not None} ({n_inlined_params} values)\n"
+                )
+                df.write(
+                    f"# concrete_shared_cache={concrete_shared_cache is not None} ({n_inlined_cache} values)\n"
+                )
+                if builder.sccp is not None:
+                    dead_blocks = builder.sccp.get_dead_blocks()
+                    total_blocks = len(self.eval_mir.blocks)
+                    df.write(f"# sccp: {len(dead_blocks)}/{total_blocks} blocks dead\n")
                 df.write(code)
             logger.info(f"    Generated code dumped to {dump_path}")
 
