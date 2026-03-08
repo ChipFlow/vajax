@@ -130,13 +130,29 @@ jobs:
           JAX_PLATFORMS: cuda,cpu
         run: |
           uv run python -c "
-          from vajax.analysis.spineax_solver import is_spineax_available
-          print('Spineax available:', is_spineax_available())
-          if not is_spineax_available():
-              print('WARNING: cuDSS not available, sparse benchmarks will use UMFPACK fallback')
-          else:
+          import sys
+          print('Python:', sys.version)
+
+          # Try direct import to see the actual error
+          try:
               from spineax.cudss.solver import CuDSSSolver
               print('cuDSS solver imported successfully')
+          except ImportError as e:
+              print(f'cuDSS import failed: {e}')
+          except Exception as e:
+              print(f'cuDSS import error: {type(e).__name__}: {e}')
+
+          # Check spineax package structure
+          try:
+              import spineax
+              print(f'spineax location: {spineax.__file__}')
+              import spineax.cudss
+              print(f'spineax.cudss location: {spineax.cudss.__file__}')
+          except Exception as e:
+              print(f'spineax structure error: {e}')
+
+          from vajax.analysis.spineax_solver import is_spineax_available
+          print('is_spineax_available():', is_spineax_available())
           "
 
       - name: Run GPU benchmarks
