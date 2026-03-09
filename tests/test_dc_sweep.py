@@ -3,7 +3,6 @@
 Tests against known analytical solutions for simple circuits.
 """
 
-import jax.numpy as jnp
 import pytest
 
 from vajax.analysis import CircuitEngine, DCSweepResult
@@ -76,9 +75,7 @@ endc
         for i, v1_val in enumerate(result.sweep_values):
             expected_current = float(v1_val) / 2000.0
             # Current sign convention may differ, check magnitude
-            assert abs(float(result.currents["v1"][i])) == pytest.approx(
-                expected_current, abs=1e-9
-            )
+            assert abs(float(result.currents["v1"][i])) == pytest.approx(expected_current, abs=1e-9)
 
     def test_dc_sweep_source_not_found(self, divider_netlist):
         """Should raise ValueError for nonexistent source."""

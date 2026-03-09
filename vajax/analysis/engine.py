@@ -1425,9 +1425,7 @@ class CircuitEngine:
             assert step is not None
             sweep_values = np.arange(start, stop + step * 0.5, step)
 
-        logger.info(
-            f"DC sweep: {source} from {start} to {stop} ({len(sweep_values)} points)"
-        )
+        logger.info(f"DC sweep: {source} from {start} to {stop} ({len(sweep_values)} points)")
 
         # Compile OpenVAF models if needed
         if not self._compiled_models:
@@ -1474,9 +1472,7 @@ class CircuitEngine:
 
         if sweep_idx < 0:
             available = [d["name"] for d in self.devices if d["model"] in ("vsource", "isource")]
-            raise ValueError(
-                f"Source '{source}' not found. Available sources: {available}"
-            )
+            raise ValueError(f"Source '{source}' not found. Available sources: {available}")
 
         # Get baseline DC source values
         vsource_dc_vals, isource_dc_vals = self._get_dc_source_values(n_vsources, n_isources)
@@ -1544,7 +1540,12 @@ class CircuitEngine:
 
             # Solve DC operating point (use previous solution as initial guess)
             X_new, nr_iters, is_converged, max_f, _, _, _, _, _ = nr_solve(
-                X, vs_vals, is_vals, Q_prev, 0.0, device_arrays,
+                X,
+                vs_vals,
+                is_vals,
+                Q_prev,
+                0.0,
+                device_arrays,
             )
 
             if is_converged:
@@ -1564,9 +1565,7 @@ class CircuitEngine:
                     current = float(X_new[n_total + j])
                     all_currents[name].append(current)
 
-        logger.info(
-            f"DC sweep complete: {converged_count}/{len(sweep_values)} points converged"
-        )
+        logger.info(f"DC sweep complete: {converged_count}/{len(sweep_values)} points converged")
 
         # Convert to arrays
         voltages_out = {name: jnp.array(vals) for name, vals in all_voltages.items()}

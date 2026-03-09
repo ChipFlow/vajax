@@ -386,19 +386,19 @@ def compile_openvaf_models(
                         base_path = base_paths.get(base_key)
                         full_path = base_path / va_path if base_path else None
                     if full_path and full_path.exists():
-                            from openvaf_jax.cache import compute_va_hash
+                        from openvaf_jax.cache import compute_va_hash
 
-                            current_hash = compute_va_hash(full_path)
-                            if current_hash != cached_hash:
-                                log(
-                                    f"  {model_type}: VA source changed "
-                                    f"(hash {cached_hash[:8]}→{current_hash[:8]}), "
-                                    "recompiling..."
-                                )
-                                # Release old model memory before recompiling
-                                release_model_memory([model_type])
-                                del COMPILED_MODEL_CACHE[model_type]
-                                cache_valid = False
+                        current_hash = compute_va_hash(full_path)
+                        if current_hash != cached_hash:
+                            log(
+                                f"  {model_type}: VA source changed "
+                                f"(hash {cached_hash[:8]}→{current_hash[:8]}), "
+                                "recompiling..."
+                            )
+                            # Release old model memory before recompiling
+                            release_model_memory([model_type])
+                            del COMPILED_MODEL_CACHE[model_type]
+                            cache_valid = False
 
             if cache_valid:
                 log(
