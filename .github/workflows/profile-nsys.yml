@@ -78,11 +78,17 @@ jobs:
         with:
           workspaces: openvaf_jax/openvaf_py
 
-      - name: Install CUDA toolkit
+      - name: Install CUDA toolkit and nsys
         run: |
           sudo apt-get update
-          sudo apt-get install -y cuda-nvcc-12-6 cuda-cudart-dev-12-6
+          sudo apt-get install -y cuda-nvcc-12-6 cuda-cudart-dev-12-6 nsight-systems-cli
           echo "/usr/local/cuda-12.6/bin" >> $GITHUB_PATH
+          # nsys installs to /opt/nvidia/nsight-systems/*/target-linux-x64/
+          NSYS_BIN=$(dirname "$(find /opt/nvidia -name nsys -type f 2>/dev/null | head -1)" 2>/dev/null)
+          if [ -n "$NSYS_BIN" ]; then
+            echo "$NSYS_BIN" >> $GITHUB_PATH
+            echo "Found nsys at: $NSYS_BIN"
+          fi
 
       - name: Install system dependencies
         run: |
