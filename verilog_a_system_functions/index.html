@@ -1033,6 +1033,67 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#vams-lrm-semantics-variability-and-temperature" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        VAMS LRM Semantics: Variability and Temperature
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="VAMS LRM Semantics: Variability and Temperature">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#simparam-variability-static-vs-dynamic" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Simparam Variability (Static vs Dynamic)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#temperature-semantics" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        $temperature Semantics
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#self-heating" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Self-Heating
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#implications-for-vajax" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Implications for VAJAX
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#gap-analysis" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -1636,6 +1697,67 @@
       
     </span>
   </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#vams-lrm-semantics-variability-and-temperature" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        VAMS LRM Semantics: Variability and Temperature
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="VAMS LRM Semantics: Variability and Temperature">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#simparam-variability-static-vs-dynamic" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Simparam Variability (Static vs Dynamic)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#temperature-semantics" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        $temperature Semantics
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#self-heating" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Self-Heating
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#implications-for-vajax" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Implications for VAJAX
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
   
 </li>
       
@@ -2380,6 +2502,154 @@
 </tbody>
 </table>
 <hr />
+<h2 id="vams-lrm-semantics-variability-and-temperature">VAMS LRM Semantics: Variability and Temperature<a class="headerlink" href="#vams-lrm-semantics-variability-and-temperature" title="Permanent link">&para;</a></h2>
+<h3 id="simparam-variability-static-vs-dynamic">Simparam Variability (Static vs Dynamic)<a class="headerlink" href="#simparam-variability-static-vs-dynamic" title="Permanent link">&para;</a></h3>
+<p>The VAMS LRM 2023 does <strong>not</strong> explicitly classify simparams as "constant during simulation"
+vs "varying per iteration." Table 9-27 only provides units and descriptions. However, the
+descriptions implicitly reveal which must vary:</p>
+<p><strong>Implicitly dynamic</strong> (must change during simulation for their described purpose):</p>
+<table>
+<thead>
+<tr>
+<th>Parameter</th>
+<th>Why it must vary</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>iteration</code></td>
+<td>"Iteration number of the analog solver" — changes each NR iteration</td>
+</tr>
+<tr>
+<td><code>gdev</code></td>
+<td>"Conductance homotopy convergence algorithm" — ramped during homotopy</td>
+</tr>
+<tr>
+<td><code>gmin</code></td>
+<td>"Minimum conductance" — may be ramped during gmin stepping</td>
+</tr>
+<tr>
+<td><code>sourceScaleFactor</code></td>
+<td>"Source stepping homotopy" — ramped during source stepping</td>
+</tr>
+</tbody>
+</table>
+<p><strong>Implicitly static</strong> (fixed for a simulation run):</p>
+<table>
+<thead>
+<tr>
+<th>Parameter</th>
+<th>Why it's static</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>tnom</code></td>
+<td>"Default value of temperature at which model parameters were extracted"</td>
+</tr>
+<tr>
+<td><code>simulatorVersion</code> / <code>simulatorSubversion</code></td>
+<td>Version numbers</td>
+</tr>
+<tr>
+<td><code>scale</code> / <code>shrink</code></td>
+<td>Geometry factors set at elaboration</td>
+</tr>
+<tr>
+<td><code>timeUnit</code> / <code>timePrecision</code></td>
+<td>From <code>'timescale</code>, fixed at elaboration</td>
+</tr>
+<tr>
+<td><code>imelt</code></td>
+<td>Device failure threshold, not a control knob</td>
+</tr>
+<tr>
+<td><code>imax</code></td>
+<td>Linearization threshold (could vary per solver phase, but unusual)</td>
+</tr>
+</tbody>
+</table>
+<blockquote>
+<p><strong>Note</strong>: The LRM explicitly states that hierarchy detection functions (<code>$param_given</code>,
+<code>$port_connected</code>) are "constant during a simulation; the value is fixed during
+elaboration" (Section 9.19). No equivalent statement exists for <code>$simparam</code> — the
+variability is left to the simulator's discretion.</p>
+</blockquote>
+<h3 id="temperature-semantics"><code>$temperature</code> Semantics<a class="headerlink" href="#temperature-semantics" title="Permanent link">&para;</a></h3>
+<p>The LRM definition (Section 9.15) is minimal:</p>
+<blockquote>
+<p><code>$temperature</code> does not take any input arguments and returns the circuit's ambient
+temperature in Kelvin units.</p>
+</blockquote>
+<p>The spec does <strong>not</strong> address:
+- Whether <code>$temperature</code> can change during a transient simulation
+- Whether it is constant per analysis run
+- Whether it can vary per instance (self-heating)
+- How it relates to <code>$simparam("tnom")</code></p>
+<p>In practice, commercial simulators (Spectre, HSPICE) treat <code>$temperature</code> as constant per
+analysis point, but allow temperature sweeps across analysis runs.</p>
+<h3 id="self-heating">Self-Heating<a class="headerlink" href="#self-heating" title="Permanent link">&para;</a></h3>
+<p>The term "self-heating" does not appear anywhere in the VAMS LRM 2023. However, the LRM
+provides the mechanism for self-heating through the standard <code>thermal</code> discipline defined
+in Annex D:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a><span class="n">nature</span><span class="w"> </span><span class="n">Temperature</span><span class="p">;</span>
+<a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a><span class="w">    </span><span class="n">units</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s">&quot;K&quot;</span><span class="p">;</span>
+<a id="__codelineno-3-3" name="__codelineno-3-3" href="#__codelineno-3-3"></a><span class="w">    </span><span class="n">access</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">Temp</span><span class="p">;</span>
+<a id="__codelineno-3-4" name="__codelineno-3-4" href="#__codelineno-3-4"></a><span class="w">    </span><span class="n">abstol</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mf">1e-4</span><span class="p">;</span>
+<a id="__codelineno-3-5" name="__codelineno-3-5" href="#__codelineno-3-5"></a><span class="n">endnature</span>
+<a id="__codelineno-3-6" name="__codelineno-3-6" href="#__codelineno-3-6"></a>
+<a id="__codelineno-3-7" name="__codelineno-3-7" href="#__codelineno-3-7"></a><span class="n">nature</span><span class="w"> </span><span class="n">Power</span><span class="p">;</span>
+<a id="__codelineno-3-8" name="__codelineno-3-8" href="#__codelineno-3-8"></a><span class="w">    </span><span class="n">units</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s">&quot;W&quot;</span><span class="p">;</span>
+<a id="__codelineno-3-9" name="__codelineno-3-9" href="#__codelineno-3-9"></a><span class="w">    </span><span class="n">access</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">Pwr</span><span class="p">;</span>
+<a id="__codelineno-3-10" name="__codelineno-3-10" href="#__codelineno-3-10"></a><span class="w">    </span><span class="n">abstol</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mf">1e-9</span><span class="p">;</span>
+<a id="__codelineno-3-11" name="__codelineno-3-11" href="#__codelineno-3-11"></a><span class="n">endnature</span>
+<a id="__codelineno-3-12" name="__codelineno-3-12" href="#__codelineno-3-12"></a>
+<a id="__codelineno-3-13" name="__codelineno-3-13" href="#__codelineno-3-13"></a><span class="n">discipline</span><span class="w"> </span><span class="n">thermal</span><span class="p">;</span>
+<a id="__codelineno-3-14" name="__codelineno-3-14" href="#__codelineno-3-14"></a><span class="w">    </span><span class="n">potential</span><span class="w"> </span><span class="n">Temperature</span><span class="p">;</span>
+<a id="__codelineno-3-15" name="__codelineno-3-15" href="#__codelineno-3-15"></a><span class="w">    </span><span class="n">flow</span><span class="w"> </span><span class="n">Power</span><span class="p">;</span>
+<a id="__codelineno-3-16" name="__codelineno-3-16" href="#__codelineno-3-16"></a><span class="n">enddiscipline</span>
+</code></pre></div>
+<p>Compact models (PSP103, BSIM-CMG) implement self-heating by:
+1. Declaring a thermal node with the <code>thermal</code> discipline
+2. Contributing power dissipation as a flow to that node
+3. Reading back the node temperature via <code>Temp()</code> access function
+4. Using that temperature instead of <code>$temperature</code> for device equations</p>
+<p>The LRM does not describe this pattern or explain the relationship between <code>$temperature</code>
+(ambient) and thermal node temperature (device). This is entirely a compact model design
+convention.</p>
+<h3 id="implications-for-vajax">Implications for VAJAX<a class="headerlink" href="#implications-for-vajax" title="Permanent link">&para;</a></h3>
+<table>
+<thead>
+<tr>
+<th>Aspect</th>
+<th>Current handling</th>
+<th>LRM guidance</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>$temperature</code></td>
+<td>Static per simulation</td>
+<td>Correct for non-self-heating models</td>
+</tr>
+<tr>
+<td>Homotopy simparams</td>
+<td>Not implemented</td>
+<td><code>gdev</code>, <code>sourceScaleFactor</code> would need to vary per iteration</td>
+</tr>
+<tr>
+<td><code>iteration</code> simparam</td>
+<td>Returns default (10)</td>
+<td>Should track actual NR iteration count</td>
+</tr>
+<tr>
+<td>Thermal nodes</td>
+<td>Not supported</td>
+<td>Would need <code>thermal</code> discipline support for self-heating models</td>
+</tr>
+</tbody>
+</table>
+<hr />
 <h2 id="gap-analysis">Gap Analysis<a class="headerlink" href="#gap-analysis" title="Permanent link">&para;</a></h2>
 <h3 id="currently-missing-in-jax-path">Currently Missing in JAX Path<a class="headerlink" href="#currently-missing-in-jax-path" title="Permanent link">&para;</a></h3>
 <ol>
@@ -2460,8 +2730,8 @@
 </table>
 <h3 id="special-input-array-indices">Special Input Array Indices<a class="headerlink" href="#special-input-array-indices" title="Permanent link">&para;</a></h3>
 <p>For codegen, special values accessed via negative indices:
-<div class="highlight"><pre><span></span><code><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a>inputs[-1]  →  gmin (from $simparam(&quot;gmin&quot;))
-<a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a>inputs[-2]  →  analysis_type (for analysis() function)
+<div class="highlight"><pre><span></span><code><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a>inputs[-1]  →  gmin (from $simparam(&quot;gmin&quot;))
+<a id="__codelineno-4-2" name="__codelineno-4-2" href="#__codelineno-4-2"></a>inputs[-2]  →  analysis_type (for analysis() function)
 </code></pre></div></p>
 <h3 id="openvaf-compile-time-handling">OpenVAF Compile-Time Handling<a class="headerlink" href="#openvaf-compile-time-handling" title="Permanent link">&para;</a></h3>
 <p>Some system functions are evaluated at compile time by OpenVAF:
@@ -2470,16 +2740,16 @@
 - <code>$vt</code> → Computed inline as <code>k * T / q</code></p>
 <p>This means warnings for unknown <code>$simparam</code> only appear if OpenVAF preserves the call.</p>
 <h3 id="osdi-structures">OSDI Structures<a class="headerlink" href="#osdi-structures" title="Permanent link">&para;</a></h3>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a><span class="k">typedef</span><span class="w"> </span><span class="k">struct</span><span class="w"> </span><span class="nc">OsdiSimParas</span><span class="w"> </span><span class="p">{</span>
-<a id="__codelineno-4-2" name="__codelineno-4-2" href="#__codelineno-4-2"></a><span class="w">    </span><span class="kt">char</span><span class="o">**</span><span class="w"> </span><span class="n">names</span><span class="p">;</span><span class="w">      </span><span class="c1">// Array of simparam names</span>
-<a id="__codelineno-4-3" name="__codelineno-4-3" href="#__codelineno-4-3"></a><span class="w">    </span><span class="kt">double</span><span class="o">*</span><span class="w"> </span><span class="n">vals</span><span class="p">;</span><span class="w">      </span><span class="c1">// Array of simparam values</span>
-<a id="__codelineno-4-4" name="__codelineno-4-4" href="#__codelineno-4-4"></a><span class="p">}</span><span class="w"> </span><span class="n">OsdiSimParas</span><span class="p">;</span>
-<a id="__codelineno-4-5" name="__codelineno-4-5" href="#__codelineno-4-5"></a>
-<a id="__codelineno-4-6" name="__codelineno-4-6" href="#__codelineno-4-6"></a><span class="k">typedef</span><span class="w"> </span><span class="k">struct</span><span class="w"> </span><span class="nc">OsdiSimInfo</span><span class="w"> </span><span class="p">{</span>
-<a id="__codelineno-4-7" name="__codelineno-4-7" href="#__codelineno-4-7"></a><span class="w">    </span><span class="kt">double</span><span class="w"> </span><span class="n">temperature</span><span class="p">;</span><span class="w">  </span><span class="c1">// Simulation temperature (K)</span>
-<a id="__codelineno-4-8" name="__codelineno-4-8" href="#__codelineno-4-8"></a><span class="w">    </span><span class="kt">double</span><span class="w"> </span><span class="n">abstime</span><span class="p">;</span><span class="w">      </span><span class="c1">// Absolute time (s)</span>
-<a id="__codelineno-4-9" name="__codelineno-4-9" href="#__codelineno-4-9"></a><span class="w">    </span><span class="c1">// ... other fields</span>
-<a id="__codelineno-4-10" name="__codelineno-4-10" href="#__codelineno-4-10"></a><span class="p">}</span><span class="w"> </span><span class="n">OsdiSimInfo</span><span class="p">;</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a><span class="k">typedef</span><span class="w"> </span><span class="k">struct</span><span class="w"> </span><span class="nc">OsdiSimParas</span><span class="w"> </span><span class="p">{</span>
+<a id="__codelineno-5-2" name="__codelineno-5-2" href="#__codelineno-5-2"></a><span class="w">    </span><span class="kt">char</span><span class="o">**</span><span class="w"> </span><span class="n">names</span><span class="p">;</span><span class="w">      </span><span class="c1">// Array of simparam names</span>
+<a id="__codelineno-5-3" name="__codelineno-5-3" href="#__codelineno-5-3"></a><span class="w">    </span><span class="kt">double</span><span class="o">*</span><span class="w"> </span><span class="n">vals</span><span class="p">;</span><span class="w">      </span><span class="c1">// Array of simparam values</span>
+<a id="__codelineno-5-4" name="__codelineno-5-4" href="#__codelineno-5-4"></a><span class="p">}</span><span class="w"> </span><span class="n">OsdiSimParas</span><span class="p">;</span>
+<a id="__codelineno-5-5" name="__codelineno-5-5" href="#__codelineno-5-5"></a>
+<a id="__codelineno-5-6" name="__codelineno-5-6" href="#__codelineno-5-6"></a><span class="k">typedef</span><span class="w"> </span><span class="k">struct</span><span class="w"> </span><span class="nc">OsdiSimInfo</span><span class="w"> </span><span class="p">{</span>
+<a id="__codelineno-5-7" name="__codelineno-5-7" href="#__codelineno-5-7"></a><span class="w">    </span><span class="kt">double</span><span class="w"> </span><span class="n">temperature</span><span class="p">;</span><span class="w">  </span><span class="c1">// Simulation temperature (K)</span>
+<a id="__codelineno-5-8" name="__codelineno-5-8" href="#__codelineno-5-8"></a><span class="w">    </span><span class="kt">double</span><span class="w"> </span><span class="n">abstime</span><span class="p">;</span><span class="w">      </span><span class="c1">// Absolute time (s)</span>
+<a id="__codelineno-5-9" name="__codelineno-5-9" href="#__codelineno-5-9"></a><span class="w">    </span><span class="c1">// ... other fields</span>
+<a id="__codelineno-5-10" name="__codelineno-5-10" href="#__codelineno-5-10"></a><span class="p">}</span><span class="w"> </span><span class="n">OsdiSimInfo</span><span class="p">;</span>
 </code></pre></div>
 <hr />
 <h2 id="references">References<a class="headerlink" href="#references" title="Permanent link">&para;</a></h2>
