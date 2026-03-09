@@ -510,9 +510,9 @@ def make_dense_full_mna_solver(
 
     def linear_solve(J, f):
         """Solve J @ delta = -f using dense direct solver."""
-        # Add Tikhonov regularization for numerical stability on GPU
-        reg = 1e-14 * jnp.eye(J.shape[0], dtype=J.dtype)
-        return jax.scipy.linalg.solve(J + reg, -f)
+        # Diagonal regularization (gmin + gshunt) is already applied during
+        # Jacobian assembly in assemble_dense_jacobian / _build_system_dense_direct.
+        return jax.scipy.linalg.solve(J, -f)
 
     logger.info(
         f"Creating dense full MNA solver: V({n_nodes}) + I({n_vsources}), "
