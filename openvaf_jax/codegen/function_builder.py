@@ -820,6 +820,8 @@ class EvalFunctionBuilder(FunctionBuilder):
         limit_param_map: Optional[Dict[int, Tuple[str, str]]] = None,
         concrete_shared_values: Optional[List[float]] = None,
         concrete_shared_cache: Optional[List[float]] = None,
+        concrete_varying_values: Optional[Dict[int, float]] = None,
+        concrete_varying_cache: Optional[Dict[int, float]] = None,
     ) -> Tuple[str, List[str]]:
         """Build eval function with split params and optional split cache.
 
@@ -847,6 +849,12 @@ class EvalFunctionBuilder(FunctionBuilder):
                             jnp.where branches that depend on static parameters.
             concrete_shared_cache: If provided, concrete float values for each
                             shared cache index. Same inlining behavior as above.
+            concrete_varying_values: If provided, maps position in varying_indices
+                            to concrete value. Static-varying params (TYPE, W, etc.)
+                            are inlined as literals per config group while voltages
+                            remain as device_params[N] lookups.
+            concrete_varying_cache: If provided, maps position in varying_cache_indices
+                            to concrete value. Per-group cache entries inlined as literals.
 
         Returns:
             Tuple of (function_name, code_lines)
@@ -907,10 +915,14 @@ class EvalFunctionBuilder(FunctionBuilder):
             ctx.defined_vars.add("v3")
 
         # Map params from split arrays (inline concrete values when provided)
-        self._emit_param_mapping(body, ctx, idx_mapping, concrete_shared_values)
+        self._emit_param_mapping(
+            body, ctx, idx_mapping, concrete_shared_values, concrete_varying_values
+        )
 
         # Map cache values (inline concrete values when provided)
-        self._emit_cache_mapping(body, ctx, cache_idx_mapping, concrete_shared_cache)
+        self._emit_cache_mapping(
+            body, ctx, cache_idx_mapping, concrete_shared_cache, concrete_varying_cache
+        )
 
         # Pre-initialize all output variables to 0.0 to avoid NameError
         # for variables only assigned in conditional branches (NMOS/PMOS paths)
@@ -994,6 +1006,7 @@ class EvalFunctionBuilder(FunctionBuilder):
         ctx: CodeGenContext,
         idx_mapping: Dict[int, Tuple[str, any]],
         concrete_shared_values: Optional[List[float]] = None,
+        concrete_varying_values: Optional[Dict[int, float]] = None,
     ):
         """Emit parameter mapping from split arrays.
 
@@ -1007,6 +1020,9 @@ class EvalFunctionBuilder(FunctionBuilder):
             concrete_shared_values: If provided, concrete float values for each
                 shared param. When set, shared params are emitted as Python literals
                 (e.g., `v123 = 1.5e-6`) instead of `v123 = shared_params[42]`.
+            concrete_varying_values: If provided, maps position in varying_indices
+                to concrete value. Device params at these positions are emitted as
+                Python literals instead of device_params[N] lookups.
         """
         for i, param in enumerate(self.mir_func.params):
             var_name = f"{ctx.var_prefix}{param}"
@@ -1025,9 +1041,13 @@ class EvalFunctionBuilder(FunctionBuilder):
                             )
                         )
                 elif source == "device":
-                    body.append(
-                        assign(var_name, subscript(ast_name("device_params"), ast_const(value)))
-                    )
+                    if concrete_varying_values is not None and value in concrete_varying_values:
+                        # Inline static-varying param as literal (config-group specialization)
+                        body.append(assign(var_name, ast_const(concrete_varying_values[value])))
+                    else:
+                        body.append(
+                            assign(var_name, subscript(ast_name("device_params"), ast_const(value)))
+                        )
                 elif source == "simparam":
                     # Register simparam and emit simparams[idx]
                     simparam_name = value
@@ -1061,6 +1081,7 @@ class EvalFunctionBuilder(FunctionBuilder):
         ctx: CodeGenContext,
         cache_idx_mapping: Dict[int, Tuple[str, int]],
         concrete_shared_cache: Optional[List[float]] = None,
+        concrete_varying_cache: Optional[Dict[int, float]] = None,
     ):
         """Emit cache value mapping from split cache arrays.
 
@@ -1073,6 +1094,9 @@ class EvalFunctionBuilder(FunctionBuilder):
             concrete_shared_cache: If provided, concrete float values for each
                 shared cache entry. When set, shared cache values are emitted as
                 Python literals instead of shared_cache[N] lookups.
+            concrete_varying_cache: If provided, maps position in varying_cache_indices
+                to concrete value. Device cache entries at these positions are emitted
+                as Python literals instead of device_cache[N] lookups.
         """
         for cache_idx, mapping in enumerate(self.cache_mapping):
             eval_param_idx = mapping["eval_param"]
@@ -1084,9 +1108,7 @@ class EvalFunctionBuilder(FunctionBuilder):
                 if source == "shared_cache":
                     if concrete_shared_cache is not None:
                         # Inline as Python literal for trace-time constant folding
-                        body.append(
-                            assign(var_name, ast_const(concrete_shared_cache[new_idx]))
-                        )
+                        body.append(assign(var_name, ast_const(concrete_shared_cache[new_idx])))
                     else:
                         body.append(
                             assign(
@@ -1095,9 +1117,16 @@ class EvalFunctionBuilder(FunctionBuilder):
                             )
                         )
                 else:
-                    body.append(
-                        assign(var_name, subscript(ast_name("device_cache"), ast_const(new_idx)))
-                    )
+                    if concrete_varying_cache is not None and new_idx in concrete_varying_cache:
+                        # Inline group-constant cache as literal (config-group specialization)
+                        body.append(assign(var_name, ast_const(concrete_varying_cache[new_idx])))
+                    else:
+                        body.append(
+                            assign(
+                                var_name,
+                                subscript(ast_name("device_cache"), ast_const(new_idx)),
+                            )
+                        )
             else:
                 # Cache index not in mapping - this shouldn't happen with proper setup
                 # but fall back to zero for safety

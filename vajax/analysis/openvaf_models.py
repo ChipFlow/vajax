@@ -1025,6 +1025,94 @@ def prepare_static_inputs(
             compiled["limit_metadata"] = None
             compiled["num_limit_states"] = 0
 
+        # --- Config group detection and specialized eval generation ---
+        # Identify static-varying params: varying columns that are NOT voltages
+        # (e.g., TYPE, W, AS, PS, AD, PD for PSP103). These differentiate
+        # device configurations (NMOS vs PMOS) but are constant per device.
+        voltage_positions_set = (
+            set(voltage_positions.tolist()) if len(voltage_positions) > 0 else set()
+        )
+        static_varying_positions = [
+            i for i in range(len(varying_indices_list)) if i not in voltage_positions_set
+        ]
+
+        if static_varying_positions and n_devices > 1:
+            # Extract static-varying columns from device_params
+            static_dp = np.asarray(device_params[:, static_varying_positions])
+            unique_configs, config_inverse = np.unique(static_dp, axis=0, return_inverse=True)
+            n_configs = len(unique_configs)
+        else:
+            n_configs = 1
+            config_inverse = np.zeros(n_devices, dtype=int)
+            unique_configs = None
+
+        if n_configs > 1:
+            logger.info(
+                f"{model_type}: {n_configs} unique device config(s) detected, "
+                f"generating specialized eval functions"
+            )
+            config_groups = []
+            for cfg_idx in range(n_configs):
+                group_mask = config_inverse == cfg_idx
+                group_indices = np.where(group_mask)[0]
+                n_group = len(group_indices)
+
+                # Build concrete_varying_values for this group's static params
+                concrete_varying = {}
+                config_info = {}
+                assert unique_configs is not None
+                for pos_i, pos in enumerate(static_varying_positions):
+                    orig_idx = varying_indices_list[pos]
+                    name = (
+                        param_names[orig_idx] if orig_idx < len(param_names) else f"col{orig_idx}"
+                    )
+                    val = float(unique_configs[cfg_idx][pos_i])
+                    concrete_varying[pos] = val
+                    config_info[name] = val
+
+                # Check for group-constant cache columns within this config group
+                group_device_cache = device_cache[group_indices]
+                concrete_group_cache = None
+                if n_group > 1 and group_device_cache.shape[1] > 0:
+                    gc_np = np.asarray(group_device_cache)
+                    gc_const = np.all(gc_np == gc_np[0:1, :], axis=0)
+                    if gc_const.any():
+                        concrete_group_cache = {
+                            int(i): float(gc_np[0, i]) for i in range(gc_np.shape[1]) if gc_const[i]
+                        }
+
+                # Generate specialized eval with SCCP for this group's static params
+                group_fn, group_meta = translator.translate_eval_array_with_cache_split(
+                    shared_indices,
+                    varying_indices_list,
+                    shared_cache_indices,
+                    varying_cache_indices,
+                    use_limit_functions=use_device_limiting,
+                    limit_param_map=limit_param_map,
+                    concrete_shared_values=concrete_shared_values,
+                    concrete_shared_cache=concrete_shared_cache_values,
+                    concrete_varying_values=concrete_varying,
+                    concrete_varying_cache=concrete_group_cache,
+                )
+                group_fn = partial(group_fn, limit_funcs=limit_funcs)
+                group_vmapped = jax.jit(jax.vmap(group_fn, in_axes=(None, 0, None, 0, None, 0)))
+
+                config_groups.append(
+                    {
+                        "group_id": cfg_idx,
+                        "device_indices": jnp.array(group_indices, dtype=jnp.int32),
+                        "vmapped_eval": group_vmapped,
+                        "n_devices": n_group,
+                        "static_config": config_info,
+                    }
+                )
+                logger.info(f"  config {cfg_idx}: {n_group} devices, static={config_info}")
+
+            compiled["config_groups"] = config_groups
+        else:
+            logger.info(f"{model_type}: 1 unique device config (no specialization needed)")
+            compiled["config_groups"] = None
+
         logger.info(f"{model_type}: split eval ready")
     else:
         raise AssertionError(f"Cannot prepare inputs for {model_type}")

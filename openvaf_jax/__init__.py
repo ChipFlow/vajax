@@ -1276,6 +1276,8 @@ class OpenVAFToJAX:
         limit_param_map: Optional[Dict[int, Tuple[str, str]]] = None,
         concrete_shared_values: Optional[List[float]] = None,
         concrete_shared_cache: Optional[List[float]] = None,
+        concrete_varying_values: Optional[Dict[int, float]] = None,
+        concrete_varying_cache: Optional[Dict[int, float]] = None,
     ) -> Tuple[Callable, Dict]:
         """Generate a vmappable eval function with split params and cache (internal API).
 
@@ -1299,6 +1301,13 @@ class OpenVAFToJAX:
                             depend on static parameters.
             concrete_shared_cache: If provided, concrete float values for each
                             shared cache entry. Same inlining behavior as above.
+            concrete_varying_values: If provided, maps position in varying_indices
+                            to concrete value. Used for config-group specialization:
+                            static-varying params (TYPE, W, etc.) are inlined per
+                            config group while voltages remain dynamic.
+            concrete_varying_cache: If provided, maps position in varying_cache_indices
+                            to concrete value. Per-group cache entries that are constant
+                            within a config group but vary across groups.
 
         Returns:
             Tuple of (eval_fn, metadata)
@@ -1326,16 +1335,25 @@ class OpenVAFToJAX:
         t0 = time.perf_counter()
         n_inlined_params = len(concrete_shared_values) if concrete_shared_values else 0
         n_inlined_cache = len(concrete_shared_cache) if concrete_shared_cache else 0
+        n_inlined_varying = len(concrete_varying_values) if concrete_varying_values else 0
+        n_inlined_varying_cache = len(concrete_varying_cache) if concrete_varying_cache else 0
         logger.info(
             f"    translate_eval_array_with_cache_split: generating code "
             f"(limit_funcs={use_limit_functions}, "
-            f"inlined_params={n_inlined_params}, inlined_cache={n_inlined_cache})..."
+            f"inlined_params={n_inlined_params}, inlined_cache={n_inlined_cache}, "
+            f"inlined_varying={n_inlined_varying}, inlined_varying_cache={n_inlined_varying_cache})..."
         )
 
-        # Build SCCP known values from concrete shared params and cache
+        # Build SCCP known values from concrete params and cache
         # This enables dead branch elimination at codegen time
+        has_concrete = (
+            concrete_shared_values is not None
+            or concrete_shared_cache is not None
+            or concrete_varying_values is not None
+            or concrete_varying_cache is not None
+        )
         sccp_known_values: Optional[Dict[str, Any]] = None
-        if concrete_shared_values is not None or concrete_shared_cache is not None:
+        if has_concrete:
             sccp_known_values = {}
 
             # Map shared params to MIR value IDs
@@ -1344,6 +1362,15 @@ class OpenVAFToJAX:
                     value_id = self.param_idx_to_val.get(orig_idx)
                     if value_id:
                         sccp_known_values[value_id] = concrete_shared_values[j]
+
+            # Map varying params with concrete values to MIR value IDs
+            # (config-group specialization: TYPE, W, etc. inlined per group)
+            if concrete_varying_values is not None:
+                for pos, value in concrete_varying_values.items():
+                    orig_idx = varying_indices[pos]
+                    value_id = self.param_idx_to_val.get(orig_idx)
+                    if value_id:
+                        sccp_known_values[value_id] = value
 
             # Map shared cache entries to MIR value IDs
             if concrete_shared_cache is not None and shared_cache_indices:
@@ -1354,13 +1381,30 @@ class OpenVAFToJAX:
                     if value_id:
                         sccp_known_values[value_id] = concrete_shared_cache[j]
 
+            # Map varying cache entries with concrete values to MIR value IDs
+            if concrete_varying_cache is not None and varying_cache_indices:
+                for pos, value in concrete_varying_cache.items():
+                    cache_col_idx = varying_cache_indices[pos]
+                    mapping = self.cache_mapping[cache_col_idx]
+                    eval_param_idx = mapping["eval_param"]
+                    value_id = self.param_idx_to_val.get(eval_param_idx)
+                    if value_id:
+                        sccp_known_values[value_id] = value
+
             if not sccp_known_values:
                 sccp_known_values = None
             else:
+                n_from_shared = n_inlined_params
+                n_from_cache = (
+                    len(sccp_known_values)
+                    - n_from_shared
+                    - n_inlined_varying
+                    - n_inlined_varying_cache
+                )
                 logger.info(
                     f"    SCCP: {len(sccp_known_values)} known values "
-                    f"({n_inlined_params} from params, "
-                    f"{len(sccp_known_values) - n_inlined_params} from cache)"
+                    f"({n_inlined_params} shared params, {n_inlined_varying} varying params, "
+                    f"{n_from_cache} cache)"
                 )
 
         # Build the eval function
@@ -1382,6 +1426,8 @@ class OpenVAFToJAX:
             limit_param_map=limit_param_map,
             concrete_shared_values=concrete_shared_values,
             concrete_shared_cache=concrete_shared_cache,
+            concrete_varying_values=concrete_varying_values,
+            concrete_varying_cache=concrete_varying_cache,
         )
 
         t1 = time.perf_counter()
@@ -1426,6 +1472,12 @@ class OpenVAFToJAX:
                 )
                 df.write(
                     f"# concrete_shared_cache={concrete_shared_cache is not None} ({n_inlined_cache} values)\n"
+                )
+                df.write(
+                    f"# concrete_varying_values={concrete_varying_values is not None} ({n_inlined_varying} values)\n"
+                )
+                df.write(
+                    f"# concrete_varying_cache={concrete_varying_cache is not None} ({n_inlined_varying_cache} values)\n"
                 )
                 if builder.sccp is not None:
                     dead_blocks = builder.sccp.get_dead_blocks()
