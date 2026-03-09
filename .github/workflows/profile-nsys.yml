@@ -81,7 +81,7 @@ jobs:
       - name: Install CUDA toolkit and nsys
         run: |
           sudo apt-get update
-          sudo apt-get install -y cuda-nvcc-12-6 cuda-cudart-dev-12-6 cuda-nsight-systems-12-6
+          sudo apt-get install -y cuda-nvcc-12-6 cuda-cudart-dev-12-6 cuda-nsight-systems-12-6 libcudnn9-cuda-12
           echo "/usr/local/cuda-12.6/bin" >> $GITHUB_PATH
           # nsys installs to /opt/nvidia/nsight-systems/*/target-linux-x64/
           NSYS_BIN=$(dirname "$(find /opt/nvidia -name nsys -type f 2>/dev/null | head -1)" 2>/dev/null)
