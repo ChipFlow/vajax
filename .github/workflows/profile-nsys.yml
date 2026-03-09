@@ -14,8 +14,8 @@ on:
           - c6288
         default: ring
       timesteps:
-        description: 'Number of timesteps'
-        default: '50'
+        description: 'Number of timesteps (500+ recommended for steady-state profiling)'
+        default: '500'
       sparse:
         description: 'Use sparse solver (for large circuits)'
         type: boolean
@@ -138,8 +138,12 @@ jobs:
           echo "Sparse: ${{ inputs.sparse }}"
           echo "Commit: ${{ github.sha }}"
 
+          # Use cudaProfilerApi capture range to profile ONLY the simulation run
+          # (excludes JIT warmup, module loading, memory allocation setup)
           nsys profile \
             --trace=cuda,nvtx,osrt \
+            --capture-range=cudaProfilerApi \
+            --capture-range-end=stop \
             --output "/tmp/${PROFILE_NAME}" \
             uv run python scripts/nsys_profile_target.py \
               ${{ inputs.circuit }} ${{ inputs.timesteps }} ${SPARSE_FLAG}
