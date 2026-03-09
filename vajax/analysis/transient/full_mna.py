@@ -344,7 +344,6 @@ class FullMNAStrategy(TransientStrategy):
             compute_csr_stamp_positions,
             compute_csr_vsource_positions,
         )
-        from vajax.analysis.solver_factories import is_umfpack_ffi_available
 
         n_nodes = setup.n_unknowns + 1
         n_vsources = setup.n_branches
