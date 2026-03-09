@@ -536,6 +536,78 @@ def make_dense_full_mna_solver(
     )
 
 
+def make_baspacho_dense_full_mna_solver(
+    build_system_jit: Callable,
+    n_nodes: int,
+    n_vsources: int,
+    noi_indices: Optional[Array] = None,
+    internal_device_indices: Optional[Array] = None,
+    max_iterations: int = 100,
+    abstol: float = 1e-12,
+    total_limit_states: int = 0,
+    options: Optional["SimulationOptions"] = None,
+    max_step: float = 1e30,
+) -> Callable:
+    """Create a dense NR solver using BaSpaCho LU on CUDA.
+
+    Uses BaSpaCho's supernodal LU factorization with CUDA backend,
+    replacing jax.scipy.linalg.solve (cuSOLVER getrf) on GPU. Benefits:
+    - Symbolic analysis done once (cached across NR iterations)
+    - Grow-only GPU memory allocation (no per-call cudaMalloc after warmup)
+    - Foundation for Phase 2b graph-capture compatibility
+
+    Falls back to standard dense solver if BaSpaCho is unavailable.
+
+    Args:
+        Same as make_dense_full_mna_solver.
+    """
+    from spineax.cudss.dense_baspacho_solver import baspacho_dense_solve
+
+    masks = _compute_noi_masks(
+        noi_indices, n_nodes, internal_device_indices=internal_device_indices
+    )
+    noi_res_idx = masks["noi_res_idx"]
+
+    residual_mask = _build_augmented_mask(masks["residual_mask"], n_vsources)
+    residual_conv_mask = _build_augmented_conv_mask(
+        masks["residual_conv_mask"], residual_mask, n_vsources
+    )
+
+    def enforce_noi(J, f):
+        """Enforce NOI constraints on dense Jacobian."""
+        if noi_res_idx is not None:
+            J = J.at[noi_res_idx, :].set(0.0)
+            J = J.at[:, noi_res_idx].set(0.0)
+            J = J.at[noi_res_idx, noi_res_idx].set(1.0)
+            f = f.at[noi_res_idx].set(0.0)
+        return J, f
+
+    def linear_solve(J, f):
+        """Solve J @ delta = -f using BaSpaCho LU on CUDA."""
+        return baspacho_dense_solve(J, -f)
+
+    logger.info(
+        f"Creating BaSpaCho dense full MNA solver: V({n_nodes}) + I({n_vsources}), "
+        f"NOI: {noi_indices is not None}"
+    )
+    return _make_nr_solver_common(
+        build_system_jit=build_system_jit,
+        n_nodes=n_nodes,
+        n_vsources=n_vsources,
+        linear_solve_fn=linear_solve,
+        enforce_noi_fn=enforce_noi,
+        noi_indices=noi_indices,
+        internal_device_indices=internal_device_indices,
+        max_iterations=max_iterations,
+        abstol=abstol,
+        total_limit_states=total_limit_states,
+        options=options,
+        max_step=max_step,
+        residual_mask=residual_mask,
+        residual_conv_mask=residual_conv_mask,
+    )
+
+
 def make_spineax_full_mna_solver(
     build_system_jit: Callable,
     n_nodes: int,

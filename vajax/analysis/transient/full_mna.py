@@ -36,6 +36,7 @@ from jax import lax
 
 from vajax._logging import logger
 from vajax.analysis.solver_factories import (
+    make_baspacho_dense_full_mna_solver,
     make_dense_full_mna_solver,
     make_spineax_full_mna_solver,
     make_umfpack_ffi_full_mna_solver,
@@ -49,6 +50,16 @@ def is_spineax_available() -> bool:
         from spineax.cudss.solver import CuDSSSolver  # noqa: F401
 
         return True
+    except ImportError:
+        return False
+
+
+def is_baspacho_dense_available() -> bool:
+    """Check if BaSpaCho dense CUDA solver is available."""
+    try:
+        from spineax.cudss.dense_baspacho_solver import is_available
+
+        return is_available()
     except ImportError:
         return False
 
@@ -385,17 +396,43 @@ class FullMNAStrategy(TransientStrategy):
             self._total_limit_states = total_limit_states
             build_system_jit = jax.jit(build_system_fn)
 
-            nr_solve = make_dense_full_mna_solver(
-                build_system_jit,
-                n_nodes,
-                n_vsources,
-                noi_indices=noi_indices,
-                internal_device_indices=internal_device_indices,
-                max_iterations=self.runner.options.tran_itl,
-                abstol=self.runner.options.abstol,
-                total_limit_states=total_limit_states,
-                options=self.runner.options,
-            )
+            # On CUDA, try BaSpaCho dense solver (pre-allocated workspace,
+            # foundation for graph-capture compatibility in Phase 2b).
+            on_cuda_dense = jax.default_backend() in ("cuda", "gpu")
+            if on_cuda_dense and is_baspacho_dense_available():
+                try:
+                    logger.info("Using BaSpaCho dense solver (GPU, CUDA backend)")
+                    nr_solve = make_baspacho_dense_full_mna_solver(
+                        build_system_jit,
+                        n_nodes,
+                        n_vsources,
+                        noi_indices=noi_indices,
+                        internal_device_indices=internal_device_indices,
+                        max_iterations=self.runner.options.tran_itl,
+                        abstol=self.runner.options.abstol,
+                        total_limit_states=total_limit_states,
+                        options=self.runner.options,
+                    )
+                except Exception as e:
+                    logger.warning(
+                        f"BaSpaCho dense solver failed ({e}), falling back to JAX dense solver"
+                    )
+                    nr_solve = None
+            else:
+                nr_solve = None
+
+            if nr_solve is None:
+                nr_solve = make_dense_full_mna_solver(
+                    build_system_jit,
+                    n_nodes,
+                    n_vsources,
+                    noi_indices=noi_indices,
+                    internal_device_indices=internal_device_indices,
+                    max_iterations=self.runner.options.tran_itl,
+                    abstol=self.runner.options.abstol,
+                    total_limit_states=total_limit_states,
+                    options=self.runner.options,
+                )
         else:
             # Sparse path: use CSR direct stamping to eliminate COO intermediates
             n_augmented = setup.n_unknowns + n_vsources
