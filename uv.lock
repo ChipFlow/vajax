@@ -21,6 +21,7 @@ members = [
     "openvaf-py",
     "osdi-py",
     "umfpack-jax",
+    "va-builder",
     "vajax",
 ]
 
@@ -2456,6 +2457,11 @@ wheels = [
 ]
 
 [[package]]
+name = "va-builder"
+version = "0.1.0"
+source = { editable = "va-builder" }
+
+[[package]]
 name = "vajax"
 source = { editable = "." }
 dependencies = [
@@ -2467,6 +2473,7 @@ dependencies = [
     { name = "openvaf-py" },
     { name = "scipy" },
     { name = "simpleeval" },
+    { name = "va-builder" },
 ]
 
 [package.optional-dependencies]
@@ -2534,6 +2541,7 @@ requires-dist = [
     { name = "simpleeval", specifier = ">=1.0.0" },
     { name = "spineax-vajax", marker = "extra == 'cuda12'", specifier = ">=0.0.2" },
     { name = "umfpack-jax", marker = "extra == 'umfpack-ffi'", editable = "vajax/sparse" },
+    { name = "va-builder", editable = "va-builder" },
 ]
 provides-extras = ["cuda12", "dev", "docs", "sax", "test", "umfpack", "umfpack-ffi"]
 

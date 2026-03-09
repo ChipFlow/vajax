@@ -6,9 +6,16 @@ Passes all VACASK test cases (vendor/VACASK/test/*.sim).
 See docs/vacask_sim_format.md for details.
 """
 
+import logging
+import re
+import subprocess
+import sys
+import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Dict, List, Optional, Union
+
+log = logging.getLogger(__name__)
 
 from vajax.netlist.circuit import (
     AnalysisDirective,
@@ -644,16 +651,75 @@ class Parser:
 class VACASKParser:
     """Parser for VACASK netlist format"""
 
+    # Pattern to match: generate "name" <<<FILE ... >>>FILE
+    _GENERATE_RE = re.compile(
+        r'generate\s+"([^"]+)"\s+<<<FILE\n(.*?)>>>FILE',
+        re.DOTALL,
+    )
+
     def parse(self, text: str, base_path: Optional[Path] = None) -> Circuit:
         """Parse VACASK netlist text"""
         lexer = Lexer(text)
         parser = Parser(lexer.tokens)
         return parser.parse()
 
+    def _preprocess_generate_blocks(self, text: str, cwd: Path) -> str:
+        """Execute generate blocks and replace with their stdout.
+
+        A generate block has the form:
+            generate "name.py" <<<FILE
+            <python source>
+            >>>FILE
+
+        The Python source is written to a temp file and executed with
+        the current interpreter (``sys.executable``). The entire generate
+        block is replaced with the script's stdout.
+        """
+
+        def _run_block(match: re.Match) -> str:
+            name = match.group(1)
+            source = match.group(2)
+            # Strip PEP 723 inline metadata (# /// script ... # ///)
+            # so the script runs cleanly under sys.executable
+            source = re.sub(
+                r"^# /// script\n(?:#[^\n]*\n)*# ///\n",
+                "",
+                source,
+                count=1,
+                flags=re.MULTILINE,
+            )
+            log.debug("Running generate block %r", name)
+
+            with tempfile.NamedTemporaryFile(
+                mode="w", suffix=".py", prefix="vajax_generate_", delete=False
+            ) as f:
+                f.write(source)
+                tmp_path = f.name
+
+            try:
+                result = subprocess.run(
+                    [sys.executable, tmp_path],
+                    capture_output=True,
+                    text=True,
+                    cwd=str(cwd),
+                    timeout=120,
+                )
+                if result.returncode != 0:
+                    raise RuntimeError(
+                        f"generate block {name!r} failed (exit {result.returncode}):\n"
+                        f"{result.stderr}"
+                    )
+                return result.stdout
+            finally:
+                Path(tmp_path).unlink(missing_ok=True)
+
+        return self._GENERATE_RE.sub(_run_block, text)
+
     def parse_file(self, filename: Union[str, Path]) -> Circuit:
         """Parse VACASK netlist from file, handling includes"""
         path = Path(filename)
         text = path.read_text()
+        text = self._preprocess_generate_blocks(text, path.parent)
         circuit = self.parse(text, path.parent)
 
         # Process includes

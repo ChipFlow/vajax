@@ -14,6 +14,7 @@ dependencies = [
     "openvaf-py",
     "simpleeval>=1.0.0",
     "jaxlib>=0.9.0",
+    "va-builder",
 ]
 
 [project.urls]
@@ -24,12 +25,13 @@ Issues = "https://github.com/ChipFlow/vajax/issues"
 Changelog = "https://github.com/ChipFlow/vajax/releases"
 
 [tool.uv.workspace]
-members = ["openvaf_jax/openvaf_py", "openvaf_jax/osdi_py", "vajax/sparse"]
+members = ["openvaf_jax/openvaf_py", "openvaf_jax/osdi_py", "vajax/sparse", "va-builder"]
 
 [tool.uv.sources]
 openvaf-py = { workspace = true }
 osdi-py = { workspace = true }
 umfpack-jax = { workspace = true }
+va-builder = { workspace = true }
 
 [project.optional-dependencies]
 cuda12 = [

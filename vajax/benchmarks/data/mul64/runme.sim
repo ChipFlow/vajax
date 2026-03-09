@@ -4,7 +4,120 @@ load "psp103v4.osdi"
 load "spice/resistor.osdi"
 
 include "models.inc"
-include "multiplier.inc"
+
+generate "multiplier_64x64.py" <<<FILE
+# /// script
+# requires-python = ">=3.10"
+# dependencies = ["va-builder"]
+# ///
+
+from va_builder import Netlist
+
+n = 64
+nl = Netlist(globals=["vdd", "vss"], ground="0")
+
+# Gate subcircuits
+with nl.subckt("not", ["out", "in"]) as s:
+    s.inst("mp", "pmos", ["out", "in", "vdd", "vdd"], w="1u", l="0.2u")
+    s.inst("mn", "nmos", ["out", "in", "vss", "vss"], w="0.5u", l="0.2u")
+
+with nl.subckt("nor", ["out", "in1", "in2"]) as s:
+    s.inst("mp2", "pmos", ["int", "in2", "vdd", "vdd"], w="1u", l="0.2u")
+    s.inst("mp1", "pmos", ["out", "in1", "int", "vdd"], w="1u", l="0.2u")
+    s.inst("mn1", "nmos", ["out", "in1", "vss", "vss"], w="0.5u", l="0.2u")
+    s.inst("mn2", "nmos", ["out", "in2", "vss", "vss"], w="0.5u", l="0.2u")
+
+with nl.subckt("and", ["out", "in1", "in2"]) as s:
+    s.inst("mp2", "pmos", ["outx", "in2", "vdd", "vdd"], w="1u", l="0.2u")
+    s.inst("mp1", "pmos", ["outx", "in1", "vdd", "vdd"], w="1u", l="0.2u")
+    s.inst("mn1", "nmos", ["outx", "in1", "int", "vss"], w="0.5u", l="0.2u")
+    s.inst("mn2", "nmos", ["int", "in2", "vss", "vss"], w="0.5u", l="0.2u")
+    s.inst("mp3", "pmos", ["out", "outx", "vdd", "vdd"], w="1u", l="0.2u")
+    s.inst("mn3", "nmos", ["out", "outx", "vss", "vss"], w="0.5u", l="0.2u")
+
+# XOR: NOT(NOR(AND(a, NOT(b)), AND(NOT(a), b)))
+with nl.subckt("xor", ["out", "a", "b"]) as s:
+    s.inst("inv_a", "not", ["na", "a"])
+    s.inst("inv_b", "not", ["nb", "b"])
+    s.inst("a1", "and", ["t1", "a", "nb"])
+    s.inst("a2", "and", ["t2", "na", "b"])
+    s.inst("n1", "nor", ["t3", "t1", "t2"])
+    s.inst("inv_out", "not", ["out", "t3"])
+
+with nl.subckt("ha", ["sum", "cout", "a", "b"]) as s:
+    s.inst("x1", "xor", ["sum", "a", "b"])
+    s.inst("a1", "and", ["cout", "a", "b"])
+
+with nl.subckt("fa", ["sum", "cout", "a", "b", "cin"]) as s:
+    s.inst("x1", "xor", ["ab_xor", "a", "b"])
+    s.inst("x2", "xor", ["sum", "ab_xor", "cin"])
+    s.inst("a1", "and", ["ab_and", "a", "b"])
+    s.inst("a2", "and", ["xor_cin", "ab_xor", "cin"])
+    s.inst("n1", "nor", ["cout_n", "ab_and", "xor_cin"])
+    s.inst("inv_cout", "not", ["cout", "cout_n"])
+
+# NxN array multiplier
+a_ports = [f"a{i}" for i in range(n)]
+b_ports = [f"b{i}" for i in range(n)]
+p_ports = [f"p{i}" for i in range(2 * n - 1)]
+
+with nl.subckt(f"multiplier_{n}x{n}", a_ports + b_ports + p_ports) as s:
+    last_row = n - 2
+
+    def sum_name(row, col):
+        if col == 0:
+            return f"p{row + 1}"
+        if row == last_row:
+            return f"p{n + col - 1}" if col < n - 1 else f"s{row}_{col}"
+        return f"s{row}_{col}"
+
+    def carry_name(row, col):
+        if row == last_row and col == n - 2:
+            return f"p{2 * n - 2}"
+        return f"c{row}_{col}"
+
+    # Partial products
+    s.comment("Partial products: pp_i_j = a[i] AND b[j]")
+    for i in range(n):
+        for j in range(n):
+            s.inst(f"pp_{i}_{j}", "and", [f"pp{i}_{j}", f"a{i}", f"b{j}"])
+    s.blank()
+
+    # Output buffer for p0
+    s.comment("Output buffer for p0 = pp[0][0]")
+    s.inst("buf_p0_inv", "not", ["p0_n", "pp0_0"])
+    s.inst("buf_p0", "not", ["p0", "p0_n"])
+    s.blank()
+
+    # Row 0: half adders
+    s.comment("Row 0: half adders")
+    for j in range(n - 1):
+        sn = sum_name(0, j)
+        cn = carry_name(0, j)
+        s.inst(f"ha_0_{j}", "ha", [sn, cn, f"pp0_{j + 1}", f"pp1_{j}"])
+    s.blank()
+
+    # Rows 1..N-2: mixed half/full adders
+    for row in range(1, n - 1):
+        s.comment(f"Row {row}")
+        for j in range(n - 1):
+            sn = sum_name(row, j)
+            cn = carry_name(row, j)
+            b_in = f"pp{row + 1}_{j}"
+            if j < n - 2:
+                a_in = sum_name(row - 1, j + 1)
+            else:
+                a_in = carry_name(row - 1, n - 2)
+            if j == 0:
+                s.inst(f"ha_{row}_{j}", "ha", [sn, cn, a_in, b_in])
+            else:
+                cin = carry_name(row, j - 1)
+                s.inst(f"fa_{row}_{j}", "fa", [sn, cn, a_in, b_in, cin])
+        s.blank()
+
+print(nl)
+>>>FILE
+
 model v vsource
 model r sp_resistor
 

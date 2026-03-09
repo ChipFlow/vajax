@@ -395,5 +395,108 @@ class TestFullVACASKTestResistor:
         print("  PASS: Matches VACASK expected values!")
 
 
+class TestGenerateBlocks:
+    """Test generate block preprocessing in the parser"""
+
+    def test_simple_generate_block(self, tmp_path):
+        """A generate block's stdout replaces the block in the netlist."""
+        sim = tmp_path / "test.sim"
+        sim.write_text(
+            'ground 0\n'
+            'generate "gates.py" <<<FILE\n'
+            'print("subckt inv(out in)")\n'
+            'print("  mp (out in vdd vdd) pmos w=1u l=0.2u")\n'
+            'print("ends")\n'
+            '>>>FILE\n'
+        )
+        circuit = parse_netlist(sim)
+        assert "inv" in circuit.subckts
+        assert circuit.subckts["inv"].terminals == ["out", "in"]
+        assert len(circuit.subckts["inv"].instances) == 1
+
+    def test_generate_block_with_loop(self, tmp_path):
+        """A generate block can use Python loops."""
+        sim = tmp_path / "test.sim"
+        sim.write_text(
+            'ground 0\n'
+            'generate "chain.py" <<<FILE\n'
+            'n = 4\n'
+            'ports = " ".join(f"n{i}" for i in range(n + 1))\n'
+            'print(f"subckt chain({ports})")\n'
+            'for i in range(n):\n'
+            '    print(f"  r{i} (n{i} n{i+1}) res r=1k")\n'
+            'print("ends")\n'
+            '>>>FILE\n'
+        )
+        circuit = parse_netlist(sim)
+        assert "chain" in circuit.subckts
+        assert len(circuit.subckts["chain"].instances) == 4
+        assert circuit.subckts["chain"].terminals == ["n0", "n1", "n2", "n3", "n4"]
+
+    def test_generate_block_with_va_builder(self, tmp_path):
+        """A generate block can use va_builder."""
+        sim = tmp_path / "test.sim"
+        sim.write_text(
+            'ground 0\n'
+            'generate "builder.py" <<<FILE\n'
+            'from va_builder import Netlist\n'
+            'nl = Netlist(globals=["vdd"], ground="0")\n'
+            'with nl.subckt("buf", ["out", "in"]) as s:\n'
+            '    s.inst("inv1", "not", ["mid", "in"])\n'
+            '    s.inst("inv2", "not", ["out", "mid"])\n'
+            'print(nl)\n'
+            '>>>FILE\n'
+        )
+        circuit = parse_netlist(sim)
+        assert "buf" in circuit.subckts
+        assert len(circuit.subckts["buf"].instances) == 2
+
+    def test_generate_block_error(self, tmp_path):
+        """A failing generate block raises RuntimeError."""
+        sim = tmp_path / "test.sim"
+        sim.write_text(
+            'ground 0\n'
+            'generate "bad.py" <<<FILE\n'
+            'raise ValueError("deliberate error")\n'
+            '>>>FILE\n'
+        )
+        with pytest.raises(RuntimeError, match="deliberate error"):
+            parse_netlist(sim)
+
+    def test_generate_block_strips_pep723_metadata(self, tmp_path):
+        """PEP 723 inline metadata is stripped before execution."""
+        sim = tmp_path / "test.sim"
+        sim.write_text(
+            'ground 0\n'
+            'generate "meta.py" <<<FILE\n'
+            '# /// script\n'
+            '# requires-python = ">=3.10"\n'
+            '# dependencies = ["va-builder"]\n'
+            '# ///\n'
+            'from va_builder import Netlist\n'
+            'nl = Netlist(ground="0")\n'
+            'with nl.subckt("test", ["a"]) as s:\n'
+            '    s.inst("r1", "res", ["a", "0"])\n'
+            'print(nl)\n'
+            '>>>FILE\n'
+        )
+        circuit = parse_netlist(sim)
+        assert "test" in circuit.subckts
+
+    def test_mul64_generate_block(self):
+        """The mul64 benchmark's generate block produces the correct netlist."""
+        mul64_path = Path(__file__).parent.parent / "vajax" / "benchmarks" / "data" / "mul64"
+        circuit = parse_netlist(mul64_path / "runme.sim")
+
+        # Verify gate subcircuits are present
+        for name in ["not", "nor", "and", "xor", "ha", "fa"]:
+            assert name in circuit.subckts, f"Missing subckt {name}"
+
+        # Verify multiplier subcircuit
+        mul = circuit.subckts["multiplier_64x64"]
+        assert len(mul.terminals) == 64 + 64 + 127  # a + b + p ports
+        assert len(mul.instances) == 8067  # pp(4096) + buf(2) + ha_r0(63) + rows1-62
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
