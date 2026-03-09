@@ -199,136 +199,6 @@ def _make_nr_solver_common(
         ]
     )
 
-    def cond_fn(state):
-        _, iteration, converged, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _ = state
-        return jnp.logical_and(~converged, iteration < max_iterations)
-
-    def body_fn(state):
-        (
-            X,
-            iteration,
-            _,
-            _,
-            _,
-            _,
-            limit_state,
-            vsource_vals,
-            isource_vals,
-            Q_prev,
-            integ_c0,
-            device_arrays_arg,
-            gmin,
-            gshunt,
-            integ_c1,
-            integ_d1,
-            _dQdt_prev,
-            integ_c2,
-            _Q_prev2,
-            res_tol_floor,
-        ) = state
-
-        J_or_data, f, Q, _, limit_state_out, max_res_contrib = build_system_jit(
-            X,
-            vsource_vals,
-            isource_vals,
-            Q_prev,
-            integ_c0,
-            device_arrays_arg,
-            gmin,
-            gshunt,
-            integ_c1,
-            integ_d1,
-            _dQdt_prev,
-            integ_c2,
-            _Q_prev2,
-            limit_state,
-            iteration,
-        )
-
-        # VACASK-style residual tolerance (coreopnr.cpp:929):
-        #   tol[i] = max(|maxResContrib[i]| * reltol, residual_abstol[i])
-        # With historic floor (coreopnr.cpp:921, relref=alllocal):
-        #   tolref = max(maxResContrib[i], historicMaxResContrib[i])
-        res_tol_nodes = jnp.maximum(max_res_contrib * reltol, res_tol_floor)
-        res_tol = jnp.concatenate(
-            [res_tol_nodes, jnp.full(n_vsources, vntol, dtype=res_tol_nodes.dtype)]
-        )
-        if residual_conv_mask is not None:
-            f_check = jnp.where(residual_conv_mask, f, 0.0)
-        else:
-            f_check = f
-        max_f = jnp.max(jnp.abs(f_check))
-        residual_converged = jnp.all(jnp.abs(f_check) < res_tol)
-
-        # Enforce NOI constraints and solve linear system
-        J_or_data, f_solve = enforce_noi_fn(J_or_data, f)
-        delta = linear_solve_fn(J_or_data, f_solve)
-
-        # VACASK-style delta convergence (before step limiting)
-        # Check the damped correction that would actually be applied
-        conv_delta = jnp.concatenate(
-            [
-                delta[:n_unknowns] * nr_damping,
-                delta[n_unknowns:],
-            ]
-        )
-        X_ref = jnp.concatenate([X[1:n_total], X[n_total:]])
-        tol = jnp.maximum(jnp.abs(X_ref) * reltol, delta_abs_tol)
-        if residual_mask is not None:
-            conv_delta = jnp.where(residual_mask, conv_delta, 0.0)
-        # VACASK skips delta check at iteration 0 (coreopnr.cpp: if(iteration>1))
-        delta_converged = (iteration == 0) | jnp.all(jnp.abs(conv_delta) < tol)
-
-        # Track max delta for diagnostics
-        max_delta = jnp.max(jnp.abs(delta))
-
-        # Voltage-only step limiting: cap max voltage change per iteration.
-        V_delta = delta[:n_unknowns]
-        max_V_delta = jnp.max(jnp.abs(V_delta))
-        V_scale = jnp.minimum(1.0, max_step / jnp.maximum(max_V_delta, 1e-30))
-        V_damped = V_delta * V_scale * nr_damping
-        X_new = X.at[1:n_total].add(V_damped)
-        X_new = X_new.at[n_total:].add(delta[n_unknowns:])
-
-        # Clamp NOI nodes to 0V
-        if noi_indices is not None and len(noi_indices) > 0:
-            X_new = X_new.at[noi_indices].set(0.0)
-
-        # VACASK-style AND convergence (nrsolver.h:226).
-        # Both solution delta and KCL residual must be below tolerance.
-        converged = jnp.logical_and(residual_converged, delta_converged)
-
-        # VACASK preventedConvergence (nrsolver.cpp:326, coreopnr.cpp:778):
-        # When device limiting (pnjlim/fetlim) is active, block convergence.
-        if total_limit_states > 0:
-            limit_delta = jnp.max(jnp.abs(limit_state_out - limit_state))
-            limit_ref = jnp.maximum(jnp.max(jnp.abs(limit_state)) * reltol, vntol)
-            limit_settled = limit_delta < limit_ref
-            converged = converged & limit_settled & (iteration >= 1)
-
-        return (
-            X_new,
-            iteration + 1,
-            converged,
-            max_f,
-            max_delta,
-            Q,
-            limit_state_out,
-            vsource_vals,
-            isource_vals,
-            Q_prev,
-            integ_c0,
-            device_arrays_arg,
-            gmin,
-            gshunt,
-            integ_c1,
-            integ_d1,
-            _dQdt_prev,
-            integ_c2,
-            _Q_prev2,
-            res_tol_floor,
-        )
-
     def nr_solve(
         X_init: Array,
         vsource_vals: Array,
@@ -369,53 +239,132 @@ def _make_nr_solver_common(
         _integ_d1 = jnp.asarray(integ_d1, dtype=jnp.float64)
         _integ_c2 = jnp.asarray(integ_c2, dtype=jnp.float64)
 
+        # --- fori_loop NR solver ---
+        # Mutable state carried through the loop (changes each NR iteration).
+        # Frozen state (vsource_vals, isource_vals, Q_prev, integration coefficients,
+        # device_arrays, gmin, gshunt, res_tol_floor) is captured by closure,
+        # halving the per-iteration carry size.
         init_Q = jnp.zeros(n_unknowns, dtype=jnp.float64)
-        init_state = (
-            X_init,
-            jnp.array(0, dtype=jnp.int32),
-            jnp.array(False),
-            jnp.array(jnp.inf),
-            jnp.array(jnp.inf),
-            init_Q,
-            _limit_state,
-            vsource_vals,
-            isource_vals,
-            Q_prev,
-            _integ_c0,
-            device_arrays_arg,
-            _gmin,
-            _gshunt,
-            _integ_c1,
-            _integ_d1,
-            _dQdt_prev,
-            _integ_c2,
-            _Q_prev2,
-            _res_tol_floor,
+        mutable_init = (
+            X_init,  # 0: X - solution vector
+            jnp.array(0, dtype=jnp.int32),  # 1: iterations - actual NR step count
+            jnp.array(False),  # 2: converged
+            jnp.array(jnp.inf),  # 3: max_f - max residual
+            jnp.array(jnp.inf),  # 4: max_delta
+            init_Q,  # 5: Q - charge vector
+            _limit_state,  # 6: limit_state
         )
 
-        result_state = lax.while_loop(cond_fn, body_fn, init_state)
-        (
-            X_final,
-            iterations,
-            converged,
-            max_f,
-            _,
-            _,
-            limit_state_final,
-            _,
-            _,
-            _,
-            _,
-            _,
-            _,
-            _,
-            _,
-            _,
-            _,
-            _,
-            _,
-            _,
-        ) = result_state
+        def _nr_step(i, mutable):
+            """Perform one NR iteration. Frozen state captured by closure."""
+            X, iterations, _, _, _, _, limit_state = mutable
+
+            J_or_data, f, Q, _, limit_state_out, max_res_contrib = build_system_jit(
+                X,
+                vsource_vals,
+                isource_vals,
+                Q_prev,
+                _integ_c0,
+                device_arrays_arg,
+                _gmin,
+                _gshunt,
+                _integ_c1,
+                _integ_d1,
+                _dQdt_prev,
+                _integ_c2,
+                _Q_prev2,
+                limit_state,
+                i,
+            )
+
+            # VACASK-style residual tolerance (coreopnr.cpp:929):
+            #   tol[i] = max(|maxResContrib[i]| * reltol, residual_abstol[i])
+            # With historic floor (coreopnr.cpp:921, relref=alllocal):
+            #   tolref = max(maxResContrib[i], historicMaxResContrib[i])
+            res_tol_nodes = jnp.maximum(max_res_contrib * reltol, _res_tol_floor)
+            res_tol = jnp.concatenate(
+                [res_tol_nodes, jnp.full(n_vsources, vntol, dtype=res_tol_nodes.dtype)]
+            )
+            if residual_conv_mask is not None:
+                f_check = jnp.where(residual_conv_mask, f, 0.0)
+            else:
+                f_check = f
+            max_f = jnp.max(jnp.abs(f_check))
+            residual_converged = jnp.all(jnp.abs(f_check) < res_tol)
+
+            # Enforce NOI constraints and solve linear system
+            J_or_data, f_solve = enforce_noi_fn(J_or_data, f)
+            delta = linear_solve_fn(J_or_data, f_solve)
+
+            # VACASK-style delta convergence (before step limiting)
+            # Check the damped correction that would actually be applied
+            conv_delta = jnp.concatenate(
+                [
+                    delta[:n_unknowns] * nr_damping,
+                    delta[n_unknowns:],
+                ]
+            )
+            X_ref = jnp.concatenate([X[1:n_total], X[n_total:]])
+            tol = jnp.maximum(jnp.abs(X_ref) * reltol, delta_abs_tol)
+            if residual_mask is not None:
+                conv_delta = jnp.where(residual_mask, conv_delta, 0.0)
+            # VACASK skips delta check at iteration 0 (coreopnr.cpp: if(iteration>1))
+            delta_converged = (i == 0) | jnp.all(jnp.abs(conv_delta) < tol)
+
+            # Track max delta for diagnostics
+            max_delta = jnp.max(jnp.abs(delta))
+
+            # Voltage-only step limiting: cap max voltage change per iteration.
+            V_delta = delta[:n_unknowns]
+            max_V_delta = jnp.max(jnp.abs(V_delta))
+            V_scale = jnp.minimum(1.0, max_step / jnp.maximum(max_V_delta, 1e-30))
+            V_damped = V_delta * V_scale * nr_damping
+            X_new = X.at[1:n_total].add(V_damped)
+            X_new = X_new.at[n_total:].add(delta[n_unknowns:])
+
+            # Clamp NOI nodes to 0V
+            if noi_indices is not None and len(noi_indices) > 0:
+                X_new = X_new.at[noi_indices].set(0.0)
+
+            # VACASK-style AND convergence (nrsolver.h:226).
+            # Both solution delta and KCL residual must be below tolerance.
+            converged = jnp.logical_and(residual_converged, delta_converged)
+
+            # VACASK preventedConvergence (nrsolver.cpp:326, coreopnr.cpp:778):
+            # When device limiting (pnjlim/fetlim) is active, block convergence.
+            if total_limit_states > 0:
+                limit_delta = jnp.max(jnp.abs(limit_state_out - limit_state))
+                limit_ref = jnp.maximum(jnp.max(jnp.abs(limit_state)) * reltol, vntol)
+                limit_settled = limit_delta < limit_ref
+                converged = converged & limit_settled & (i >= 1)
+
+            return (
+                X_new,
+                iterations + 1,
+                converged,
+                max_f,
+                max_delta,
+                Q,
+                limit_state_out,
+            )
+
+        def _nr_body(i, mutable):
+            """fori_loop body: skip if already converged, else do NR step.
+
+            lax.cond compiles both branches but the identity branch is essentially
+            free (no compute). The key win is that fori_loop uses a compile-time
+            bound, so XLA keeps the entire loop on-GPU without host round-trips.
+            """
+            converged = mutable[2]
+            return lax.cond(
+                converged,
+                lambda m: m,
+                lambda m: _nr_step(i, m),
+                mutable,
+            )
+
+        result_mutable = lax.fori_loop(0, max_iterations, _nr_body, mutable_init)
+        X_final, iterations, converged, max_f, _, _, limit_state_final = result_mutable
 
         # Recompute Q and I_vsource from converged solution
         _, _, Q_final, I_vsource, _, max_res_contrib_final = build_system_jit(
