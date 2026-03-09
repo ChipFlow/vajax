@@ -119,11 +119,12 @@ jobs:
       - name: Run nsys profiling
         env:
           JAX_PLATFORMS: cuda,cpu
-          XLA_FLAGS: "--xla_gpu_autotune_level=0 --xla_gpu_enable_command_buffer=+WHILE,+CONDITIONAL --xla_dump_to=/tmp/xla_dump --xla_dump_hlo_as_text --xla_dump_hlo_pass_re=command-buffer"
+          # +WHILE,+CONDITIONAL: no-op today (cuSOLVER getrf blocks graph capture)
+          # but will auto-activate if XLA/cuSOLVER ever becomes compatible
+          XLA_FLAGS: "--xla_gpu_autotune_level=0 --xla_gpu_enable_command_buffer=+WHILE,+CONDITIONAL"
           XLA_PYTHON_CLIENT_PREALLOCATE: "false"
           XLA_PYTHON_CLIENT_ALLOCATOR: platform
-          TF_CPP_MIN_LOG_LEVEL: "0"
-          TF_CPP_VMODULE: "command_buffer_schedule=3,command_buffer_cmd=3,while_thunk=2,gpu_command_buffer=2"
+          TF_CPP_MIN_LOG_LEVEL: "2"
         run: |
           SPARSE_FLAG=""
           if [ "${{ inputs.sparse }}" = "true" ]; then
@@ -159,40 +160,6 @@ jobs:
               echo "::error::nsys report not generated"
               exit 1
             fi
-          fi
-
-      - name: Capture XLA command buffer diagnostics
-        if: always()
-        run: |
-          XLA_DUMP="/tmp/xla_dump"
-          XLA_DIAG="/tmp/xla-diagnostics"
-          mkdir -p "$XLA_DIAG"
-
-          # Summarize command buffer pass results
-          if [ -d "$XLA_DUMP" ]; then
-            echo "=== XLA dump files ==="
-            find "$XLA_DUMP" -maxdepth 1 -type f | head -50
-
-            # Look for command-buffer pass output
-            for f in "$XLA_DUMP"/*command*; do
-              if [ -f "$f" ]; then
-                echo "=== $(basename "$f") ===" >> "$XLA_DIAG/command_buffer_passes.txt"
-                head -200 "$f" >> "$XLA_DIAG/command_buffer_passes.txt"
-                echo "" >> "$XLA_DIAG/command_buffer_passes.txt"
-              fi
-            done
-
-            # Look for while loop HLO
-            grep -rl "while" "$XLA_DUMP"/ 2>/dev/null | head -5 | while read -r f; do
-              echo "=== $(basename "$f") ===" >> "$XLA_DIAG/while_loop_hlo.txt"
-              grep -A5 -B2 "while" "$f" | head -100 >> "$XLA_DIAG/while_loop_hlo.txt"
-              echo "" >> "$XLA_DIAG/while_loop_hlo.txt"
-            done
-
-            # Copy small dump files
-            find "$XLA_DUMP" -name "*command*" -size -1M -exec cp {} "$XLA_DIAG/" \;
-          else
-            echo "No XLA dump directory found"
           fi
 
       - name: Export stats and SQLite
@@ -258,6 +225,5 @@ jobs:
             /tmp/nsys-*.nsys-rep
             /tmp/nsys-*.sqlite
             /tmp/nsys-stats/
-            /tmp/xla-diagnostics/
           if-no-files-found: ignore
           retention-days: 30
