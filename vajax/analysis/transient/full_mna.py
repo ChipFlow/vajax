@@ -1767,21 +1767,18 @@ def _make_full_mna_while_loop_fns(
         # Compute the voltage to record - use new_X which is the actual solution we're using
         # (either X_new if converged, or previous X if NR failed at min_dt)
         V_to_record = new_X[:n_external]
-        new_times_out = jnp.where(
-            accept_step, state.times_out.at[state.step_idx].set(t_next), state.times_out
-        )
-        new_V_out = jnp.where(
-            accept_step, state.V_out.at[state.step_idx].set(V_to_record), state.V_out
-        )
-        # For currents, use zero if NR failed at min_dt (current from bad solution is unreliable)
+        # Write unconditionally: on rejection step_idx doesn't advance, so stale
+        # values at step_idx get overwritten by the next accepted step. The caller
+        # trims output using step_idx, so values beyond it are ignored. This avoids
+        # materializing both branches of jnp.where on the full output arrays.
         I_to_record = jnp.where(
             nr_failed_at_min_dt,
             jnp.zeros(n_vsources, dtype=dtype) if n_vsources > 0 else jnp.zeros(1, dtype=dtype),
             I_vsource[:n_vsources] if n_vsources > 0 else jnp.zeros(1, dtype=dtype),
         )
-        new_I_out = jnp.where(
-            accept_step, state.I_out.at[state.step_idx].set(I_to_record), state.I_out
-        )
+        new_times_out = state.times_out.at[state.step_idx].set(t_next)
+        new_V_out = state.V_out.at[state.step_idx].set(V_to_record)
+        new_I_out = state.I_out.at[state.step_idx].set(I_to_record)
         new_step_idx = jnp.where(accept_step, state.step_idx + 1, state.step_idx)
 
         # Statistics
