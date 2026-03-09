@@ -1062,6 +1062,8 @@ class CircuitEngine:
 
         # Get dimensions from transient setup cache
         setup_cache = self._transient_setup_cache
+        if setup_cache is None:
+            raise RuntimeError("No transient setup cache. Call prepare() first.")
         n_total = setup_cache["n_total"]
         n_unknowns = setup_cache["n_unknowns"]
         n_vsources = len([d for d in self.devices if d["model"] == "vsource"])
