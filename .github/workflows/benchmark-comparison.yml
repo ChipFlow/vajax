@@ -9,6 +9,10 @@ on:
   schedule:
     - cron: '0 6 * * *'  # Daily at 6am UTC
 
+concurrency:
+  group: benchmark-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
 env:
   CARGO_TERM_COLOR: always
   CARGO_INCREMENTAL: 0
@@ -34,8 +38,6 @@ jobs:
     name: benchmark (${{ matrix.solver }}-${{ matrix.platform }})
     runs-on: ${{ matrix.runner }}
     timeout-minutes: ${{ matrix.solver == 'sparse' && matrix.platform == 'cuda' && 360 || 90 }}
-    concurrency:
-      group: benchmark-${{ matrix.solver }}-${{ matrix.platform }}-${{ github.ref }}
 
     steps:
       - name: Checkout with submodules
