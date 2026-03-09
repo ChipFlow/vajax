@@ -1022,6 +1022,232 @@ class CircuitEngine:
             stats=stats,
         )
 
+    def dump_jaxpr(self, output_dir: str | Path = "/tmp/claude/jaxpr-analysis") -> Path:
+        """Dump JAX IR analysis for the compiled simulation functions.
+
+        Analyzes two hot-path functions after prepare():
+        1. build_system - Jacobian + residual assembly (per NR iteration)
+        2. nr_solve - Full Newton-Raphson solve (per timestep)
+
+        Uses the actual circuit's device_arrays and dimensions from the prepared
+        strategy, matching the calling conventions used during simulation.
+
+        For each function, writes:
+        - HLO text (StableHLO MLIR representation)
+        - HLO operation counts (top ops by frequency)
+        - XLA cost analysis (flops, memory bytes)
+
+        Args:
+            output_dir: Directory for output files.
+
+        Returns:
+            Path to the output directory.
+        """
+        if not getattr(self, "_prepared", False):
+            self.prepare()
+
+        output_dir = Path(output_dir)
+        output_dir.mkdir(parents=True, exist_ok=True)
+
+        strategy = self._prepared_strategy
+
+        # Get cached functions and actual circuit data from the strategy
+        build_system_jit = getattr(strategy, "_cached_build_system_jit", None)
+        nr_solve = getattr(strategy, "_cached_full_mna_solver", None)
+        device_arrays = getattr(strategy, "_device_arrays_full_mna", None)
+        total_limit_states = getattr(strategy, "_total_limit_states", 0)
+
+        if build_system_jit is None or nr_solve is None or device_arrays is None:
+            raise RuntimeError("No cached solver found. Call prepare() first.")
+
+        # Get dimensions from transient setup cache
+        setup_cache = self._transient_setup_cache
+        n_total = setup_cache["n_total"]
+        n_unknowns = setup_cache["n_unknowns"]
+        n_vsources = len([d for d in self.devices if d["model"] == "vsource"])
+        n_isources = len([d for d in self.devices if d["model"] == "isource"])
+
+        logger.info(
+            f"dump_jaxpr: n_total={n_total}, n_unknowns={n_unknowns}, "
+            f"n_vsources={n_vsources}, limit_states={total_limit_states}"
+        )
+
+        # Use the actual circuit's device_arrays and correct-shaped args.
+        # Values don't matter for HLO tracing — only shapes and dtypes.
+        # Match the calling conventions from full_mna.py DC solve path.
+        dtype = get_float_dtype()
+        X = jnp.zeros(n_total + n_vsources, dtype=dtype)
+        vsource_vals = jnp.zeros(n_vsources, dtype=dtype)
+        isource_vals = jnp.zeros(max(n_isources, 1), dtype=dtype)
+        Q_prev = jnp.zeros(n_unknowns, dtype=dtype)
+        integ_c0 = jnp.asarray(0.0, dtype=dtype)
+        gmin = jnp.asarray(1e-12, dtype=dtype)
+        gshunt = jnp.asarray(0.0, dtype=dtype)
+        integ_c1 = jnp.asarray(0.0, dtype=dtype)
+        integ_d1 = jnp.asarray(0.0, dtype=dtype)
+        dQdt_prev = jnp.zeros(n_unknowns, dtype=dtype)
+        integ_c2 = jnp.asarray(0.0, dtype=dtype)
+        Q_prev2 = jnp.zeros(n_unknowns, dtype=dtype)
+        limit_state = jnp.zeros(total_limit_states, dtype=dtype)
+        nr_iter = jnp.asarray(1, dtype=jnp.int32)
+
+        # build_system_jit signature: (X, vsource_vals, isource_vals, Q_prev,
+        #   integ_c0, device_arrays, gmin, gshunt, integ_c1, integ_d1,
+        #   dQdt_prev, integ_c2, Q_prev2, limit_state, nr_iter)
+        build_args = (
+            X,
+            vsource_vals,
+            isource_vals,
+            Q_prev,
+            integ_c0,
+            device_arrays,
+            gmin,
+            gshunt,
+            integ_c1,
+            integ_d1,
+            dQdt_prev,
+            integ_c2,
+            Q_prev2,
+            limit_state,
+            nr_iter,
+        )
+
+        # nr_solve signature: (X_init, vsource_vals, isource_vals, Q_prev,
+        #   integ_c0, device_arrays, gmin, gshunt, integ_c1, integ_d1,
+        #   dQdt_prev, integ_c2, Q_prev2, limit_state_in)
+        # Uses None defaults for optional args, matching DC solve convention.
+        nr_args = (
+            X,
+            vsource_vals,
+            isource_vals,
+            Q_prev,
+            integ_c0,
+            device_arrays,
+            gmin,
+            gshunt,
+            integ_c1,
+            integ_d1,
+            None,
+            integ_c2,
+            None,
+            None,
+        )
+
+        results = {}
+        for name, fn, args in [
+            ("build_system", build_system_jit, build_args),
+            ("nr_solve", nr_solve, nr_args),
+        ]:
+            results[name] = self._dump_single_jaxpr(name, fn, args, output_dir)
+
+        return output_dir
+
+    @staticmethod
+    def _dump_single_jaxpr(name: str, fn, args, output_dir: Path) -> dict[str, Any]:
+        """Analyze and dump jaxpr/HLO for a single function.
+
+        Produces three artifacts per function:
+        - {name}.jaxpr.txt — JAX's high-level IR (from jax.make_jaxpr)
+        - {name}.hlo.txt — StableHLO/MLIR after lowering
+        - Log output with op counts and XLA cost analysis
+
+        Returns:
+            Dict with 'jaxpr', 'hlo_lines', 'op_counts', 'cost' keys.
+        """
+        result: dict[str, Any] = {"name": name}
+        logger.info(f"Analyzing {name}...")
+
+        try:
+            # 1. Jaxpr (high-level JAX IR)
+            jaxpr = jax.make_jaxpr(fn)(*args)
+            jaxpr_text = str(jaxpr)
+            jaxpr_lines = jaxpr_text.split("\n")
+            result["jaxpr"] = jaxpr
+            result["jaxpr_lines"] = len(jaxpr_lines)
+            logger.info(f"  {name}: {len(jaxpr_lines)} jaxpr lines")
+
+            jaxpr_file = output_dir / f"{name}.jaxpr.txt"
+            with open(jaxpr_file, "w") as f:
+                f.write(jaxpr_text)
+            result["jaxpr_file"] = jaxpr_file
+            logger.info(f"  Saved jaxpr: {jaxpr_file}")
+
+            # Count jaxpr primitives
+            jaxpr_ops: dict[str, int] = {}
+            for eqn in jaxpr.jaxpr.eqns:
+                prim_name = str(eqn.primitive.name)
+                jaxpr_ops[prim_name] = jaxpr_ops.get(prim_name, 0) + 1
+            result["jaxpr_ops"] = dict(sorted(jaxpr_ops.items(), key=lambda x: -x[1]))
+            if jaxpr_ops:
+                sorted_jaxpr_ops = sorted(jaxpr_ops.items(), key=lambda x: -x[1])
+                logger.info(f"  {name}: Top jaxpr primitives:")
+                for op, count in sorted_jaxpr_ops[:20]:
+                    logger.info(f"    {op:45s} {count:6d}")
+                logger.info(f"  Total jaxpr eqns: {len(jaxpr.jaxpr.eqns)}")
+
+            # 2. HLO (lowered StableHLO)
+            if hasattr(fn, "lower"):
+                lowered = fn.lower(*args)
+            else:
+                lowered = jax.jit(fn).lower(*args)
+
+            hlo_text = lowered.as_text()
+            hlo_lines = hlo_text.split("\n")
+            result["hlo_lines"] = len(hlo_lines)
+            logger.info(f"  {name}: {len(hlo_lines)} HLO lines")
+
+            # Count HLO operations
+            op_counts: dict[str, int] = {}
+            for line in hlo_lines:
+                if "=" in line and "." in line:
+                    parts = line.split("=")
+                    if len(parts) >= 2:
+                        op_part = parts[1].strip().split()[0] if parts[1].strip() else ""
+                        if "." in op_part:
+                            op_name = op_part.split("(")[0]
+                            op_counts[op_name] = op_counts.get(op_name, 0) + 1
+
+            result["op_counts"] = dict(sorted(op_counts.items(), key=lambda x: -x[1]))
+            if op_counts:
+                sorted_ops = sorted(op_counts.items(), key=lambda x: -x[1])
+                logger.info(f"  {name}: Top HLO ops:")
+                for op, count in sorted_ops[:20]:
+                    logger.info(f"    {op:45s} {count:6d}")
+                logger.info(f"  Total unique op types: {len(op_counts)}")
+                logger.info(f"  Total ops: {sum(op_counts.values())}")
+
+            # 3. Cost analysis
+            compiled = lowered.compile()
+            cost = compiled.cost_analysis()
+            result["cost"] = cost
+            if cost:
+                for i, device_cost in enumerate(cost):
+                    if device_cost and isinstance(device_cost, dict):
+                        logger.info(f"  {name} cost (device {i}):")
+                        for key, val in sorted(device_cost.items()):
+                            if isinstance(val, (int, float)):
+                                if val > 1e9:
+                                    logger.info(f"    {key}: {val / 1e9:.2f}G")
+                                elif val > 1e6:
+                                    logger.info(f"    {key}: {val / 1e6:.2f}M")
+                                elif val > 1e3:
+                                    logger.info(f"    {key}: {val / 1e3:.2f}K")
+                                else:
+                                    logger.info(f"    {key}: {val:.2f}")
+
+            # Save HLO
+            hlo_file = output_dir / f"{name}.hlo.txt"
+            with open(hlo_file, "w") as f:
+                f.write(hlo_text)
+            result["hlo_file"] = hlo_file
+            logger.info(f"  Saved HLO: {hlo_file}")
+
+        except Exception as e:
+            logger.error(f"Failed to analyze {name}: {e}", exc_info=True)
+            result["error"] = str(e)
+
+        return result
+
     # =========================================================================
     # Node Collapse Implementation
     # =========================================================================

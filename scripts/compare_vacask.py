@@ -52,7 +52,6 @@ os.environ.setdefault("XLA_PYTHON_CLIENT_ALLOCATOR", "platform")
 # Note: Set JAX_PLATFORMS=cpu before running for CPU-only mode
 
 import jax
-import jax.numpy as jnp
 
 # Precision is auto-configured by vajax import (imported above via logging)
 # Metal/TPU use f32, CPU/CUDA use f64
@@ -63,104 +62,6 @@ from vajax.benchmarks.registry import (
     list_benchmarks,
 )
 from vajax.profiling import ProfileConfig
-
-
-def analyze_compiled_function(fn, args, name: str, output_dir: Optional[Path] = None):
-    """Dump jaxpr and cost analysis for a JIT-compiled function.
-
-    Args:
-        fn: A JAX function (JIT-compiled or not)
-        args: Example arguments to trace with
-        name: Name for output files
-        output_dir: Optional directory to save analysis files
-    """
-    print(f"\n{'=' * 70}")
-    print(f"JAX Analysis: {name}")
-    print(f"{'=' * 70}")
-
-    # Lower the function to get HLO and cost analysis
-    # For JIT-compiled functions, we use .lower() directly
-    print(f"\n--- Lowering and compiling {name} ---")
-    try:
-        # If fn is already jitted, we can lower it directly
-        # Otherwise wrap it in jit first
-        if hasattr(fn, "lower"):
-            lowered = fn.lower(*args)
-        else:
-            lowered = jax.jit(fn).lower(*args)
-
-        # Get the HLO text (MLIR representation)
-        hlo_text = lowered.as_text()
-        hlo_lines = hlo_text.split("\n")
-        print(f"HLO text: {len(hlo_lines)} lines")
-
-        # Count operations in HLO
-        op_counts: Dict[str, int] = {}
-        for line in hlo_lines:
-            # Extract operation names from MLIR-style ops like: %0 = stablehlo.add
-            if "=" in line and "." in line:
-                parts = line.split("=")
-                if len(parts) >= 2:
-                    op_part = parts[1].strip().split()[0] if parts[1].strip() else ""
-                    if "." in op_part:
-                        op_name = op_part.split("(")[0]  # Remove args
-                        op_counts[op_name] = op_counts.get(op_name, 0) + 1
-
-        if op_counts:
-            print(f"Top HLO ops: {dict(sorted(op_counts.items(), key=lambda x: -x[1])[:15])}")
-
-        # Compile and get cost analysis
-        compiled = lowered.compile()
-        cost = compiled.cost_analysis()
-        print("\n--- Cost Analysis ---")
-        if cost:
-            for i, device_cost in enumerate(cost):
-                if device_cost and isinstance(device_cost, dict):
-                    print(f"Device {i}:")
-                    for key, val in device_cost.items():
-                        if isinstance(val, (int, float)):
-                            if val > 1e9:
-                                print(f"  {key}: {val / 1e9:.2f}G")
-                            elif val > 1e6:
-                                print(f"  {key}: {val / 1e6:.2f}M")
-                            elif val > 1e3:
-                                print(f"  {key}: {val / 1e3:.2f}K")
-                            else:
-                                print(f"  {key}: {val}")
-                        else:
-                            print(f"  {key}: {val}")
-                elif device_cost:
-                    print(f"Device {i}: {device_cost}")
-        else:
-            print("No cost analysis available (may not be supported on this backend)")
-
-        # Save files if output_dir provided
-        if output_dir:
-            output_dir.mkdir(parents=True, exist_ok=True)
-
-            # Save HLO text
-            hlo_file = output_dir / f"{name}_hlo.txt"
-            with open(hlo_file, "w") as f:
-                f.write(hlo_text)
-            print(f"\nHLO text saved to: {hlo_file}")
-
-            # Try to get the jaxpr as well for the underlying computation
-            try:
-                # Create jaxpr from the unwrapped function if possible
-                jaxpr_text = str(jax.make_jaxpr(fn)(*args))
-                jaxpr_file = output_dir / f"{name}_jaxpr.txt"
-                with open(jaxpr_file, "w") as f:
-                    f.write(jaxpr_text)
-                print(f"JAXPR saved to: {jaxpr_file}")
-            except Exception:
-                pass  # JIT functions may not produce useful jaxpr
-
-    except Exception as e:
-        import traceback
-
-        print(f"Failed to analyze: {e}")
-        traceback.print_exc()
-
 
 # Note: Benchmark configurations are now auto-discovered from
 # vajax.benchmarks.registry. The registry parses .sim files
@@ -451,41 +352,11 @@ def run_vajax(
         )
         startup_time = time.perf_counter() - startup_start
 
-        # Run analysis on compiled scan function if requested
-        if analyze and use_scan and hasattr(engine, "_cached_scan_fn"):
-            print("\n  Running JAX analysis...")
-            # Get example inputs for the scan function
-            # The scan function signature is: (V_init, Q_init, all_vsource, all_isource, device_arrays)
-            # Must use total nodes (external + internal) from transient setup cache
-            setup_cache = getattr(engine, "_transient_setup_cache", None)
-            device_arrays = getattr(engine, "_device_arrays", None)
-
-            if setup_cache is None or device_arrays is None:
-                print("  Warning: transient setup cache not found - analysis skipped")
-            else:
-                n_total = setup_cache["n_total"]
-                n_unknowns = setup_cache["n_unknowns"]
-                n_vsources = len([d for d in engine.devices if d["model"] == "vsource"])
-                n_isources = len([d for d in engine.devices if d["model"] == "isource"])
-
-                # Create example arrays matching actual shapes
-                V_init = jnp.zeros(n_total, dtype=jnp.float64)
-                Q_init = jnp.zeros(n_unknowns, dtype=jnp.float64)
-                all_vsource = jnp.zeros((num_steps, n_vsources), dtype=jnp.float64)
-                all_isource = jnp.zeros((num_steps, n_isources), dtype=jnp.float64)
-
-                # Determine output directory
-                out_dir = analyze_output_dir or Path(f"/tmp/vajax-analysis/{config.name}")
-
-                # Analyze the scan function
-                analyze_compiled_function(
-                    engine._cached_scan_fn,
-                    (V_init, Q_init, all_vsource, all_isource, device_arrays),
-                    f"{config.name}_scan_simulation",
-                    out_dir,
-                )
-        elif analyze and use_scan:
-            print("\n  Warning: _cached_scan_fn not found - analysis skipped")
+        # Run analysis on compiled functions if requested
+        if analyze:
+            out_dir = analyze_output_dir or Path(f"/tmp/claude/jaxpr-analysis/{config.name}")
+            print(f"\n  Dumping jaxpr/HLO analysis to {out_dir} ...")
+            engine.dump_jaxpr(out_dir)
 
         # Timed run - print perf_counter for correlation with Perfetto traces
         # prepare() already called above with same params, strategy is cached
