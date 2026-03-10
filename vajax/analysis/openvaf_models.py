@@ -146,14 +146,24 @@ _BUNDLED_MODELS_DIR = Path(__file__).parent.parent / "devices" / "models"
 def _get_base_paths() -> Dict[str, Path]:
     """Get base paths for VA model sources.
 
-    Priority: bundled models (vajax/devices/models/) first, then vendor/.
+    Resolution order:
+    1. Bundled models (vajax/devices/models/)
+    2. User-configured paths (VAJAX_MODEL_PATH env var + config file [models].paths)
+    3. Vendor directories (OpenVAF integration_tests, VACASK devices)
     """
-    project_root = Path(__file__).parent.parent.parent
-    return {
+    from vajax.user_config import get_model_paths
+
+    paths: Dict[str, Path] = {
         "bundled": _BUNDLED_MODELS_DIR,
-        "integration_tests": project_root / "vendor" / "OpenVAF" / "integration_tests",
-        "vacask": project_root / "vendor" / "VACASK" / "devices",
     }
+
+    for i, user_path in enumerate(get_model_paths()):
+        paths[f"user_{i}"] = user_path
+
+    project_root = Path(__file__).parent.parent.parent
+    paths["integration_tests"] = project_root / "vendor" / "OpenVAF" / "integration_tests"
+    paths["vacask"] = project_root / "vendor" / "VACASK" / "devices"
+    return paths
 
 
 def warmup_models(
