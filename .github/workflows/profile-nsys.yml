@@ -82,30 +82,17 @@ jobs:
         with:
           workspaces: openvaf_jax/openvaf_py
 
-      - name: Cache apt packages
-        uses: actions/cache@v4
-        id: apt-cache
+      - name: Install CUDA toolkit and system dependencies
+        uses: robtaylor/cache-apt-pkgs-action@feat/apt-sources
         with:
-          path: ~/apt-cache
-          key: apt-cuda-12.6-${{ runner.os }}-v1
-
-      - name: Install CUDA toolkit and nsys
-        run: |
-          # Restore cached debs if available
-          if [ -d ~/apt-cache ] && [ "$(ls ~/apt-cache/*.deb 2>/dev/null | wc -l)" -gt 0 ]; then
-            echo "=== Restoring $(ls ~/apt-cache/*.deb | wc -l) cached debs ==="
-            sudo cp ~/apt-cache/*.deb /var/cache/apt/archives/ 2>/dev/null || true
-          fi
-
-          sudo apt-get update
-          sudo apt-get install -y cuda-toolkit-12-6 libcudnn9-cuda-12 libcudss0-cuda-12 cuda-nsight-systems-12-6 \
+          packages: >-
+            cuda-toolkit-12-6 libcudnn9-cuda-12 libcudss0-cuda-12
+            cuda-nsight-systems-12-6
             libsuitesparse-dev libopenblas-dev swig cmake pkg-config
+          version: 1.0
 
-          # Cache downloaded debs for next run
-          mkdir -p ~/apt-cache
-          cp /var/cache/apt/archives/*.deb ~/apt-cache/ 2>/dev/null || true
-          echo "=== Cached $(ls ~/apt-cache/*.deb 2>/dev/null | wc -l) debs ($(du -sh ~/apt-cache 2>/dev/null | cut -f1)) ==="
-
+      - name: Set up CUDA environment
+        run: |
           echo "/usr/local/cuda-12.6/bin" >> $GITHUB_PATH
           CUDSS_LIB=$(dpkg -L libcudss0-cuda-12 | grep '\.so' | head -1)
           if [ -n "$CUDSS_LIB" ]; then
