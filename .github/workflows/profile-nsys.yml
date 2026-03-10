@@ -20,6 +20,10 @@ on:
         description: 'Use sparse solver (for large circuits)'
         type: boolean
         default: false
+      use_baspacho:
+        description: 'Build spineax from source with BaSpaCho dense solver'
+        type: boolean
+        default: false
 
 # Only one profiling job at a time on the GPU runner
 concurrency:
@@ -116,11 +120,20 @@ jobs:
       - name: Install vajax with CUDA dependencies
         run: uv sync --extra cuda12
 
+      - name: Install spineax with BaSpaCho from source
+        if: inputs.use_baspacho
+        run: |
+          # Replace PyPI spineax with git version that has BaSpaCho dense solver.
+          # FetchContent auto-fetches BaSpaCho + deps (SuiteSparse, dispenso, Eigen).
+          uv pip install \
+            "spineax-vajax @ git+https://github.com/robtaylor/spineax.git@main" \
+            -C cmake.define.SPINEAX_USE_BASPACHO=ON
+
       - name: Run nsys profiling
         env:
           JAX_PLATFORMS: cuda,cpu
-          # +WHILE,+CONDITIONAL: no-op today (cuSOLVER getrf blocks graph capture)
-          # but will auto-activate if XLA/cuSOLVER ever becomes compatible
+          # +WHILE,+CONDITIONAL: enables command buffer capture for NR while loop
+          # BaSpaCho dense solver has kCmdBufferCompatible trait (replaces cuSOLVER)
           XLA_FLAGS: "--xla_gpu_autotune_level=0 --xla_gpu_enable_command_buffer=+WHILE,+CONDITIONAL"
           XLA_PYTHON_CLIENT_PREALLOCATE: "false"
           XLA_PYTHON_CLIENT_ALLOCATOR: platform
