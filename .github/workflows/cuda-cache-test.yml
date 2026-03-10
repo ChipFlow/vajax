@@ -189,13 +189,21 @@ jobs:
           sudo xargs apt-mark unhold < /tmp/held.txt > /dev/null 2>&1
         shell: bash
 
-      - name: Simulate without clang-18 (holds only)
+      - name: Simulate with libblas-dev instead of libopenblas-dev (holds)
         run: |
-          # Drop clang-18 and libclang-18-dev — they pull in libobjc-13-dev
-          PKGS="llvm-18-dev lld-18 libsuitesparse-dev libopenblas-dev swig cmake cuda-toolkit-12-6 cuda-nsight-systems-12-6 libcudnn9-cuda-12 libcudss0-cuda-12 pkg-config"
+          # Replace libopenblas-dev with libblas-dev + liblapack-dev (reference implementations)
+          # Drop clang-18 and libclang-18-dev (libobjc-13-dev chain)
+          PKGS="llvm-18-dev lld-18 libsuitesparse-dev libblas-dev liblapack-dev swig cmake cuda-toolkit-12-6 cuda-nsight-systems-12-6 libcudnn9-cuda-12 libcudss0-cuda-12 pkg-config"
 
-          echo "=== Package list (no clang-18, no libclang-18-dev): ==="
+          echo "=== Package list: ==="
           echo "${PKGS}"
+          echo ""
+
+          echo "=== libblas-dev dep chain ==="
+          apt-cache depends libblas-dev 2>/dev/null || true
+          echo ""
+          echo "=== liblapack-dev dep chain ==="
+          apt-cache depends liblapack-dev 2>/dev/null || true
           echo ""
 
           echo "=== Holding all installed packages ==="
@@ -205,56 +213,41 @@ jobs:
           echo ""
 
           echo "=== With holds only ==="
-          sudo apt-get install --simulate --show-upgraded ${PKGS} 2>&1 | tee /tmp/simulate-noclang-held.txt
+          sudo apt-get install --simulate --show-upgraded ${PKGS} 2>&1 | tee /tmp/simulate-blas-held.txt || true
           echo ""
 
-          TOTAL=$(grep -c "^Inst " /tmp/simulate-noclang-held.txt || echo 0)
-          NEW=$(grep "^Inst " /tmp/simulate-noclang-held.txt | grep -cv "^Inst [^ ]* \[" || echo 0)
-          UPG=$(grep -c "^Inst [^ ]* \[" /tmp/simulate-noclang-held.txt || echo 0)
-          echo "=== Summary (no clang, holds) ==="
+          TOTAL=$(grep -c "^Inst " /tmp/simulate-blas-held.txt || echo 0)
+          NEW=$(grep "^Inst " /tmp/simulate-blas-held.txt | grep -cv "^Inst [^ ]* \[" || echo 0)
+          UPG=$(grep -c "^Inst [^ ]* \[" /tmp/simulate-blas-held.txt || echo 0)
+          echo "=== Summary (libblas-dev, holds) ==="
           echo "Total: ${TOTAL}  (New: ${NEW}, Upgrades: ${UPG})"
           echo ""
 
-          if grep -q "^E:" /tmp/simulate-noclang-held.txt; then
+          if grep -q "^E:" /tmp/simulate-blas-held.txt; then
             echo "=== ERRORS ==="
-            grep "^E:" /tmp/simulate-noclang-held.txt
+            grep "^E:" /tmp/simulate-blas-held.txt
             echo ""
             echo "=== Unmet deps ==="
-            grep "Depends:" /tmp/simulate-noclang-held.txt || true
+            grep "Depends:" /tmp/simulate-blas-held.txt || true
           else
-            echo "=== SUCCESS: No errors without clang + holds ==="
+            echo "=== SUCCESS ==="
             echo ""
             echo "Upgraded packages:"
-            grep "^Inst [^ ]* \[" /tmp/simulate-noclang-held.txt || echo "(none)"
+            grep "^Inst [^ ]* \[" /tmp/simulate-blas-held.txt || echo "(none)"
+            echo ""
+            echo "All packages:"
+            grep "^Inst " /tmp/simulate-blas-held.txt | awk '{print $2}' | sort
           fi
 
           sudo xargs apt-mark unhold < /tmp/held.txt > /dev/null 2>&1
           echo ""
 
-          echo "=== With holds + --no-install-recommends ==="
-          sudo xargs apt-mark hold < /tmp/held.txt > /dev/null 2>&1
-          sudo apt-get install --simulate --show-upgraded --no-install-recommends ${PKGS} 2>&1 | tee /tmp/simulate-noclang-held-norec.txt
+          echo "=== Without holds (baseline comparison) ==="
+          sudo apt-get install --simulate --show-upgraded ${PKGS} 2>&1 | tee /tmp/simulate-blas-noheld.txt || true
           echo ""
-
-          TOTAL2=$(grep -c "^Inst " /tmp/simulate-noclang-held-norec.txt || echo 0)
-          NEW2=$(grep "^Inst " /tmp/simulate-noclang-held-norec.txt | grep -cv "^Inst [^ ]* \[" || echo 0)
-          UPG2=$(grep -c "^Inst [^ ]* \[" /tmp/simulate-noclang-held-norec.txt || echo 0)
-          echo "=== Summary (no clang, holds, no-recommends) ==="
-          echo "Total: ${TOTAL2}  (New: ${NEW2}, Upgrades: ${UPG2})"
-          echo ""
-
-          if grep -q "^E:" /tmp/simulate-noclang-held-norec.txt; then
-            echo "=== ERRORS ==="
-            grep "^E:" /tmp/simulate-noclang-held-norec.txt
-            echo ""
-            echo "=== Unmet deps ==="
-            grep "Depends:" /tmp/simulate-noclang-held-norec.txt || true
-          else
-            echo "=== SUCCESS: No errors without clang + holds + no-recommends ==="
-            echo ""
-            echo "Upgraded packages:"
-            grep "^Inst [^ ]* \[" /tmp/simulate-noclang-held-norec.txt || echo "(none)"
-          fi
-
-          sudo xargs apt-mark unhold < /tmp/held.txt > /dev/null 2>&1
+          TOTAL_NH=$(grep -c "^Inst " /tmp/simulate-blas-noheld.txt || echo 0)
+          NEW_NH=$(grep "^Inst " /tmp/simulate-blas-noheld.txt | grep -cv "^Inst [^ ]* \[" || echo 0)
+          UPG_NH=$(grep -c "^Inst [^ ]* \[" /tmp/simulate-blas-noheld.txt || echo 0)
+          echo "=== Summary (libblas-dev, no holds) ==="
+          echo "Total: ${TOTAL_NH}  (New: ${NEW_NH}, Upgrades: ${UPG_NH})"
         shell: bash
