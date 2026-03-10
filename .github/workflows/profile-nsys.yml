@@ -143,17 +143,22 @@ jobs:
           # --reinstall forces rebuild even if same version is cached from PyPI.
           # --no-cache avoids reusing a wheel built without SPINEAX_USE_BASPACHO.
           # FetchContent auto-fetches BaSpaCho + deps (SuiteSparse, dispenso, Eigen).
-          uv pip install --reinstall --no-cache -vvv \
+          # Use sccache to cache C++/CUDA compilation (BaSpaCho + SuiteSparse = 344 objects)
+          export CMAKE_C_COMPILER_LAUNCHER=sccache
+          export CMAKE_CXX_COMPILER_LAUNCHER=sccache
+          export CMAKE_CUDA_COMPILER_LAUNCHER=sccache
+
+          uv pip install --reinstall --no-cache -v \
             "spineax-vajax @ git+https://github.com/robtaylor/spineax.git@main" \
             -C cmake.define.SPINEAX_USE_BASPACHO=ON
 
           # Verify the module was installed
           echo "=== Installed spineax files ==="
-          python -c "import spineax; import pathlib; p = pathlib.Path(spineax.__file__).parent; [print(f'  {f.name}') for f in sorted(p.iterdir())]"
+          uv run python -c "import spineax; import pathlib; p = pathlib.Path(spineax.__file__).parent; [print(f'  {f.name}') for f in sorted(p.iterdir())]"
           echo "=== spineax directory listing ==="
           ls -lR .venv/lib/python*/site-packages/spineax/ || true
           echo "=== Checking baspacho_dense_solve import ==="
-          python -c "from spineax import baspacho_dense_solve; print('  OK:', baspacho_dense_solve)" || echo "  FAILED"
+          uv run python -c "from spineax import baspacho_dense_solve; print('  OK:', baspacho_dense_solve)" || echo "  FAILED"
 
       - name: Run nsys profiling
         env:
