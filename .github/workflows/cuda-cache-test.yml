@@ -124,31 +124,32 @@ jobs:
             | head -80
         shell: bash
 
-      - name: Trace upgrade dependency chains
+      - name: Simulate with apt-mark hold (prevents upgrades)
         run: |
           PKGS="llvm-18-dev clang-18 libclang-18-dev lld-18 libsuitesparse-dev libopenblas-dev swig cmake cuda-toolkit-12-6 cuda-nsight-systems-12-6 libcudnn9-cuda-12 libcudss0-cuda-12 pkg-config"
 
-          # Get the list of upgraded package names
-          UPGRADED=$(grep "^Inst [^ ]* \[" /tmp/simulate-vajax.txt | awk '{print $2}' | sed 's/:.*//') # strip :i386 etc
+          echo "=== Holding all installed packages ==="
+          dpkg-query -W -f='${Package}\n' > /tmp/held.txt
+          sudo xargs apt-mark hold < /tmp/held.txt > /dev/null 2>&1
+          echo "Held $(wc -l < /tmp/held.txt) packages"
+          echo ""
 
-          echo "=== Which requested package triggers each upgrade? ==="
+          echo "=== apt-get install --simulate --show-upgraded (with holds) ==="
+          sudo apt-get install --simulate --show-upgraded ${PKGS} 2>&1 | tee /tmp/simulate-held.txt
           echo ""
-          # Simulate each requested package individually
-          for pkg in ${PKGS}; do
-            upg_count=$(sudo apt-get install --simulate --show-upgraded "${pkg}" 2>&1 | grep -c "^Inst [^ ]* \[" || echo 0)
-            if [ "${upg_count}" -gt 0 ]; then
-              echo "--- ${pkg} triggers ${upg_count} upgrades ---"
-              sudo apt-get install --simulate --show-upgraded "${pkg}" 2>&1 | grep "^Inst [^ ]* \[" | awk '{print "  " $2}'
-              echo ""
-            fi
-          done
 
+          TOTAL=$(grep -c "^Inst " /tmp/simulate-held.txt || echo 0)
+          NEW=$(grep "^Inst " /tmp/simulate-held.txt | grep -cv "^Inst [^ ]* \[" || echo 0)
+          UPG=$(grep -c "^Inst [^ ]* \[" /tmp/simulate-held.txt || echo 0)
+          echo "=== Summary (with holds) ==="
+          echo "Total: ${TOTAL}  (New: ${NEW}, Upgrades: ${UPG})"
           echo ""
-          echo "=== Reverse dependency: for each upgraded pkg, who needs it? ==="
-          echo ""
-          for upkg in $(echo "${UPGRADED}" | sort -u); do
-            echo "--- ${upkg} ---"
-            apt-cache rdepends --installed "${upkg}" 2>/dev/null | head -10 || true
-            echo ""
-          done
+
+          echo "=== Comparison ==="
+          echo "Without holds: 242 total (216 new, 26 upgrades)"
+          echo "With holds:    ${TOTAL} total (${NEW} new, ${UPG} upgrades)"
+          echo "Saved: $((242 - TOTAL)) packages"
+
+          # Clean up holds
+          sudo xargs apt-mark unhold < /tmp/held.txt > /dev/null 2>&1
         shell: bash
