@@ -14,130 +14,113 @@ env:
   SHELLOPTS: errexit:pipefail
 
 jobs:
-  cuda_cache_test:
+  apt_upgrade_analysis:
     runs-on: nvidia-runner-1
     timeout-minutes: 30
-    name: Test CUDA package cache on GPU runner
+    name: Analyse apt install behavior (new vs upgrade vs recommends)
     steps:
-      - uses: actions/checkout@v4
-
-      - name: Pre-install diagnostics
+      - name: Runner baseline
         run: |
           echo "=== Runner info ==="
           uname -a
-          cat /etc/os-release | head -5
+          cat /etc/os-release | head -3
           echo ""
-
-          echo "=== GPU Info ==="
-          nvidia-smi --query-gpu=name,driver_version,compute_cap --format=csv 2>/dev/null || echo "nvidia-smi not available"
+          echo "=== Pre-installed package count ==="
+          dpkg-query -W -f='${Package}\n' | wc -l
           echo ""
-
-          echo "=== Pre-existing CUDA packages ==="
-          dpkg -l | grep -i cuda | head -20 || echo "(none)"
-          echo ""
-
-          echo "=== Pre-existing CUDA directories ==="
-          ls -la /usr/local/cuda* 2>/dev/null || echo "(none)"
-          echo ""
-
-          echo "=== Pre-existing nvcc ==="
-          which nvcc 2>/dev/null && nvcc --version || echo "nvcc not in PATH"
-          find /usr/local -name nvcc -type f 2>/dev/null | head -5 || echo "(none on filesystem)"
-          echo ""
-
-          echo "=== Pre-existing nsys ==="
-          which nsys 2>/dev/null && nsys --version || echo "nsys not in PATH"
-          find /opt -name nsys -type f 2>/dev/null | head -5 || echo "(none in /opt)"
-          echo ""
-
-          echo "=== APT CUDA sources ==="
-          ls -la /etc/apt/sources.list.d/*cuda* /etc/apt/sources.list.d/*nvidia* 2>/dev/null || echo "(none)"
-          cat /etc/apt/sources.list.d/*cuda* /etc/apt/sources.list.d/*nvidia* 2>/dev/null || true
-          echo ""
-
-          echo "=== Keyring files ==="
-          ls -la /usr/share/keyrings/*cuda* /usr/share/keyrings/*nvidia* 2>/dev/null || echo "(none)"
+          echo "=== Pre-installed gcc-14-base ==="
+          dpkg -s gcc-14-base 2>&1 | grep -E "^(Package|Version|Architecture)" || echo "(not installed)"
+          dpkg -s gcc-14-base:i386 2>&1 | grep -E "^(Package|Version|Architecture)" || echo "(no i386 variant)"
         shell: bash
 
-      - name: Install CUDA nvcc via cache action
-        id: install
-        uses: robtaylor/cache-apt-pkgs-action@feat/apt-sources
-        with:
-          packages: cuda-nvcc-12-6
-          version: cuda-gpu-runner-test-v4
-          execute_install_scripts: "true"
-          debug: "true"
-
-      - name: Post-install diagnostics
+      - name: Simulate cuda-nvcc-12-6 install
         run: |
-          echo "=== cache-hit: ${{ steps.install.outputs.cache-hit }} ==="
+          sudo apt-get update -qq
+
+          echo "=== apt-get install --simulate cuda-nvcc-12-6 ==="
+          sudo apt-get install --simulate cuda-nvcc-12-6 2>&1 | tee /tmp/simulate-default.txt
           echo ""
 
-          echo "=== dpkg status for cuda-nvcc-12-6 ==="
-          dpkg -s cuda-nvcc-12-6 2>&1 | head -10 || echo "NOT REGISTERED"
+          echo "=== Summary: Inst (new) vs Inst (upgrade) ==="
+          echo "New installs:"
+          grep "^Inst " /tmp/simulate-default.txt | grep -v '\[' | wc -l
+          grep "^Inst " /tmp/simulate-default.txt | grep -v '\[' | head -20
+          echo ""
+          echo "Upgrades (have existing version in [brackets]):"
+          grep "^Inst " /tmp/simulate-default.txt | grep '\[' | wc -l
+          grep "^Inst " /tmp/simulate-default.txt | grep '\[' | head -20
           echo ""
 
-          echo "=== dpkg -L cuda-nvcc-12-6 (first 30 lines) ==="
-          dpkg -L cuda-nvcc-12-6 2>/dev/null | head -30 || echo "FAILED"
+          echo "=== With --no-install-recommends ==="
+          sudo apt-get install --simulate --no-install-recommends cuda-nvcc-12-6 2>&1 | tee /tmp/simulate-no-recommends.txt
+          echo ""
+          echo "New installs (no recommends):"
+          grep "^Inst " /tmp/simulate-no-recommends.txt | grep -v '\[' | wc -l
+          echo "Upgrades (no recommends):"
+          grep "^Inst " /tmp/simulate-no-recommends.txt | grep '\[' | wc -l
+        shell: bash
+
+      - name: Simulate cuda-toolkit-12-6 install (full toolkit)
+        run: |
+          echo "=== apt-get install --simulate cuda-toolkit-12-6 ==="
+          sudo apt-get install --simulate cuda-toolkit-12-6 2>&1 | tee /tmp/simulate-toolkit.txt
           echo ""
 
-          echo "=== Symlink analysis for nvcc ==="
-          NVCC_PATH=$(dpkg -L cuda-nvcc-12-6 2>/dev/null | grep '/nvcc$' | head -1)
-          if [ -n "$NVCC_PATH" ]; then
-            echo "dpkg says nvcc is at: $NVCC_PATH"
-            echo "  exists: $(test -e "$NVCC_PATH" && echo YES || echo NO)"
-            echo "  is file: $(test -f "$NVCC_PATH" && echo YES || echo NO)"
-            echo "  is symlink: $(test -L "$NVCC_PATH" && echo YES || echo NO)"
-            if [ -L "$NVCC_PATH" ]; then
-              echo "  symlink target: $(readlink "$NVCC_PATH")"
-              echo "  resolved target: $(readlink -f "$NVCC_PATH")"
-              RESOLVED=$(readlink -f "$NVCC_PATH")
-              echo "  resolved exists: $(test -e "$RESOLVED" && echo YES || echo NO)"
-            fi
-            echo "  ls -la: $(ls -la "$NVCC_PATH" 2>&1)"
-          else
-            echo "nvcc not found in dpkg -L output"
-          fi
+          echo "=== Summary ==="
+          echo "Total packages:"
+          grep "^Inst " /tmp/simulate-toolkit.txt | wc -l
+          echo ""
+          echo "New installs:"
+          grep "^Inst " /tmp/simulate-toolkit.txt | grep -v '\[' | wc -l
+          echo ""
+          echo "Upgrades:"
+          UPGRADES=$(grep "^Inst " /tmp/simulate-toolkit.txt | grep '\[' || true)
+          echo "$UPGRADES" | wc -l
+          echo "$UPGRADES"
           echo ""
 
-          echo "=== All symlinks in cuda-nvcc-12-6 ==="
-          dpkg -L cuda-nvcc-12-6 2>/dev/null | while IFS= read -r f; do
-            if [ -L "$f" ]; then
-              echo "  $f -> $(readlink "$f") (resolved: $(readlink -f "$f"), target exists: $(test -e "$(readlink -f "$f")" && echo YES || echo NO))"
-            fi
-          done || true
+          echo "=== With --no-install-recommends ==="
+          sudo apt-get install --simulate --no-install-recommends cuda-toolkit-12-6 2>&1 | tee /tmp/simulate-toolkit-no-rec.txt
+          echo ""
+          echo "Total (no recommends):"
+          grep "^Inst " /tmp/simulate-toolkit-no-rec.txt | wc -l
+          echo "New installs (no recommends):"
+          grep "^Inst " /tmp/simulate-toolkit-no-rec.txt | grep -v '\[' | wc -l
+          echo "Upgrades (no recommends):"
+          grep "^Inst " /tmp/simulate-toolkit-no-rec.txt | grep '\[' | wc -l
           echo ""
 
-          echo "=== Directory symlinks in path to nvcc ==="
-          for p in /usr/local/cuda-12.6 /usr/local/cuda-12 /usr/local/cuda; do
-            if [ -e "$p" ] || [ -L "$p" ]; then
-              echo "  $p: $(ls -ld "$p" 2>&1)"
-            else
-              echo "  $p: DOES NOT EXIST"
-            fi
-          done
+          echo "=== Packages ONLY in default (i.e. Recommends) ==="
+          diff <(grep "^Inst " /tmp/simulate-toolkit-no-rec.txt | awk '{print $2}' | sort) \
+               <(grep "^Inst " /tmp/simulate-toolkit.txt | awk '{print $2}' | sort) \
+               | grep "^>" | sed 's/^> /  /' | head -40
+        shell: bash
+
+      - name: Simulate vajax full package list
+        run: |
+          echo "=== Simulating the full vajax package list ==="
+          PKGS="llvm-18-dev clang-18 libclang-18-dev lld-18 libsuitesparse-dev libopenblas-dev swig cmake cuda-toolkit-12-6 cuda-nsight-systems-12-6 libcudnn9-cuda-12 libcudss0-cuda-12 pkg-config"
+
+          sudo apt-get install --simulate ${PKGS} 2>&1 | tee /tmp/simulate-vajax.txt
+          echo ""
+          echo "Total: $(grep "^Inst " /tmp/simulate-vajax.txt | wc -l)"
+          echo "New:   $(grep "^Inst " /tmp/simulate-vajax.txt | grep -v '\[' | wc -l)"
+          echo "Upgrades: $(grep "^Inst " /tmp/simulate-vajax.txt | grep '\[' | wc -l)"
+          echo ""
+          echo "Upgraded packages:"
+          grep "^Inst " /tmp/simulate-vajax.txt | grep '\[' || echo "(none)"
           echo ""
 
-          echo "=== find nvcc on filesystem ==="
-          find /usr/local -name nvcc -type f 2>/dev/null | head -5 || echo "(none)"
-          find /usr/local -name nvcc -type l 2>/dev/null | head -5 || echo "(no symlinks)"
+          sudo apt-get install --simulate --no-install-recommends ${PKGS} 2>&1 | tee /tmp/simulate-vajax-no-rec.txt
+          echo ""
+          echo "=== With --no-install-recommends ==="
+          echo "Total: $(grep "^Inst " /tmp/simulate-vajax-no-rec.txt | wc -l)"
+          echo "New:   $(grep "^Inst " /tmp/simulate-vajax-no-rec.txt | grep -v '\[' | wc -l)"
+          echo "Upgrades: $(grep "^Inst " /tmp/simulate-vajax-no-rec.txt | grep '\[' | wc -l)"
           echo ""
 
-          echo "=== Check /usr/local/cuda-12.6/bin/ contents ==="
-          ls -la /usr/local/cuda-12.6/bin/ 2>/dev/null | head -20 || echo "DIRECTORY DOES NOT EXIST"
-          echo ""
-
-          echo "=== Tar file analysis ==="
-          if [ -d ~/cache-apt-pkgs ]; then
-            echo "Cache dir exists"
-            ls -lh ~/cache-apt-pkgs/cuda-nvcc-12-6*.tar 2>/dev/null || echo "No cuda-nvcc tar found"
-            echo ""
-            echo "=== Tar contents (first 30 entries) ==="
-            tar -tf ~/cache-apt-pkgs/cuda-nvcc-12-6*.tar 2>/dev/null | head -30 || echo "Cannot list tar"
-            echo ""
-            echo "=== Tar symlinks ==="
-            tar -tvf ~/cache-apt-pkgs/cuda-nvcc-12-6*.tar 2>/dev/null | grep "^l" | head -20 || echo "No symlinks in tar"
-          else
-            echo "Cache dir already cleaned up (expected on cache hit)"
-          fi
+          echo "=== Recommends-only packages ==="
+          diff <(grep "^Inst " /tmp/simulate-vajax-no-rec.txt | awk '{print $2}' | sort) \
+               <(grep "^Inst " /tmp/simulate-vajax.txt | awk '{print $2}' | sort) \
+               | grep "^>" | sed 's/^> /  /' | head -60
         shell: bash
