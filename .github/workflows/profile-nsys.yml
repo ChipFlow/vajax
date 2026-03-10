@@ -82,6 +82,17 @@ jobs:
         run: |
           echo "LLVM_SYS_181_PREFIX=/usr/lib/llvm-18" >> $GITHUB_ENV
 
+          # Diagnostic: check dpkg state and file existence
+          echo "=== dpkg status for key packages ==="
+          dpkg -l cuda-toolkit-12-6 cuda-nsight-systems-12-6 libcudss0-cuda-12 2>&1 | tail -5 || true
+          echo ""
+          echo "=== /usr/local/cuda* directories ==="
+          ls -la /usr/local/cuda* 2>/dev/null || echo "  (none)"
+          echo ""
+          echo "=== nvcc locations ==="
+          find / -name nvcc -type f 2>/dev/null | head -5 || echo "  (none)"
+          echo ""
+
           # Find CUDA toolkit (may be at /usr/local/cuda-12.6 or elsewhere)
           CUDA_ROOT=$(find /usr/local -maxdepth 1 -name "cuda-12*" -type d 2>/dev/null | sort -V | tail -1)
           if [ -z "$CUDA_ROOT" ] && [ -d "/usr/local/cuda" ]; then
