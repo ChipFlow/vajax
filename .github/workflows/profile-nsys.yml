@@ -75,12 +75,26 @@ jobs:
           apt-sources: |
             https://apt.llvm.org/llvm-snapshot.gpg.key | deb http://apt.llvm.org/noble/ llvm-toolchain-noble-18 main
             https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2404/x86_64/3bf863cc.pub | deb https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2404/x86_64/ /
+          execute_install_scripts: true
           version: 1.0
 
       - name: Set up LLVM and CUDA environment
         run: |
           echo "LLVM_SYS_181_PREFIX=/usr/lib/llvm-18" >> $GITHUB_ENV
-          echo "/usr/local/cuda-12.6/bin" >> $GITHUB_PATH
+
+          # Find CUDA toolkit (may be at /usr/local/cuda-12.6 or elsewhere)
+          CUDA_ROOT=$(find /usr/local -maxdepth 1 -name "cuda-12*" -type d 2>/dev/null | sort -V | tail -1)
+          if [ -z "$CUDA_ROOT" ] && [ -d "/usr/local/cuda" ]; then
+            CUDA_ROOT="/usr/local/cuda"
+          fi
+          if [ -n "$CUDA_ROOT" ]; then
+            echo "${CUDA_ROOT}/bin" >> $GITHUB_PATH
+            echo "CUDAToolkit_ROOT=${CUDA_ROOT}" >> $GITHUB_ENV
+            echo "CUDA found at: ${CUDA_ROOT}"
+          else
+            echo "::warning::CUDA toolkit not found under /usr/local"
+          fi
+
           CUDSS_LIB=$(dpkg -L libcudss0-cuda-12 2>/dev/null | grep '\.so' | head -1)
           if [ -n "$CUDSS_LIB" ]; then
             CUDSS_DIR=$(dirname "$CUDSS_LIB")
@@ -137,7 +151,7 @@ jobs:
           uv pip install --reinstall --no-cache -v \
             "spineax-vajax @ git+https://github.com/robtaylor/spineax.git@main" \
             -C cmake.define.SPINEAX_USE_BASPACHO=ON \
-            -C cmake.define.CUDAToolkit_ROOT=/usr/local/cuda-12.6
+            -C cmake.define.CUDAToolkit_ROOT=${CUDAToolkit_ROOT:-/usr/local/cuda-12.6}
 
           # Verify the module was installed
           echo "=== Installed spineax files ==="
