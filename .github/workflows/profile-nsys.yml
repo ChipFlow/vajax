@@ -124,10 +124,18 @@ jobs:
         if: inputs.use_baspacho
         run: |
           # Replace PyPI spineax with git version that has BaSpaCho dense solver.
+          # --reinstall forces rebuild even if same version is cached from PyPI.
+          # --no-cache avoids reusing a wheel built without SPINEAX_USE_BASPACHO.
           # FetchContent auto-fetches BaSpaCho + deps (SuiteSparse, dispenso, Eigen).
-          uv pip install \
+          uv pip install --reinstall --no-cache \
             "spineax-vajax @ git+https://github.com/robtaylor/spineax.git@main" \
             -C cmake.define.SPINEAX_USE_BASPACHO=ON
+
+          # Verify the module was installed
+          echo "=== Installed spineax files ==="
+          python -c "import spineax; import pathlib; p = pathlib.Path(spineax.__file__).parent; [print(f'  {f.name}') for f in sorted(p.iterdir())]"
+          echo "=== Checking baspacho_dense_solve import ==="
+          python -c "from spineax import baspacho_dense_solve; print('  OK:', baspacho_dense_solve)" || echo "  FAILED"
 
       - name: Run nsys profiling
         env:
