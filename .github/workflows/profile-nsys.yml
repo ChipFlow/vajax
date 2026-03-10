@@ -72,11 +72,12 @@ jobs:
             cuda-toolkit-12-6 libcudnn9-cuda-12 libcudss0-cuda-12
             cuda-nsight-systems-12-6
             libsuitesparse-dev libopenblas-dev swig cmake pkg-config
+          # NVIDIA CUDA repo is already on the runner image (cuda-archive-keyring.gpg).
+          # Adding it again via apt-sources causes "Conflicting Signed-By" error.
           apt-sources: |
             https://apt.llvm.org/llvm-snapshot.gpg.key | deb http://apt.llvm.org/noble/ llvm-toolchain-noble-18 main
-            https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2404/x86_64/3bf863cc.pub | deb https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2404/x86_64/ /
           execute_install_scripts: true
-          version: 1.1-${{ inputs.runner }}
+          version: 1.2-${{ inputs.runner }}
 
       - name: Set up LLVM and CUDA environment
         run: |
