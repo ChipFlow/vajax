@@ -124,7 +124,34 @@ jobs:
             | head -80
         shell: bash
 
-      - name: Simulate with apt-mark hold (prevents upgrades)
+      - name: Trace libobjc-13-dev dependency chain
+        run: |
+          echo "=== What Recommends/Depends on libobjc-13-dev? ==="
+          echo ""
+          echo "--- clang-18 dependencies ---"
+          apt-cache depends clang-18 2>/dev/null | grep -i objc || echo "(no objc deps)"
+          echo ""
+          echo "--- apt-cache rdepends libobjc-13-dev ---"
+          apt-cache rdepends libobjc-13-dev 2>/dev/null || echo "(not found)"
+          echo ""
+          echo "--- libobjc-13-dev own deps ---"
+          apt-cache depends libobjc-13-dev 2>/dev/null || echo "(not found)"
+          echo ""
+          echo "--- libobjc4 own deps ---"
+          apt-cache depends libobjc4 2>/dev/null || echo "(not found)"
+          echo ""
+          echo "=== libgfortran chain (hard dep) ==="
+          echo "--- libopenblas-dev deps (grep gfortran/gcc) ---"
+          apt-cache depends libopenblas-dev 2>/dev/null | grep -iE "gfortran|gcc" || echo "(none)"
+          echo ""
+          echo "--- libgfortran-14-dev deps ---"
+          apt-cache depends libgfortran-14-dev 2>/dev/null | grep -iE "gcc|gfortran" || echo "(none)"
+          echo ""
+          echo "--- libgfortran5 deps ---"
+          apt-cache depends libgfortran5 2>/dev/null || echo "(none)"
+        shell: bash
+
+      - name: Simulate with holds + no-install-recommends (combined)
         run: |
           PKGS="llvm-18-dev clang-18 libclang-18-dev lld-18 libsuitesparse-dev libopenblas-dev swig cmake cuda-toolkit-12-6 cuda-nsight-systems-12-6 libcudnn9-cuda-12 libcudss0-cuda-12 pkg-config"
 
@@ -134,21 +161,61 @@ jobs:
           echo "Held $(wc -l < /tmp/held.txt) packages"
           echo ""
 
-          echo "=== apt-get install --simulate --show-upgraded (with holds) ==="
+          echo "=== apt-get install --simulate --show-upgraded --no-install-recommends (with holds) ==="
+          sudo apt-get install --simulate --show-upgraded --no-install-recommends ${PKGS} 2>&1 | tee /tmp/simulate-held-norec.txt
+          echo ""
+
+          TOTAL=$(grep -c "^Inst " /tmp/simulate-held-norec.txt || echo 0)
+          NEW=$(grep "^Inst " /tmp/simulate-held-norec.txt | grep -cv "^Inst [^ ]* \[" || echo 0)
+          UPG=$(grep -c "^Inst [^ ]* \[" /tmp/simulate-held-norec.txt || echo 0)
+          echo "=== Summary (holds + --no-install-recommends) ==="
+          echo "Total: ${TOTAL}  (New: ${NEW}, Upgrades: ${UPG})"
+          echo ""
+
+          if grep -q "^E:" /tmp/simulate-held-norec.txt; then
+            echo "=== ERRORS ==="
+            grep "^E:" /tmp/simulate-held-norec.txt
+            echo ""
+            echo "=== Broken packages ==="
+            grep -B2 "^E:" /tmp/simulate-held-norec.txt || true
+          else
+            echo "=== SUCCESS: No errors with combined approach ==="
+            echo ""
+            echo "Upgraded packages:"
+            grep "^Inst [^ ]* \[" /tmp/simulate-held-norec.txt || echo "(none)"
+          fi
+
+          # Clean up holds
+          sudo xargs apt-mark unhold < /tmp/held.txt > /dev/null 2>&1
+        shell: bash
+
+      - name: Simulate holds-only (for comparison)
+        run: |
+          PKGS="llvm-18-dev clang-18 libclang-18-dev lld-18 libsuitesparse-dev libopenblas-dev swig cmake cuda-toolkit-12-6 cuda-nsight-systems-12-6 libcudnn9-cuda-12 libcudss0-cuda-12 pkg-config"
+
+          echo "=== Holding all installed packages ==="
+          dpkg-query -W -f='${Package}\n' > /tmp/held.txt
+          sudo xargs apt-mark hold < /tmp/held.txt > /dev/null 2>&1
+          echo "Held $(wc -l < /tmp/held.txt) packages"
+          echo ""
+
+          echo "=== apt-get install --simulate --show-upgraded (holds only, no --no-install-recommends) ==="
           sudo apt-get install --simulate --show-upgraded ${PKGS} 2>&1 | tee /tmp/simulate-held.txt
           echo ""
 
           TOTAL=$(grep -c "^Inst " /tmp/simulate-held.txt || echo 0)
           NEW=$(grep "^Inst " /tmp/simulate-held.txt | grep -cv "^Inst [^ ]* \[" || echo 0)
           UPG=$(grep -c "^Inst [^ ]* \[" /tmp/simulate-held.txt || echo 0)
-          echo "=== Summary (with holds) ==="
+          echo "=== Summary (holds only) ==="
           echo "Total: ${TOTAL}  (New: ${NEW}, Upgrades: ${UPG})"
           echo ""
 
-          echo "=== Comparison ==="
-          echo "Without holds: 242 total (216 new, 26 upgrades)"
-          echo "With holds:    ${TOTAL} total (${NEW} new, ${UPG} upgrades)"
-          echo "Saved: $((242 - TOTAL)) packages"
+          if grep -q "^E:" /tmp/simulate-held.txt; then
+            echo "=== ERRORS (holds only) ==="
+            grep "^E:" /tmp/simulate-held.txt
+          else
+            echo "=== SUCCESS: No errors with holds only ==="
+          fi
 
           # Clean up holds
           sudo xargs apt-mark unhold < /tmp/held.txt > /dev/null 2>&1
