@@ -57,17 +57,32 @@ jobs:
           echo "=== nsys Version ==="
           nsys --version 2>/dev/null || echo "nsys not in PATH"
 
-      - name: Install LLVM 18
+      - name: Install all apt dependencies (LLVM, CUDA, system libs)
+        uses: robtaylor/cache-apt-pkgs-action@feat/apt-sources
+        with:
+          packages: >-
+            llvm-18-dev clang-18 libclang-18-dev lld-18
+            cuda-toolkit-12-6 libcudnn9-cuda-12 libcudss0-cuda-12
+            cuda-nsight-systems-12-6
+            libsuitesparse-dev libopenblas-dev swig cmake pkg-config
+          apt-sources: >-
+            https://apt.llvm.org/llvm-snapshot.gpg.key | deb http://apt.llvm.org/noble/ llvm-toolchain-noble-18 main
+          version: 1.0
+
+      - name: Set up LLVM and CUDA environment
         run: |
-          if ! llvm-config-18 --version 2>/dev/null; then
-            wget -qO- https://apt.llvm.org/llvm-snapshot.gpg.key | sudo tee /etc/apt/trusted.gpg.d/apt.llvm.org.asc > /dev/null
-            sudo chmod a+r /etc/apt/trusted.gpg.d/apt.llvm.org.asc
-            wget -q https://apt.llvm.org/llvm.sh
-            chmod +x llvm.sh
-            sudo ./llvm.sh 18
-            rm llvm.sh
-          fi
           echo "LLVM_SYS_181_PREFIX=/usr/lib/llvm-18" >> $GITHUB_ENV
+          echo "/usr/local/cuda-12.6/bin" >> $GITHUB_PATH
+          CUDSS_LIB=$(dpkg -L libcudss0-cuda-12 | grep '\.so' | head -1)
+          if [ -n "$CUDSS_LIB" ]; then
+            CUDSS_DIR=$(dirname "$CUDSS_LIB")
+            echo "LD_LIBRARY_PATH=${CUDSS_DIR}:${LD_LIBRARY_PATH}" >> "$GITHUB_ENV"
+          fi
+          NSYS_BIN=$(dirname "$(find /opt/nvidia -name nsys -type f 2>/dev/null | head -1)" 2>/dev/null)
+          if [ -n "$NSYS_BIN" ]; then
+            echo "$NSYS_BIN" >> $GITHUB_PATH
+          fi
+          nsys --version
 
       - name: Set up Rust
         uses: dtolnay/rust-toolchain@stable
@@ -81,30 +96,6 @@ jobs:
         uses: Swatinem/rust-cache@v2
         with:
           workspaces: openvaf_jax/openvaf_py
-
-      - name: Install CUDA toolkit and system dependencies
-        uses: robtaylor/cache-apt-pkgs-action@feat/apt-sources
-        with:
-          packages: >-
-            cuda-toolkit-12-6 libcudnn9-cuda-12 libcudss0-cuda-12
-            cuda-nsight-systems-12-6
-            libsuitesparse-dev libopenblas-dev swig cmake pkg-config
-          version: 1.0
-
-      - name: Set up CUDA environment
-        run: |
-          echo "/usr/local/cuda-12.6/bin" >> $GITHUB_PATH
-          CUDSS_LIB=$(dpkg -L libcudss0-cuda-12 | grep '\.so' | head -1)
-          if [ -n "$CUDSS_LIB" ]; then
-            CUDSS_DIR=$(dirname "$CUDSS_LIB")
-            echo "LD_LIBRARY_PATH=${CUDSS_DIR}:${LD_LIBRARY_PATH}" >> "$GITHUB_ENV"
-          fi
-          # nsys installs to /opt/nvidia/nsight-systems/*/target-linux-x64/
-          NSYS_BIN=$(dirname "$(find /opt/nvidia -name nsys -type f 2>/dev/null | head -1)" 2>/dev/null)
-          if [ -n "$NSYS_BIN" ]; then
-            echo "$NSYS_BIN" >> $GITHUB_PATH
-          fi
-          nsys --version
 
       - name: Install uv
         uses: astral-sh/setup-uv@v6
