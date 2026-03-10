@@ -72,7 +72,7 @@ jobs:
             cuda-toolkit-12-6 libcudnn9-cuda-12 libcudss0-cuda-12
             cuda-nsight-systems-12-6
             libsuitesparse-dev libopenblas-dev swig cmake pkg-config
-          apt-sources: >-
+          apt-sources: |
             https://apt.llvm.org/llvm-snapshot.gpg.key | deb http://apt.llvm.org/noble/ llvm-toolchain-noble-18 main
             https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2404/x86_64/3bf863cc.pub | deb https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2404/x86_64/ /
           version: 1.0
@@ -81,7 +81,7 @@ jobs:
         run: |
           echo "LLVM_SYS_181_PREFIX=/usr/lib/llvm-18" >> $GITHUB_ENV
           echo "/usr/local/cuda-12.6/bin" >> $GITHUB_PATH
-          CUDSS_LIB=$(dpkg -L libcudss0-cuda-12 | grep '\.so' | head -1)
+          CUDSS_LIB=$(dpkg -L libcudss0-cuda-12 2>/dev/null | grep '\.so' | head -1)
           if [ -n "$CUDSS_LIB" ]; then
             CUDSS_DIR=$(dirname "$CUDSS_LIB")
             echo "LD_LIBRARY_PATH=${CUDSS_DIR}:${LD_LIBRARY_PATH}" >> "$GITHUB_ENV"
@@ -90,7 +90,7 @@ jobs:
           if [ -n "$NSYS_BIN" ]; then
             echo "$NSYS_BIN" >> $GITHUB_PATH
           fi
-          nsys --version
+          nsys --version || echo "::warning::nsys not found in PATH"
 
       - name: Set up Rust
         uses: dtolnay/rust-toolchain@stable
