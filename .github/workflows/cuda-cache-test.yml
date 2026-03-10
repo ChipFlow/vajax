@@ -123,3 +123,32 @@ jobs:
             <(grep "^Inst " /tmp/simulate-vajax.txt | awk '{print $2}' | sort) \
             | head -80
         shell: bash
+
+      - name: Trace upgrade dependency chains
+        run: |
+          PKGS="llvm-18-dev clang-18 libclang-18-dev lld-18 libsuitesparse-dev libopenblas-dev swig cmake cuda-toolkit-12-6 cuda-nsight-systems-12-6 libcudnn9-cuda-12 libcudss0-cuda-12 pkg-config"
+
+          # Get the list of upgraded package names
+          UPGRADED=$(grep "^Inst [^ ]* \[" /tmp/simulate-vajax.txt | awk '{print $2}' | sed 's/:.*//') # strip :i386 etc
+
+          echo "=== Which requested package triggers each upgrade? ==="
+          echo ""
+          # Simulate each requested package individually
+          for pkg in ${PKGS}; do
+            upg_count=$(sudo apt-get install --simulate --show-upgraded "${pkg}" 2>&1 | grep -c "^Inst [^ ]* \[" || echo 0)
+            if [ "${upg_count}" -gt 0 ]; then
+              echo "--- ${pkg} triggers ${upg_count} upgrades ---"
+              sudo apt-get install --simulate --show-upgraded "${pkg}" 2>&1 | grep "^Inst [^ ]* \[" | awk '{print "  " $2}'
+              echo ""
+            fi
+          done
+
+          echo ""
+          echo "=== Reverse dependency: for each upgraded pkg, who needs it? ==="
+          echo ""
+          for upkg in $(echo "${UPGRADED}" | sort -u); do
+            echo "--- ${upkg} ---"
+            apt-cache rdepends --installed "${upkg}" 2>/dev/null | head -10 || true
+            echo ""
+          done
+        shell: bash
