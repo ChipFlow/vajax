@@ -64,7 +64,7 @@ jobs:
         uses: robtaylor/cache-apt-pkgs-action@feat/apt-sources
         with:
           packages: cuda-nvcc-12-6
-          version: cuda-gpu-runner-test-v3
+          version: cuda-gpu-runner-test-v4
           execute_install_scripts: "true"
           debug: "true"
 
