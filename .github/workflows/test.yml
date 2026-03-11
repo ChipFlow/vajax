@@ -174,7 +174,11 @@ jobs:
         working-directory: vajax/sparse
         run: |
           uv pip install scikit-build-core nanobind
-          uv pip install --no-build-isolation .
+          uv pip install --no-build-isolation \
+            -C cmake.define.BLA_VENDOR=OpenBLAS \
+            -C cmake.define.CMAKE_C_COMPILER_LAUNCHER=sccache \
+            -C cmake.define.CMAKE_CXX_COMPILER_LAUNCHER=sccache \
+            .
 
       - name: Run tests (${{ matrix.test-group.name }})
         timeout-minutes: ${{ matrix.test-group.timeout }}

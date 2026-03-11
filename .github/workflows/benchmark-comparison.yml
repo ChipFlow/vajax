@@ -80,8 +80,9 @@ jobs:
             libnvjitlink-dev-12-6
             cuda-libraries-12-6 cuda-cupti-12-6
             libcudnn9-cuda-12 libcudss0-cuda-12
-            cmake pkg-config swig
-            libsuitesparse-dev libopenblas-dev
+            libsuitesparse-dev libopenblas-dev swig cmake pkg-config
+          # NVIDIA CUDA repo is already on the runner image (cuda-archive-keyring.gpg).
+          # Adding it again via apt-sources causes "Conflicting Signed-By" error.
           apt-sources: |
             https://apt.llvm.org/llvm-snapshot.gpg.key | deb http://apt.llvm.org/noble/ llvm-toolchain-noble-18 main
           execute_install_scripts: true
@@ -201,7 +202,12 @@ jobs:
         working-directory: vajax/sparse
         run: |
           uv pip install scikit-build-core nanobind
-          uv pip install --no-build-isolation .
+          LAUNCHER=${{ matrix.platform == 'cuda' && 'sccache' || 'ccache' }}
+          uv pip install --no-build-isolation \
+            -C cmake.define.BLA_VENDOR=OpenBLAS \
+            -C cmake.define.CMAKE_C_COMPILER_LAUNCHER=$LAUNCHER \
+            -C cmake.define.CMAKE_CXX_COMPILER_LAUNCHER=$LAUNCHER \
+            .
 
       # ── Run VAJAX unit tests (CPU dense only) ────────────────────
       - name: Run VAJAX tests
