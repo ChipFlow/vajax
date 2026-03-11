@@ -179,7 +179,12 @@ Format:
 |----------|-------------|
 | `JAX_PLATFORMS` | Force JAX platform: `cpu`, `cuda`, `gpu` |
 | `JAX_ENABLE_X64` | Enable float64: `1` or `0` |
+| `VAJAX_MODEL_PATH` | Additional model search paths (colon-separated, `;` on Windows) |
+| `VAJAX_CACHE_DIR` | Override cache directory (default: `~/.cache/vajax/`) |
+| `VAJAX_NO_PROGRESS` | Set to `1` to disable progress bars |
 | `NGSPICE_BIN` | Path to ngspice binary (for convert) |
+
+See [Configuration](configuration.md) for config file support and model search order.
 
 ## Examples
 
@@ -259,6 +264,7 @@ vajax large_circuit.sim --sparse
 
 ## See Also
 
+- [Configuration](configuration.md) - Config files and model search paths
 - [README.md](../README.md) - Getting started guide
 - [Architecture Overview](architecture_overview.md) - System design
 - [GPU Solver Architecture](gpu_solver_architecture.md) - Performance optimization
