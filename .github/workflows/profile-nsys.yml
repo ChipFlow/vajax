@@ -149,15 +149,14 @@ jobs:
           # --reinstall forces rebuild even if same version is cached from PyPI.
           # --no-cache avoids reusing a wheel built without SPINEAX_USE_BASPACHO.
           # FetchContent auto-fetches BaSpaCho + deps (SuiteSparse, dispenso, Eigen).
-          # Use sccache to cache C++/CUDA compilation (BaSpaCho + SuiteSparse = 344 objects)
-          export CMAKE_C_COMPILER_LAUNCHER=sccache
-          export CMAKE_CXX_COMPILER_LAUNCHER=sccache
-          export CMAKE_CUDA_COMPILER_LAUNCHER=sccache
-
+          # sccache caches C++/CUDA compilation (BaSpaCho + SuiteSparse = 344 objects)
           uv pip install --reinstall --no-cache -v \
             "spineax-vajax @ git+https://github.com/robtaylor/spineax.git@main" \
             -C cmake.define.SPINEAX_USE_BASPACHO=ON \
-            -C cmake.define.CUDAToolkit_ROOT=${CUDAToolkit_ROOT:-/usr/local/cuda-12.6}
+            -C cmake.define.CUDAToolkit_ROOT=${CUDAToolkit_ROOT:-/usr/local/cuda-12.6} \
+            -C cmake.define.CMAKE_C_COMPILER_LAUNCHER=sccache \
+            -C cmake.define.CMAKE_CXX_COMPILER_LAUNCHER=sccache \
+            -C cmake.define.CMAKE_CUDA_COMPILER_LAUNCHER=sccache
 
           # Verify the module was installed
           echo "=== Installed spineax files ==="
