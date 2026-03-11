@@ -6,6 +6,10 @@ on:
   pull_request:
     branches: [main]
 
+concurrency:
+  group: pdk-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
 env:
   CARGO_TERM_COLOR: always
   CARGO_INCREMENTAL: 0
@@ -44,12 +48,16 @@ jobs:
           # Mask PDK path in all subsequent log output
           echo "::add-mask::/tmp/pdk-gf130"
 
-      - name: Install LLVM 18
-        run: |
-          wget -q https://apt.llvm.org/llvm.sh
-          chmod +x llvm.sh
-          sudo ./llvm.sh 18
-          echo "LLVM_SYS_181_PREFIX=/usr/lib/llvm-18" >> $GITHUB_ENV
+      - name: Install apt dependencies
+        uses: robtaylor/cache-apt-pkgs-action@feat/apt-sources
+        with:
+          packages: llvm-18-dev clang-18 libclang-18-dev lld-18
+          apt-sources: |
+            https://apt.llvm.org/llvm-snapshot.gpg.key | deb http://apt.llvm.org/noble/ llvm-toolchain-noble-18 main
+          execute_install_scripts: true
+
+      - name: Set LLVM environment
+        run: echo "LLVM_SYS_181_PREFIX=/usr/lib/llvm-18" >> $GITHUB_ENV
 
       - name: Set up Rust
         uses: dtolnay/rust-toolchain@stable
@@ -68,6 +76,8 @@ jobs:
         uses: astral-sh/setup-uv@v6
         with:
           enable-cache: true
+          prune-cache: false
+          python-version: "3.10"
 
       - name: Set up Python
         run: uv python install 3.10

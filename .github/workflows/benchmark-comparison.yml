@@ -9,6 +9,10 @@ on:
   schedule:
     - cron: '0 6 * * *'  # Daily at 6am UTC
 
+concurrency:
+  group: benchmark-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
 env:
   CARGO_TERM_COLOR: always
   CARGO_INCREMENTAL: 0
@@ -34,8 +38,6 @@ jobs:
     name: benchmark (${{ matrix.solver }}-${{ matrix.platform }})
     runs-on: ${{ matrix.runner }}
     timeout-minutes: ${{ matrix.solver == 'sparse' && matrix.platform == 'cuda' && 360 || 90 }}
-    concurrency:
-      group: benchmark-${{ matrix.solver }}-${{ matrix.platform }}-${{ github.ref }}
 
     steps:
       - name: Checkout with submodules
@@ -54,45 +56,39 @@ jobs:
           nvcc --version 2>/dev/null || echo "nvcc not in PATH"
 
       # ── System dependencies ──────────────────────────────────────
-      - name: Cache apt packages
-        uses: actions/cache@v4
-        with:
-          path: /var/cache/apt/archives
-          key: apt-${{ runner.os }}-${{ runner.arch }}-${{ matrix.platform }}-v1
-          restore-keys: |
-            apt-${{ runner.os }}-${{ runner.arch }}-${{ matrix.platform }}-
-
-      - name: Install system dependencies (CPU)
+      - name: Install apt dependencies (CPU)
         if: matrix.platform == 'cpu'
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y \
-            cmake ninja-build \
-            flex bison libfl-dev \
-            libsuitesparse-dev libopenblas-dev \
-            ccache bc
-
-      - name: Install system dependencies (CUDA)
-        if: matrix.platform == 'cuda'
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y \
-            cmake pkg-config swig \
+        uses: robtaylor/cache-apt-pkgs-action@feat/apt-sources
+        with:
+          packages: >-
+            llvm-18-dev clang-18 libclang-18-dev lld-18
+            cmake ninja-build flex bison libfl-dev
             libsuitesparse-dev libopenblas-dev
+            ccache bc
+          apt-sources: |
+            https://apt.llvm.org/llvm-snapshot.gpg.key | deb http://apt.llvm.org/noble/ llvm-toolchain-noble-18 main
+          execute_install_scripts: true
 
-      # ── LLVM 18 (idempotent, works on all runners) ──────────────
-      - name: Install LLVM 18
+      - name: Install apt dependencies (CUDA)
+        if: matrix.platform == 'cuda'
+        uses: robtaylor/cache-apt-pkgs-action@feat/apt-sources
+        with:
+          packages: >-
+            llvm-18-dev clang-18 libclang-18-dev lld-18
+            cuda-nvcc-12-6 cuda-cudart-dev-12-6 cuda-driver-dev-12-6
+            libcublas-dev-12-6 libcusolver-dev-12-6 libcusparse-dev-12-6
+            libnvjitlink-dev-12-6
+            cuda-libraries-12-6 cuda-cupti-12-6
+            libcudnn9-cuda-12 libcudss0-cuda-12
+            libsuitesparse-dev libopenblas-dev swig cmake pkg-config
+          # NVIDIA CUDA repo is already on the runner image (cuda-archive-keyring.gpg).
+          # Adding it again via apt-sources causes "Conflicting Signed-By" error.
+          apt-sources: |
+            https://apt.llvm.org/llvm-snapshot.gpg.key | deb http://apt.llvm.org/noble/ llvm-toolchain-noble-18 main
+          execute_install_scripts: true
+
+      - name: Set LLVM and CUDA environment
         run: |
-          if ! llvm-config-18 --version 2>/dev/null; then
-            wget -qO- https://apt.llvm.org/llvm-snapshot.gpg.key | \
-              sudo tee /etc/apt/trusted.gpg.d/apt.llvm.org.asc > /dev/null
-            sudo chmod a+r /etc/apt/trusted.gpg.d/apt.llvm.org.asc
-            wget -q https://apt.llvm.org/llvm.sh
-            chmod +x llvm.sh
-            sudo ./llvm.sh 18
-            rm llvm.sh
-          fi
-          sudo apt-get install -y lld-18
           echo "/usr/lib/llvm-18/bin" >> "$GITHUB_PATH"
           echo "LLVM_SYS_181_PREFIX=/usr/lib/llvm-18" >> "$GITHUB_ENV"
 
@@ -134,17 +130,28 @@ jobs:
             openvaf_jax/openvaf_py
             vendor/OpenVAF
 
-      # ── CUDA toolkit ─────────────────────────────────────────────
-      - name: Install CUDA toolkit
+      # ── CUDA environment ─────────────────────────────────────────
+      - name: Set CUDA environment
         if: matrix.platform == 'cuda'
         run: |
-          sudo apt-get install -y cuda-toolkit-12-6 libcudnn9-cuda-12 libcudss0-cuda-12
-          echo "/usr/local/cuda-12.6/bin" >> "$GITHUB_PATH"
-          CUDSS_LIB=$(dpkg -L libcudss0-cuda-12 | grep '\.so' | head -1)
+          CUDA_ROOT=$(find /usr/local -maxdepth 1 -name "cuda-12*" -type d 2>/dev/null | sort -V | tail -1)
+          if [ -z "$CUDA_ROOT" ] && [ -d "/usr/local/cuda" ]; then
+            CUDA_ROOT="/usr/local/cuda"
+          fi
+          EXTRA_LD=""
+          if [ -n "$CUDA_ROOT" ]; then
+            echo "${CUDA_ROOT}/bin" >> "$GITHUB_PATH"
+            # CUDA lib64 has cuSPARSE, cuFFT, etc. needed by JAX at startup.
+            EXTRA_LD="${CUDA_ROOT}/lib64"
+          fi
+          CUDSS_LIB=$(dpkg -L libcudss0-cuda-12 2>/dev/null | grep '\.so' | head -1)
           if [ -n "$CUDSS_LIB" ]; then
             CUDSS_DIR=$(dirname "$CUDSS_LIB")
-            echo "LD_LIBRARY_PATH=${CUDSS_DIR}:${LD_LIBRARY_PATH}" >> "$GITHUB_ENV"
+            EXTRA_LD="${CUDSS_DIR}:${EXTRA_LD}"
             echo "cuDSS library found at: $CUDSS_LIB"
+          fi
+          if [ -n "$EXTRA_LD" ]; then
+            echo "LD_LIBRARY_PATH=${EXTRA_LD}:${LD_LIBRARY_PATH}" >> "$GITHUB_ENV"
           fi
 
       # ── Python environment ──────────────────────────────────────
@@ -152,6 +159,8 @@ jobs:
         uses: astral-sh/setup-uv@v6
         with:
           enable-cache: true
+          prune-cache: false
+          python-version: "3.12"
 
       - name: Set up Python
         run: uv python install 3.12
@@ -193,7 +202,12 @@ jobs:
         working-directory: vajax/sparse
         run: |
           uv pip install scikit-build-core nanobind
-          uv pip install --no-build-isolation .
+          LAUNCHER=${{ matrix.platform == 'cuda' && 'sccache' || 'ccache' }}
+          uv pip install --no-build-isolation \
+            -C cmake.define.BLA_VENDOR=OpenBLAS \
+            -C cmake.define.CMAKE_C_COMPILER_LAUNCHER=$LAUNCHER \
+            -C cmake.define.CMAKE_CXX_COMPILER_LAUNCHER=$LAUNCHER \
+            .
 
       # ── Run VAJAX unit tests (CPU dense only) ────────────────────
       - name: Run VAJAX tests

@@ -915,6 +915,21 @@ def prepare_static_inputs(
             shared_cache_indices = []
             varying_cache_indices = []
 
+        # Split cache arrays
+        shared_cache = cache[0, shared_cache_indices]
+        device_cache = cache[:, varying_cache_indices]
+
+        # SCCP dead-block elimination is DISABLED for the unified eval function.
+        # While SCCP can eliminate ~695/954 blocks for PSP103, the benefit is
+        # marginal (same code size, same XLA ops — XLA already CSEs branches).
+        # The cost is high: SCCP changes the JIT function hash, invalidating
+        # the persistent XLA compilation cache and adding ~99s cold-compile
+        # penalty for ring (49.5s × 2 compilations vs 0.58s cache hit).
+        # SCCP would be valuable for config-group-specialized eval functions
+        # where each group has a unique TYPE value, but that's deferred.
+        # Infrastructure is preserved in build_sccp_known_values() for reuse.
+        sccp_known_values = None
+
         # Generate eval function with cache split
         from vajax.analysis.limiting import fetlim, pnjlim
 
@@ -930,6 +945,7 @@ def prepare_static_inputs(
             varying_cache_indices,
             use_limit_functions=use_device_limiting,
             limit_param_map=limit_param_map,
+            sccp_known_values=sccp_known_values,
         )
         # Safety check: if limiting is enabled but lim_rhs could not be computed
         # (model uses inline limiting without $limit/BuiltinLimit calls), disable
@@ -950,14 +966,11 @@ def prepare_static_inputs(
                     varying_cache_indices,
                     use_limit_functions=False,
                     limit_param_map=limit_param_map,
+                    sccp_known_values=sccp_known_values,
                 )
 
         split_fn = partial(split_fn, limit_funcs=limit_funcs)
         vmapped_split_fn = jax.jit(jax.vmap(split_fn, in_axes=(None, 0, None, 0, None, 0)))
-
-        # Split cache arrays
-        shared_cache = cache[0, shared_cache_indices]
-        device_cache = cache[:, varying_cache_indices]
 
         # Build default simparams from model metadata
         simparams_used = split_meta.get("simparams_used", ["$analysis_type", "$mfactor", "gmin"])

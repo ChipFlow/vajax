@@ -22,12 +22,12 @@ from conftest import parse_embedded_python, parse_si_value
 
 from vajax.netlist.parser import parse_netlist
 
-# Paths - VACASK is at ../VACASK relative to vajax
+# Paths - VACASK is vendored at vendor/VACASK
 VAJAX_ROOT = Path(__file__).parent.parent
-VACASK_ROOT = VAJAX_ROOT.parent / "VACASK"
+VACASK_ROOT = VAJAX_ROOT / "vendor" / "VACASK"
 VACASK_TEST = VACASK_ROOT / "test"
 VACASK_DEVICES = VACASK_ROOT / "devices"
-VACASK_BENCHMARK = VAJAX_ROOT / "vendor" / "VACASK" / "benchmark"
+VACASK_BENCHMARK = VACASK_ROOT / "benchmark"
 
 
 def discover_benchmark_dirs() -> List[Path]:

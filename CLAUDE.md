@@ -78,6 +78,22 @@ uv run python scripts/profile_gpu.py --benchmark ring,c6288
 
 ```
 
+## Linting
+
+**Run before every commit.** CI runs both checks and will reject PRs that fail.
+
+```bash
+# Lint check (import sorting, unused imports, etc.)
+uv tool run ruff check vajax/ tests/ scripts/ benchmarks/
+
+# Format check (code style)
+uv tool run ruff format --check vajax/ tests/ scripts/ benchmarks/
+
+# Auto-fix both
+uv tool run ruff check --fix vajax/ tests/ scripts/ benchmarks/
+uv tool run ruff format vajax/ tests/ scripts/ benchmarks/
+```
+
 ## Precision Configuration
 
 Precision is auto-configured on import via `vajax/__init__.py`:

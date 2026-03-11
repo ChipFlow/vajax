@@ -1,0 +1,23 @@
+name: Cache Cleanup
+
+on:
+  schedule:
+    - cron: '0 0 1 */3 *'  # First day of every 3rd month
+  workflow_dispatch:
+
+jobs:
+  cleanup:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Delete uv caches
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          echo "=== Deleting uv caches ==="
+          gh cache list --repo ${{ github.repository }} --key setup-uv --json id,key,sizeInBytes \
+            --jq '.[] | "\(.id)\t\(.key)\t\(.sizeInBytes)"' | \
+          while IFS=$'\t' read -r id key size; do
+            echo "Deleting: $key ($(numfmt --to=iec $size))"
+            gh cache delete "$id" --repo ${{ github.repository }}
+          done
+          echo "Done"
