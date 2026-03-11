@@ -715,6 +715,29 @@ class VACASKParser:
 
         return self._GENERATE_RE.sub(_run_block, text)
 
+    @staticmethod
+    def _resolve_include(include: str, netlist_dir: Path) -> Optional[Path]:
+        """Resolve an include path by searching netlist dir then user model paths.
+
+        Returns the resolved absolute path, or None if not found.
+        """
+        # 1. Relative to netlist directory
+        candidate = netlist_dir / include
+        if candidate.exists():
+            return candidate
+
+        # 2. Search user-configured model/search paths
+        from vajax.analysis.openvaf_models import _get_base_paths
+
+        for base_path in _get_base_paths().values():
+            candidate = base_path / include
+            if candidate.exists():
+                log.info("Include resolved via search path: %s -> %s", include, candidate)
+                return candidate
+
+        log.warning("Include not found: %s", include)
+        return None
+
     def parse_file(self, filename: Union[str, Path]) -> Circuit:
         """Parse VACASK netlist from file, handling includes"""
         path = Path(filename)
@@ -722,11 +745,11 @@ class VACASKParser:
         text = self._preprocess_generate_blocks(text, path.parent)
         circuit = self.parse(text, path.parent)
 
-        # Process includes
+        # Process includes — search netlist dir first, then user-configured model paths
         for include in circuit.includes[:]:
-            include_path = path.parent / include
-            if include_path.exists():
-                included = self.parse_file(include_path)
+            include_resolved = self._resolve_include(include, path.parent)
+            if include_resolved is not None:
+                included = self.parse_file(include_resolved)
                 circuit.models.update(included.models)
                 circuit.subckts.update(included.subckts)
                 circuit.params.update(included.params)

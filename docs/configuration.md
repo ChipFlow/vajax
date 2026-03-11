@@ -17,13 +17,13 @@ On Windows, the user config is at `%APPDATA%\vajax\config.toml`.
 
 ## Config Schema
 
-### `[models]` — Model Search Paths
+### `[models]` — Search Paths
 
 ```toml
 # ~/.config/vajax/config.toml
 
 [models]
-# Additional directories to search for .va model files.
+# Additional directories to search for .va model files and .sim includes.
 # Each path is a directory that may contain .va files directly
 # or in subdirectories matching the model name.
 paths = [
@@ -33,7 +33,7 @@ paths = [
 ]
 ```
 
-Paths that don't exist are silently skipped (logged at DEBUG level).
+These paths are used for both `load` statements (Verilog-A `.va` models) and `include` statements (netlist `.sim` files). Paths that don't exist are silently skipped (logged at DEBUG level).
 
 ## Environment Variables
 
@@ -61,11 +61,11 @@ $env:VAJAX_MODEL_PATH = "C:\models1;C:\models2"
 | `JAX_PLATFORMS` | Force JAX platform: `cpu`, `cuda`, `gpu` |
 | `JAX_ENABLE_X64` | Enable float64: `1` or `0` |
 
-## Model Search Order
+## Search Order
 
-When VAJAX resolves a Verilog-A model name, it searches these locations in order:
+Both `load` (VA models) and `include` (netlist files) use the same search order:
 
-1. **Netlist directory** — relative `load` statements in the netlist
+1. **Netlist directory** — relative to the file containing the `load`/`include` statement
 2. **`VAJAX_MODEL_PATH`** — environment variable directories
 3. **Config file `[models].paths`** — project config first, then user config
 4. **Bundled models** — `vajax/devices/models/` (resistor, capacitor, etc.)

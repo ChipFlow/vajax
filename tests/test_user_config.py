@@ -220,3 +220,52 @@ class TestGetBasePathsIntegration:
         assert keys.index("bundled") < keys.index("user_0")
         # Vendor should come after user
         assert keys.index("user_0") < keys.index("integration_tests")
+
+
+class TestIncludeResolution:
+    """Test that include statements search user-configured paths."""
+
+    def test_include_relative_to_netlist(self, tmp_path):
+        """Include found relative to netlist dir — no search path needed."""
+        from vajax.netlist.parser import VACASKParser
+
+        sub = tmp_path / "sub.sim"
+        sub.write_text("* subcircuit file\n")
+
+        result = VACASKParser._resolve_include("sub.sim", tmp_path)
+        assert result == sub
+
+    def test_include_via_search_path(self, tmp_path, monkeypatch):
+        """Include not in netlist dir but found in VAJAX_MODEL_PATH."""
+        from vajax.netlist.parser import VACASKParser
+
+        # Create include file in a separate directory
+        lib_dir = tmp_path / "library"
+        lib_dir.mkdir()
+        inc_file = lib_dir / "common.sim"
+        inc_file.write_text("* common definitions\n")
+
+        # Netlist dir does NOT have the file
+        netlist_dir = tmp_path / "project"
+        netlist_dir.mkdir()
+
+        monkeypatch.chdir(tmp_path)
+        monkeypatch.setenv("VAJAX_MODEL_PATH", str(lib_dir))
+
+        with mock.patch("vajax.user_config._user_config_path", return_value=tmp_path / "nope.toml"):
+            result = VACASKParser._resolve_include("common.sim", netlist_dir)
+
+        assert result is not None
+        assert result == inc_file
+
+    def test_include_not_found(self, tmp_path, monkeypatch):
+        """Include not found anywhere returns None."""
+        from vajax.netlist.parser import VACASKParser
+
+        monkeypatch.chdir(tmp_path)
+        monkeypatch.delenv("VAJAX_MODEL_PATH", raising=False)
+
+        with mock.patch("vajax.user_config._user_config_path", return_value=tmp_path / "nope.toml"):
+            result = VACASKParser._resolve_include("nonexistent.sim", tmp_path)
+
+        assert result is None
