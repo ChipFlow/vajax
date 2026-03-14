@@ -26,6 +26,7 @@ if TYPE_CHECKING:
 
 import jax
 import jax.numpy as jnp
+import numpy as np
 from jax import Array
 
 # Suppress scipy's MatrixRankWarning from spsolve - this is expected for circuits
@@ -1225,6 +1226,110 @@ class CircuitEngine:
             vdd_value=self._get_vdd_value(),
             device_internal_nodes=device_internal_nodes,
         )
+
+    def run_dc_mlx(self):
+        """Compute DC operating point using the MLX backend.
+
+        Requires MLX to be available. Uses dense solver only.
+        Returns the voltage vector as an MLX array.
+        """
+        from vajax.mlx_backend import (
+            MLX_AVAILABLE,
+            make_mlx_build_system_fn,
+            make_mlx_nr_solver,
+        )
+
+        if not MLX_AVAILABLE:
+            raise ImportError("MLX is not available")
+
+        import mlx.core as mx
+
+        # Build setup (reuse JAX path for compilation and static inputs)
+        setup = self._build_transient_setup(backend="cpu", use_dense=True)
+        n_total = setup["n_total"]
+        n_unknowns = setup["n_unknowns"]
+        source_device_data = setup["source_device_data"]
+        static_inputs_cache = setup["static_inputs_cache"]
+        device_internal_nodes = setup["device_internal_nodes"]
+
+        n_vsources = len(source_device_data.get("vsource", {}).get("names", []))
+        n_isources = len(source_device_data.get("isource", {}).get("names", []))
+
+        # Build MLX system function
+        gmin = float(self.options.gmin)
+        build_system_fn, device_arrays_mlx, total_limit_states = make_mlx_build_system_fn(
+            source_device_data=source_device_data,
+            static_inputs_cache=static_inputs_cache,
+            compiled_models=self._compiled_models,
+            gmin=gmin,
+            n_unknowns=n_unknowns,
+        )
+
+        # Collect NOI and internal node indices
+        noi_indices = []
+        all_internal_indices = []
+        if device_internal_nodes:
+            for dev_name, internal_nodes in device_internal_nodes.items():
+                for node_name, node_idx in internal_nodes.items():
+                    all_internal_indices.append(node_idx)
+                    if node_name == "node4":
+                        noi_indices.append(node_idx)
+        noi_indices_arr = np.array(noi_indices, dtype=np.int32) if noi_indices else None
+        internal_device_indices = (
+            np.array(sorted(set(all_internal_indices)), dtype=np.int32)
+            if all_internal_indices
+            else None
+        )
+
+        # Create MLX NR solver
+        nr_solve = make_mlx_nr_solver(
+            build_system_fn=build_system_fn,
+            n_nodes=n_total,
+            n_vsources=n_vsources,
+            noi_indices=noi_indices_arr,
+            internal_device_indices=internal_device_indices,
+            total_limit_states=total_limit_states,
+            reltol=float(self.options.reltol),
+            vntol=float(self.options.vntol),
+            abstol=float(self.options.abstol),
+        )
+
+        # Get DC source values
+        vsource_dc_vals_jax, isource_dc_vals_jax = self._get_dc_source_values(
+            n_vsources, n_isources
+        )
+        vsource_dc_vals = mx.array(np.asarray(vsource_dc_vals_jax, dtype=np.float32))
+        isource_dc_vals = mx.array(np.asarray(isource_dc_vals_jax, dtype=np.float32))
+
+        # Initialize voltages
+        from vajax.analysis.dc_operating_point import initialize_dc_voltages
+
+        V_init_jax, noi_init = initialize_dc_voltages(
+            n_nodes=n_total,
+            vdd_value=self._get_vdd_value(),
+            node_names=self.node_names,
+            devices=self.devices,
+            device_internal_nodes=device_internal_nodes,
+        )
+        V_init_np = np.asarray(V_init_jax, dtype=np.float32)
+        X_init = mx.array(
+            np.concatenate([V_init_np, np.zeros(n_vsources, dtype=np.float32)])
+        )
+        Q_prev = mx.zeros(n_unknowns, dtype=mx.float32)
+
+        # Run NR solver
+        logger.info("Computing DC operating point (MLX backend)...")
+        X, nr_iters, converged, max_f, _, _, _, _, _ = nr_solve(
+            X_init, vsource_dc_vals, isource_dc_vals, Q_prev, 0.0, device_arrays_mlx,
+        )
+        mx.eval(X)
+
+        if converged:
+            logger.info(f"  DC converged ({nr_iters} iters, residual={max_f:.2e})")
+        else:
+            logger.warning(f"  DC did not converge ({nr_iters} iters, residual={max_f:.2e})")
+
+        return X[:n_total]
 
     def _get_source_fn_for_device(self, dev: Dict):
         """Get the source function for a device, or None if not a source."""
