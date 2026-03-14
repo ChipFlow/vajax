@@ -74,6 +74,9 @@ dev = [
     "pyright",
     "osdi-py",  # For OSDI vs JAX comparison tests
 ]
+mlx = [
+    "mlx>=0.31.1",
+]
 
 [build-system]
 requires = ["hatchling", "hatch-vcs"]
