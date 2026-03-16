@@ -36,6 +36,7 @@ from jax import lax
 
 from vajax._logging import logger
 from vajax.analysis.solver_factories import (
+    make_baspacho_dense_full_mna_solver,
     make_dense_full_mna_solver,
     make_spineax_full_mna_solver,
     make_umfpack_ffi_full_mna_solver,
@@ -49,6 +50,16 @@ def is_spineax_available() -> bool:
         from spineax.cudss.solver import CuDSSSolver  # noqa: F401
 
         return True
+    except ImportError:
+        return False
+
+
+def is_baspacho_dense_available() -> bool:
+    """Check if BaSpaCho dense CUDA solver is available."""
+    try:
+        from spineax.cudss.dense_baspacho_solver import is_available
+
+        return is_available()
     except ImportError:
         return False
 
@@ -385,17 +396,43 @@ class FullMNAStrategy(TransientStrategy):
             self._total_limit_states = total_limit_states
             build_system_jit = jax.jit(build_system_fn)
 
-            nr_solve = make_dense_full_mna_solver(
-                build_system_jit,
-                n_nodes,
-                n_vsources,
-                noi_indices=noi_indices,
-                internal_device_indices=internal_device_indices,
-                max_iterations=self.runner.options.tran_itl,
-                abstol=self.runner.options.abstol,
-                total_limit_states=total_limit_states,
-                options=self.runner.options,
-            )
+            # On CUDA, try BaSpaCho dense solver (pre-allocated workspace,
+            # foundation for graph-capture compatibility in Phase 2b).
+            on_cuda_dense = jax.default_backend() in ("cuda", "gpu")
+            if on_cuda_dense and is_baspacho_dense_available():
+                try:
+                    logger.info("Using BaSpaCho dense solver (GPU, CUDA backend)")
+                    nr_solve = make_baspacho_dense_full_mna_solver(
+                        build_system_jit,
+                        n_nodes,
+                        n_vsources,
+                        noi_indices=noi_indices,
+                        internal_device_indices=internal_device_indices,
+                        max_iterations=self.runner.options.tran_itl,
+                        abstol=self.runner.options.abstol,
+                        total_limit_states=total_limit_states,
+                        options=self.runner.options,
+                    )
+                except Exception as e:
+                    logger.warning(
+                        f"BaSpaCho dense solver failed ({e}), falling back to JAX dense solver"
+                    )
+                    nr_solve = None
+            else:
+                nr_solve = None
+
+            if nr_solve is None:
+                nr_solve = make_dense_full_mna_solver(
+                    build_system_jit,
+                    n_nodes,
+                    n_vsources,
+                    noi_indices=noi_indices,
+                    internal_device_indices=internal_device_indices,
+                    max_iterations=self.runner.options.tran_itl,
+                    abstol=self.runner.options.abstol,
+                    total_limit_states=total_limit_states,
+                    options=self.runner.options,
+                )
         else:
             # Sparse path: use CSR direct stamping to eliminate COO intermediates
             n_augmented = setup.n_unknowns + n_vsources
@@ -1771,21 +1808,18 @@ def _make_full_mna_while_loop_fns(
         # Compute the voltage to record - use new_X which is the actual solution we're using
         # (either X_new if converged, or previous X if NR failed at min_dt)
         V_to_record = new_X[:n_external]
-        new_times_out = jnp.where(
-            accept_step, state.times_out.at[state.step_idx].set(t_next), state.times_out
-        )
-        new_V_out = jnp.where(
-            accept_step, state.V_out.at[state.step_idx].set(V_to_record), state.V_out
-        )
-        # For currents, use zero if NR failed at min_dt (current from bad solution is unreliable)
+        # Write unconditionally: on rejection step_idx doesn't advance, so stale
+        # values at step_idx get overwritten by the next accepted step. The caller
+        # trims output using step_idx, so values beyond it are ignored. This avoids
+        # materializing both branches of jnp.where on the full output arrays.
         I_to_record = jnp.where(
             nr_failed_at_min_dt,
             jnp.zeros(n_vsources, dtype=dtype) if n_vsources > 0 else jnp.zeros(1, dtype=dtype),
             I_vsource[:n_vsources] if n_vsources > 0 else jnp.zeros(1, dtype=dtype),
         )
-        new_I_out = jnp.where(
-            accept_step, state.I_out.at[state.step_idx].set(I_to_record), state.I_out
-        )
+        new_times_out = state.times_out.at[state.step_idx].set(t_next)
+        new_V_out = state.V_out.at[state.step_idx].set(V_to_record)
+        new_I_out = state.I_out.at[state.step_idx].set(I_to_record)
         new_step_idx = jnp.where(accept_step, state.step_idx + 1, state.step_idx)
 
         # Statistics

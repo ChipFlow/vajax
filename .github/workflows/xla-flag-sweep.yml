@@ -1,0 +1,121 @@
+name: XLA Flag Sweep
+
+on:
+  workflow_dispatch:
+    inputs:
+      benchmarks:
+        description: 'Comma-separated benchmark names'
+        required: false
+        default: 'ring'
+      configs:
+        description: 'Comma-separated config names (empty = all)'
+        required: false
+        default: ''
+      n_runs:
+        description: 'Number of timed runs per config'
+        required: false
+        default: '3'
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: 0
+
+jobs:
+  sweep:
+    name: XLA flag sweep (CUDA)
+    runs-on: nvidia-runner-1
+    timeout-minutes: 120
+    concurrency:
+      group: xla-sweep-${{ github.ref }}
+
+    steps:
+      - name: Checkout with submodules
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: CUDA diagnostics
+        run: |
+          echo "=== GPU Info ==="
+          nvidia-smi 2>/dev/null || echo "nvidia-smi not available"
+          echo "=== CUDA Version ==="
+          nvcc --version 2>/dev/null || echo "nvcc not available"
+
+      - name: Set up Python + uv
+        uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+          prune-cache: false
+          cache-dependency-glob: "uv.lock"
+
+      - name: Install dependencies
+        run: uv sync --frozen --all-extras
+
+      - name: Verify GPU access
+        run: |
+          uv run python -c "
+          import jax
+          devices = jax.devices()
+          print(f'JAX devices: {devices}')
+          print(f'GPU available: {any(d.platform == \"gpu\" for d in devices)}')
+          for d in devices:
+              print(f'  {d.platform}: {d}')
+          "
+        env:
+          JAX_PLATFORMS: cuda,cpu
+
+      - name: Run XLA flag sweep
+        env:
+          JAX_PLATFORMS: cuda,cpu
+          JAX_ENABLE_X64: "1"
+          XLA_PYTHON_CLIENT_PREALLOCATE: "false"
+          XLA_PYTHON_CLIENT_ALLOCATOR: "platform"
+        run: |
+          CONFIGS_FLAG=""
+          if [ -n "${{ inputs.configs }}" ]; then
+            CONFIGS_FLAG="--configs ${{ inputs.configs }}"
+          fi
+
+          uv run python scripts/sweep_xla_flags.py \
+            --benchmark ${{ inputs.benchmarks }} \
+            --n-runs ${{ inputs.n_runs }} \
+            $CONFIGS_FLAG \
+            --json-output /tmp/xla-sweep-results.json \
+            2>&1 | tee /tmp/xla-sweep.log
+
+      - name: Generate summary
+        if: always()
+        run: |
+          {
+            echo "## XLA Flag Sweep Results"
+            echo ""
+            echo "**Benchmarks**: ${{ inputs.benchmarks }}"
+            echo "**Runs per config**: ${{ inputs.n_runs }}"
+            echo ""
+
+            if [ -f /tmp/xla-sweep.log ]; then
+              echo '```'
+              # Extract the summary table
+              sed -n '/^={80}/,$ p' /tmp/xla-sweep.log | head -40
+              echo '```'
+            fi
+
+            if [ -f /tmp/xla-sweep-results.json ]; then
+              echo ""
+              echo "<details><summary>Raw JSON results</summary>"
+              echo ""
+              echo '```json'
+              cat /tmp/xla-sweep-results.json
+              echo '```'
+              echo "</details>"
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: xla-sweep-results
+          path: |
+            /tmp/xla-sweep-results.json
+            /tmp/xla-sweep.log

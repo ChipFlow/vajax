@@ -980,7 +980,10 @@ class EvalFunctionBuilder(FunctionBuilder):
         return fn_name, code_str.split("\n")
 
     def _emit_param_mapping(
-        self, body: List[ast.stmt], ctx: CodeGenContext, idx_mapping: Dict[int, Tuple[str, any]]
+        self,
+        body: List[ast.stmt],
+        ctx: CodeGenContext,
+        idx_mapping: Dict[int, Tuple[str, any]],
     ):
         """Emit parameter mapping from split arrays.
 
@@ -999,7 +1002,10 @@ class EvalFunctionBuilder(FunctionBuilder):
                 source, value = idx_mapping[i]
                 if source == "shared":
                     body.append(
-                        assign(var_name, subscript(ast_name("shared_params"), ast_const(value)))
+                        assign(
+                            var_name,
+                            subscript(ast_name("shared_params"), ast_const(value)),
+                        )
                     )
                 elif source == "device":
                     body.append(
@@ -1041,6 +1047,11 @@ class EvalFunctionBuilder(FunctionBuilder):
         """Emit cache value mapping from split cache arrays.
 
         Always uses split cache format (shared_cache, device_cache) for uniform interface.
+
+        Args:
+            body: List to append statements to
+            ctx: Code generation context
+            cache_idx_mapping: Maps cache index to (source, new_index)
         """
         for cache_idx, mapping in enumerate(self.cache_mapping):
             eval_param_idx = mapping["eval_param"]
@@ -1051,7 +1062,10 @@ class EvalFunctionBuilder(FunctionBuilder):
                 source, new_idx = cache_idx_mapping[cache_idx]
                 if source == "shared_cache":
                     body.append(
-                        assign(var_name, subscript(ast_name("shared_cache"), ast_const(new_idx)))
+                        assign(
+                            var_name,
+                            subscript(ast_name("shared_cache"), ast_const(new_idx)),
+                        )
                     )
                 else:
                     body.append(

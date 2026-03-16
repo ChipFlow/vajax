@@ -14,17 +14,28 @@ on:
           - c6288
         default: ring
       timesteps:
-        description: 'Number of timesteps'
-        default: '50'
+        description: 'Number of timesteps (500+ recommended for steady-state profiling)'
+        default: '500'
       sparse:
         description: 'Use sparse solver (for large circuits)'
         type: boolean
         default: false
+      use_baspacho:
+        description: 'Build spineax from source with BaSpaCho dense solver'
+        type: boolean
+        default: false
+      runner:
+        description: 'GPU runner to use'
+        type: choice
+        options:
+          - nvidia-runner-1
+          - nvidia-runner-2
+        default: nvidia-runner-1
 
-# Only one profiling job at a time on the GPU runner
+# Only one profiling job at a time per runner
 concurrency:
-  group: nsys-profile
-  cancel-in-progress: false
+  group: nsys-profile-${{ inputs.runner }}
+  cancel-in-progress: true
 
 env:
   CARGO_TERM_COLOR: always
@@ -33,7 +44,7 @@ env:
 
 jobs:
   nsys-profile:
-    runs-on: nvidia-runner-1
+    runs-on: ${{ inputs.runner }}
     timeout-minutes: 60
 
     steps:
@@ -53,17 +64,58 @@ jobs:
           echo "=== nsys Version ==="
           nsys --version 2>/dev/null || echo "nsys not in PATH"
 
-      - name: Install LLVM 18
+      - name: Install all apt dependencies (LLVM, CUDA, system libs)
+        uses: robtaylor/cache-apt-pkgs-action@feat/apt-sources
+        with:
+          packages: >-
+            llvm-18-dev clang-18 libclang-18-dev lld-18
+            cuda-nvcc-12-6 cuda-cudart-dev-12-6 cuda-driver-dev-12-6
+            libcublas-dev-12-6 libcusolver-dev-12-6 libcusparse-dev-12-6
+            libnvjitlink-dev-12-6
+            cuda-libraries-12-6 cuda-cupti-12-6
+            libcudnn9-cuda-12 libcudss0-cuda-12
+            cuda-nsight-systems-12-6
+            libsuitesparse-dev libopenblas-dev swig cmake pkg-config
+          # NVIDIA CUDA repo is already on the runner image (cuda-archive-keyring.gpg).
+          # Adding it again via apt-sources causes "Conflicting Signed-By" error.
+          apt-sources: |
+            https://apt.llvm.org/llvm-snapshot.gpg.key | deb http://apt.llvm.org/noble/ llvm-toolchain-noble-18 main
+          execute_install_scripts: true
+
+      - name: Set up LLVM and CUDA environment
         run: |
-          if ! llvm-config-18 --version 2>/dev/null; then
-            wget -qO- https://apt.llvm.org/llvm-snapshot.gpg.key | sudo tee /etc/apt/trusted.gpg.d/apt.llvm.org.asc > /dev/null
-            sudo chmod a+r /etc/apt/trusted.gpg.d/apt.llvm.org.asc
-            wget -q https://apt.llvm.org/llvm.sh
-            chmod +x llvm.sh
-            sudo ./llvm.sh 18
-            rm llvm.sh
-          fi
           echo "LLVM_SYS_181_PREFIX=/usr/lib/llvm-18" >> $GITHUB_ENV
+
+          # Find CUDA toolkit (may be at /usr/local/cuda-12.6 or elsewhere)
+          CUDA_ROOT=$(find /usr/local -maxdepth 1 -name "cuda-12*" -type d 2>/dev/null | sort -V | tail -1)
+          if [ -z "$CUDA_ROOT" ] && [ -d "/usr/local/cuda" ]; then
+            CUDA_ROOT="/usr/local/cuda"
+          fi
+          if [ -n "$CUDA_ROOT" ]; then
+            echo "${CUDA_ROOT}/bin" >> $GITHUB_PATH
+            echo "CUDAToolkit_ROOT=${CUDA_ROOT}" >> $GITHUB_ENV
+            # Build LD_LIBRARY_PATH with CUDA lib64 (cuSPARSE, cuFFT, etc.)
+            # Must be a single write — GITHUB_ENV takes last value per key.
+            EXTRA_LD="${CUDA_ROOT}/lib64"
+            echo "CUDA found at: ${CUDA_ROOT}"
+          else
+            echo "::warning::CUDA toolkit not found under /usr/local"
+            EXTRA_LD=""
+          fi
+
+          CUDSS_LIB=$(dpkg -L libcudss0-cuda-12 2>/dev/null | grep '\.so' | head -1)
+          if [ -n "$CUDSS_LIB" ]; then
+            CUDSS_DIR=$(dirname "$CUDSS_LIB")
+            EXTRA_LD="${CUDSS_DIR}:${EXTRA_LD}"
+          fi
+          if [ -n "$EXTRA_LD" ]; then
+            echo "LD_LIBRARY_PATH=${EXTRA_LD}:${LD_LIBRARY_PATH}" >> "$GITHUB_ENV"
+          fi
+          NSYS_BIN=$(dirname "$(find /opt/nvidia -name nsys -type f 2>/dev/null | head -1)" 2>/dev/null)
+          if [ -n "$NSYS_BIN" ]; then
+            echo "$NSYS_BIN" >> $GITHUB_PATH
+          fi
+          nsys --version || echo "::warning::nsys not found in PATH"
 
       - name: Set up Rust
         uses: dtolnay/rust-toolchain@stable
@@ -78,20 +130,12 @@ jobs:
         with:
           workspaces: openvaf_jax/openvaf_py
 
-      - name: Install CUDA toolkit
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y cuda-nvcc-12-6 cuda-cudart-dev-12-6
-          echo "/usr/local/cuda-12.6/bin" >> $GITHUB_PATH
-
-      - name: Install system dependencies
-        run: |
-          sudo apt-get install -y libsuitesparse-dev swig cmake pkg-config
-
       - name: Install uv
         uses: astral-sh/setup-uv@v6
         with:
           enable-cache: true
+          prune-cache: false
+          python-version: "3.13"
 
       - name: Set up Python
         run: uv python install 3.13
@@ -105,13 +149,40 @@ jobs:
       - name: Install vajax with CUDA dependencies
         run: uv sync --extra cuda12
 
+      - name: Install spineax with BaSpaCho from source
+        if: inputs.use_baspacho
+        run: |
+          # Replace PyPI spineax with git version that has BaSpaCho dense solver.
+          # --reinstall forces rebuild even if same version is cached from PyPI.
+          # FetchContent auto-fetches BaSpaCho + deps (SuiteSparse, dispenso, Eigen).
+          # sccache caches C++/CUDA compilation (BaSpaCho + SuiteSparse = 344 objects)
+          uv pip install --reinstall -v \
+            "spineax-vajax @ git+https://github.com/robtaylor/spineax.git@main" \
+            -C cmake.define.SPINEAX_USE_BASPACHO=ON \
+            -C cmake.define.CUDAToolkit_ROOT=${CUDAToolkit_ROOT:-/usr/local/cuda-12.6} \
+            -C cmake.define.CMAKE_C_COMPILER_LAUNCHER=sccache \
+            -C cmake.define.CMAKE_CXX_COMPILER_LAUNCHER=sccache \
+            -C cmake.define.CMAKE_CUDA_COMPILER_LAUNCHER=sccache
+
+          # Verify the module was installed
+          echo "=== Installed spineax files ==="
+          uv run python -c "import spineax; import pathlib; p = pathlib.Path(spineax.__file__).parent; [print(f'  {f.name}') for f in sorted(p.iterdir())]"
+          echo "=== spineax directory listing ==="
+          ls -lR .venv/lib/python*/site-packages/spineax/ || true
+          echo "=== Checking baspacho_dense_solve import ==="
+          uv run python -c "from spineax import baspacho_dense_solve; print('  OK:', baspacho_dense_solve)" || echo "  FAILED"
+
       - name: Run nsys profiling
         env:
           JAX_PLATFORMS: cuda,cpu
-          XLA_FLAGS: "--xla_gpu_autotune_level=0"
+          # +WHILE,+CONDITIONAL: enables command buffer capture for NR while loop
+          # BaSpaCho dense solver has kCmdBufferCompatible trait (replaces cuSOLVER)
+          XLA_FLAGS: "--xla_gpu_autotune_level=0 --xla_gpu_enable_command_buffer=+WHILE,+CONDITIONAL"
           XLA_PYTHON_CLIENT_PREALLOCATE: "false"
           XLA_PYTHON_CLIENT_ALLOCATOR: platform
-          TF_CPP_MIN_LOG_LEVEL: "2"
+          TF_CPP_MIN_LOG_LEVEL: "0"
+          # Debug: show which thunks prevent command buffer capture for while loops
+          TF_CPP_VMODULE: "command_buffer_conversion_pass=2,while_thunk=3"
         run: |
           SPARSE_FLAG=""
           if [ "${{ inputs.sparse }}" = "true" ]; then
@@ -120,6 +191,9 @@ jobs:
 
           TIMESTAMP=$(date +%s)
           PROFILE_NAME="nsys-${{ inputs.circuit }}-${TIMESTAMP}"
+          # Export profile_name early so subsequent steps can find the report
+          # even if nsys exits non-zero (e.g. SIGSEGV during teardown)
+          echo "profile_name=${PROFILE_NAME}" >> "$GITHUB_ENV"
 
           echo "=== Starting nsys GPU Profiling ==="
           echo "Circuit: ${{ inputs.circuit }}"
@@ -127,17 +201,51 @@ jobs:
           echo "Sparse: ${{ inputs.sparse }}"
           echo "Commit: ${{ github.sha }}"
 
+          # NVTX "run_transient" marker annotates the transient window for filtering.
+          # Cannot use --capture-range=nvtx: SIGSEGV during JAX teardown prevents
+          # nsys from finalizing the report in NVTX capture mode.
+          # Tolerate exit code 139 (SIGSEGV during JAX/CUDA teardown)
           nsys profile \
             --trace=cuda,nvtx,osrt \
             --output "/tmp/${PROFILE_NAME}" \
             uv run python scripts/nsys_profile_target.py \
-              ${{ inputs.circuit }} ${{ inputs.timesteps }} ${SPARSE_FLAG}
+              ${{ inputs.circuit }} ${{ inputs.timesteps }} ${SPARSE_FLAG} \
+            || NSYS_EXIT=$?
 
-          echo "profile_name=${PROFILE_NAME}" >> "$GITHUB_ENV"
+          if [ "${NSYS_EXIT:-0}" -ne 0 ]; then
+            echo "::warning::nsys exited with code ${NSYS_EXIT} (139=SIGSEGV during teardown, report may still be valid)"
+            if [ ! -f "/tmp/${PROFILE_NAME}.nsys-rep" ]; then
+              echo "::error::nsys report not generated"
+              exit 1
+            fi
+          fi
+
+      - name: Export stats and SQLite
+        if: always()
+        run: |
+          REPORT="/tmp/${profile_name}.nsys-rep"
+          STATS_DIR="/tmp/nsys-stats"
+          mkdir -p "$STATS_DIR"
+
+          if [ -f "$REPORT" ]; then
+            # Export to SQLite for offline analysis
+            nsys export --type=sqlite --output="/tmp/${profile_name}.sqlite" "$REPORT" || true
+
+            # Generate key stats reports
+            for report in cuda_gpu_kern_sum cuda_api_sum cuda_gpu_mem_time_sum cuda_gpu_mem_size_sum; do
+              nsys stats "$REPORT" --report "$report" --format csv \
+                --force-export=true --output "${STATS_DIR}/${report}" 2>/dev/null || true
+            done
+
+            # Full kernel trace (top 100 by duration)
+            nsys stats "$REPORT" --report cuda_gpu_trace --format csv \
+              --force-export=true --output "${STATS_DIR}/cuda_gpu_trace" 2>/dev/null || true
+          fi
 
       - name: Generate summary
         if: always()
         run: |
+          REPORT="/tmp/${profile_name}.nsys-rep"
           {
             echo "## nsys GPU Profiling Results"
             echo ""
@@ -146,20 +254,34 @@ jobs:
             echo "**Sparse:** ${{ inputs.sparse }}"
             echo "**Commit:** \`${{ github.sha }}\`"
             echo ""
-            if [ -f "/tmp/${profile_name}.nsys-rep" ]; then
-              echo "### Profile Summary"
+            if [ -f "$REPORT" ]; then
+              echo "### GPU Kernel Summary"
+              echo '```'
+              nsys stats "$REPORT" --report cuda_gpu_kern_sum --force-export=true 2>&1 | head -50 || true
+              echo '```'
               echo ""
+              echo "### CUDA API Summary"
               echo '```'
-              nsys stats "/tmp/${profile_name}.nsys-rep" --report cuda_gpu_kern_sum 2>&1 | head -40 || true
+              nsys stats "$REPORT" --report cuda_api_sum --force-export=true 2>&1 | head -30 || true
               echo '```'
+              echo ""
+              echo "### GPU Memory Transfers"
+              echo '```'
+              nsys stats "$REPORT" --report cuda_gpu_mem_time_sum --force-export=true 2>&1 | head -20 || true
+              echo '```'
+            else
+              echo "**No profile report found.**"
             fi
           } >> "$GITHUB_STEP_SUMMARY"
 
-      - name: Upload nsys report
+      - name: Upload nsys report and stats
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: nsys-profile-${{ inputs.circuit }}-${{ github.sha }}
-          path: /tmp/nsys-*.nsys-rep
+          path: |
+            /tmp/nsys-*.nsys-rep
+            /tmp/nsys-*.sqlite
+            /tmp/nsys-stats/
           if-no-files-found: ignore
           retention-days: 30

@@ -1266,6 +1266,51 @@ class OpenVAFToJAX:
 
         return init_fn, metadata
 
+    def build_sccp_known_values(
+        self,
+        shared_indices: List[int],
+        shared_values: List[float],
+        shared_cache_indices: Optional[List[int]] = None,
+        shared_cache_values: Optional[List[float]] = None,
+    ) -> Optional[Dict[str, Any]]:
+        """Build SCCP known_values dict from concrete shared params and cache.
+
+        Maps concrete values to their MIR value IDs for SCCP dead-block elimination.
+        This tells the SCCP pass which MIR values are constant, enabling it to
+        resolve static branches and eliminate dead blocks at codegen time.
+
+        NOTE: These values are used ONLY for SCCP analysis, NOT for literal
+        inlining in the generated Python code. Array reads (shared_params[i],
+        shared_cache[i]) are preserved in the generated code for GPU efficiency.
+        Literal inlining was found to cause 7.8x GPU regression on PSP103 by
+        embedding ~1300 float constants in the XLA kernel.
+
+        Args:
+            shared_indices: Original param indices for shared params
+            shared_values: Concrete float values for each shared param
+            shared_cache_indices: Cache column indices for shared cache entries
+            shared_cache_values: Concrete float values for each shared cache entry
+
+        Returns:
+            Dict mapping MIR value IDs to concrete values, or None if empty.
+        """
+        known: Dict[str, Any] = {}
+
+        for j, orig_idx in enumerate(shared_indices):
+            value_id = self.param_idx_to_val.get(orig_idx)
+            if value_id:
+                known[value_id] = shared_values[j]
+
+        if shared_cache_values is not None and shared_cache_indices:
+            for j, cache_col_idx in enumerate(shared_cache_indices):
+                mapping = self.cache_mapping[cache_col_idx]
+                eval_param_idx = mapping["eval_param"]
+                value_id = self.param_idx_to_val.get(eval_param_idx)
+                if value_id:
+                    known[value_id] = shared_cache_values[j]
+
+        return known if known else None
+
     def translate_eval_array_with_cache_split(
         self,
         shared_indices: List[int],
@@ -1274,6 +1319,7 @@ class OpenVAFToJAX:
         varying_cache_indices: Optional[List[int]] = None,
         use_limit_functions: bool = False,
         limit_param_map: Optional[Dict[int, Tuple[str, str]]] = None,
+        sccp_known_values: Optional[Dict[str, Any]] = None,
     ) -> Tuple[Callable, Dict]:
         """Generate a vmappable eval function with split params and cache (internal API).
 
@@ -1291,6 +1337,10 @@ class OpenVAFToJAX:
             limit_param_map: Dict mapping original param indices to (kind, name) tuples
                             for limit-related params (prev_state, enable_lim, new_state,
                             enable_integration). Excluded from shared/device params.
+            sccp_known_values: If provided, maps MIR value IDs to concrete values
+                            for SCCP dead-block elimination. Build this with
+                            build_sccp_known_values(). Values are used for SCCP
+                            analysis only — NOT inlined as literals in generated code.
 
         Returns:
             Tuple of (eval_fn, metadata)
@@ -1316,9 +1366,14 @@ class OpenVAFToJAX:
         assert self.dae_data is not None, "dae_data released, call before release_mir_data()"
 
         t0 = time.perf_counter()
+        n_sccp = len(sccp_known_values) if sccp_known_values else 0
         logger.info(
-            f"    translate_eval_array_with_cache_split: generating code (limit_funcs={use_limit_functions})..."
+            f"    translate_eval_array_with_cache_split: generating code "
+            f"(limit_funcs={use_limit_functions}, sccp_known={n_sccp})..."
         )
+
+        if sccp_known_values:
+            logger.info(f"    SCCP: {n_sccp} known values for dead-block elimination")
 
         # Build the eval function
         eval_param_names = list(self.module.param_names)
@@ -1327,6 +1382,7 @@ class OpenVAFToJAX:
             self.dae_data,
             self.cache_mapping,
             self.param_idx_to_val,
+            sccp_known_values=sccp_known_values,
             eval_param_names=eval_param_names,
         )
         fn_name, code_lines = builder.build_with_cache_split(
@@ -1339,6 +1395,22 @@ class OpenVAFToJAX:
         )
 
         t1 = time.perf_counter()
+
+        # Log SCCP statistics
+        if builder.sccp is not None:
+            dead_blocks = builder.sccp.get_dead_blocks()
+            total_blocks = len(self.eval_mir.blocks)
+            n_constants = sum(1 for v in builder.sccp.lattice.values() if v.is_constant())
+            static_branches = sum(
+                1
+                for b in self.eval_mir.blocks
+                if builder.sccp.get_static_branch_direction(b) is not None
+            )
+            logger.info(
+                f"    SCCP results: {len(dead_blocks)}/{total_blocks} blocks dead, "
+                f"{static_branches} static branches, {n_constants} constants propagated"
+            )
+
         logger.info(
             f"    translate_eval_array_with_cache_split: code generated ({len(code_lines)} lines) in {t1 - t0:.1f}s"
         )
@@ -1359,6 +1431,11 @@ class OpenVAFToJAX:
                 df.write(f"# use_limit_functions={use_limit_functions}\n")
                 df.write(f"# shared_indices={shared_indices}\n")
                 df.write(f"# varying_indices={varying_indices}\n")
+                df.write(f"# sccp_known_values={n_sccp}\n")
+                if builder.sccp is not None:
+                    dead_blocks = builder.sccp.get_dead_blocks()
+                    total_blocks = len(self.eval_mir.blocks)
+                    df.write(f"# sccp: {len(dead_blocks)}/{total_blocks} blocks dead\n")
                 df.write(code)
             logger.info(f"    Generated code dumped to {dump_path}")
 
