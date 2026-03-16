@@ -11,8 +11,6 @@
       
       
       
-        <link rel="prev" href="../packages/umfpack-jax/">
-      
       
       
         
@@ -23,7 +21,7 @@
     
     
       
-        <title>CI Status - VAJAX</title>
+        <title>Configuration - VAJAX</title>
       
     
     
@@ -74,7 +72,7 @@
     <div data-md-component="skip">
       
         
-        <a href="#vajax-ci-summary" class="md-skip">
+        <a href="#configuration" class="md-skip">
           Skip to content
         </a>
       
@@ -110,7 +108,7 @@
         <div class="md-header__topic" data-md-component="header-topic">
           <span class="md-ellipsis">
             
-              CI Status
+              Configuration
             
           </span>
         </div>
@@ -1045,37 +1043,10 @@
       
   
   
-    
   
   
-  
-    <li class="md-nav__item md-nav__item--active">
-      
-      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
-      
-      
-        
-      
-      
-        <label class="md-nav__link md-nav__link--active" for="__toc">
-          
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    CI Status
-  
-
-    
-  </span>
-  
-  
-
-          <span class="md-nav__icon md-icon"></span>
-        </label>
-      
-      <a href="./" class="md-nav__link md-nav__link--active">
+    <li class="md-nav__item">
+      <a href="../ci-status/" class="md-nav__link">
         
   
   
@@ -1091,65 +1062,6 @@
   
 
       </a>
-      
-        
-
-<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
-  
-  
-  
-    
-  
-  
-    <label class="md-nav__title" for="__toc">
-      <span class="md-nav__icon md-icon"></span>
-      Table of contents
-    </label>
-    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
-      
-        <li class="md-nav__item">
-  <a href="#test-coverage" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Test Coverage
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#performance" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Performance
-      
-    </span>
-  </a>
-  
-    <nav class="md-nav" aria-label="Performance">
-      <ul class="md-nav__list">
-        
-          <li class="md-nav__item">
-  <a href="#cpu-benchmarks" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        CPU Benchmarks
-      
-    </span>
-  </a>
-  
-</li>
-        
-      </ul>
-    </nav>
-  
-</li>
-      
-    </ul>
-  
-</nav>
-      
     </li>
   
 
@@ -1181,10 +1093,10 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
-  <a href="#test-coverage" class="md-nav__link">
+  <a href="#config-files" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Test Coverage
+        Config Files
       
     </span>
   </a>
@@ -1192,22 +1104,22 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#performance" class="md-nav__link">
+  <a href="#config-schema" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Performance
+        Config Schema
       
     </span>
   </a>
   
-    <nav class="md-nav" aria-label="Performance">
+    <nav class="md-nav" aria-label="Config Schema">
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
-  <a href="#cpu-benchmarks" class="md-nav__link">
+  <a href="#models-search-paths" class="md-nav__link">
     <span class="md-ellipsis">
       
-        CPU Benchmarks
+        [models] — Search Paths
       
     </span>
   </a>
@@ -1216,6 +1128,117 @@
         
       </ul>
     </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#environment-variables" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Environment Variables
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Environment Variables">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#model-paths" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Model paths
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#other-environment-variables" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Other environment variables
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#search-order" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Search Order
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#examples" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Examples
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Examples">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#point-to-a-local-pdk" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Point to a local PDK
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#use-vacask-models-from-a-separate-install" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Use VACASK models from a separate install
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#temporary-override-for-a-single-run" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Temporary override for a single run
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#programmatic-access" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Programmatic Access
+      
+    </span>
+  </a>
   
 </li>
       
@@ -1239,133 +1262,120 @@
   
 
 
-<h1 id="vajax-ci-summary">VAJAX CI Summary<a class="headerlink" href="#vajax-ci-summary" title="Permanent link">&para;</a></h1>
-<p><em>Last updated: 2026-03-16 06:24 UTC</em></p>
-<p><em>Commit: <a href="https://github.com/ChipFlow/vajax/commit/aeafd337551c19cc2b716fd80d1436dade5b852c">aeafd337</a></em></p>
-<h2 id="test-coverage">Test Coverage<a class="headerlink" href="#test-coverage" title="Permanent link">&para;</a></h2>
+<h1 id="configuration">Configuration<a class="headerlink" href="#configuration" title="Permanent link">&para;</a></h1>
+<p>VAJAX supports user-level and project-level configuration via TOML files, plus environment variable overrides.</p>
+<h2 id="config-files">Config Files<a class="headerlink" href="#config-files" title="Permanent link">&para;</a></h2>
+<p>VAJAX loads configuration from two locations (later overrides earlier):</p>
 <table>
 <thead>
 <tr>
-<th>Suite</th>
-<th>Passed</th>
-<th>Failed</th>
-<th>Errors</th>
-<th>Skipped</th>
-<th>Total</th>
-<th>Time</th>
+<th>Source</th>
+<th>Path</th>
+<th>Use case</th>
 </tr>
 </thead>
 <tbody>
 <tr>
-<td>benchmark-dense</td>
-<td>5</td>
-<td>0</td>
-<td>0</td>
-<td>1</td>
-<td>6</td>
-<td>532.2s</td>
+<td>User config</td>
+<td><code>~/.config/vajax/config.toml</code></td>
+<td>Personal model paths, global preferences</td>
 </tr>
 <tr>
-<td>benchmark-sparse</td>
-<td>6</td>
-<td>0</td>
-<td>0</td>
-<td>1</td>
-<td>7</td>
-<td>587.4s</td>
-</tr>
-<tr>
-<td>ngspice</td>
-<td>0</td>
-<td>0</td>
-<td>0</td>
-<td>71</td>
-<td>71</td>
-<td>246.6s</td>
-</tr>
-<tr>
-<td>openvaf-py</td>
-<td>320</td>
-<td>0</td>
-<td>0</td>
-<td>92</td>
-<td>412</td>
-<td>1113.8s</td>
-</tr>
-<tr>
-<td>unit</td>
-<td>72</td>
-<td>0</td>
-<td>0</td>
-<td>5</td>
-<td>77</td>
-<td>21.0s</td>
-</tr>
-<tr>
-<td>windows</td>
-<td>79</td>
-<td>0</td>
-<td>0</td>
-<td>5</td>
-<td>84</td>
-<td>28.6s</td>
-</tr>
-<tr>
-<td>xyce</td>
-<td>39</td>
-<td>0</td>
-<td>0</td>
-<td>1890</td>
-<td>1929</td>
-<td>77.7s</td>
-</tr>
-<tr>
-<td><strong>Total</strong></td>
-<td><strong>521</strong></td>
-<td><strong>0</strong></td>
-<td><strong>0</strong></td>
-<td><strong>2065</strong></td>
-<td><strong>2586</strong></td>
-<td>2607.3s</td>
+<td>Project config</td>
+<td><code>vajax.toml</code> in working directory</td>
+<td>Per-project model paths</td>
 </tr>
 </tbody>
 </table>
-<h2 id="performance">Performance<a class="headerlink" href="#performance" title="Permanent link">&para;</a></h2>
-<h3 id="cpu-benchmarks">CPU Benchmarks<a class="headerlink" href="#cpu-benchmarks" title="Permanent link">&para;</a></h3>
+<p>On Linux/macOS, the user config follows the <a href="https://specifications.freedesktop.org/basedir-spec/latest/">XDG Base Directory Specification</a> — set <code>$XDG_CONFIG_HOME</code> to override the default <code>~/.config</code> location.</p>
+<p>On Windows, the user config is at <code>%APPDATA%\vajax\config.toml</code>.</p>
+<h2 id="config-schema">Config Schema<a class="headerlink" href="#config-schema" title="Permanent link">&para;</a></h2>
+<h3 id="models-search-paths"><code>[models]</code> — Search Paths<a class="headerlink" href="#models-search-paths" title="Permanent link">&para;</a></h3>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="c1"># ~/.config/vajax/config.toml</span>
+<a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a>
+<a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a><span class="k">[models]</span>
+<a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a><span class="c1"># Additional directories to search for .va model files and .sim includes.</span>
+<a id="__codelineno-0-5" name="__codelineno-0-5" href="#__codelineno-0-5"></a><span class="c1"># Each path is a directory that may contain .va files directly</span>
+<a id="__codelineno-0-6" name="__codelineno-0-6" href="#__codelineno-0-6"></a><span class="c1"># or in subdirectories matching the model name.</span>
+<a id="__codelineno-0-7" name="__codelineno-0-7" href="#__codelineno-0-7"></a><span class="n">paths</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">[</span>
+<a id="__codelineno-0-8" name="__codelineno-0-8" href="#__codelineno-0-8"></a><span class="w">    </span><span class="s2">&quot;/path/to/my/models&quot;</span><span class="p">,</span>
+<a id="__codelineno-0-9" name="__codelineno-0-9" href="#__codelineno-0-9"></a><span class="w">    </span><span class="s2">&quot;/opt/vacask/devices&quot;</span><span class="p">,</span>
+<a id="__codelineno-0-10" name="__codelineno-0-10" href="#__codelineno-0-10"></a><span class="w">    </span><span class="s2">&quot;~/pdk/models&quot;</span><span class="p">,</span><span class="w">        </span><span class="c1"># Tilde expansion is supported</span>
+<a id="__codelineno-0-11" name="__codelineno-0-11" href="#__codelineno-0-11"></a><span class="p">]</span>
+</code></pre></div>
+<p>These paths are used for both <code>load</code> statements (Verilog-A <code>.va</code> models) and <code>include</code> statements (netlist <code>.sim</code> files). Paths that don't exist are silently skipped (logged at DEBUG level).</p>
+<h2 id="environment-variables">Environment Variables<a class="headerlink" href="#environment-variables" title="Permanent link">&para;</a></h2>
+<h3 id="model-paths">Model paths<a class="headerlink" href="#model-paths" title="Permanent link">&para;</a></h3>
+<p><code>VAJAX_MODEL_PATH</code> — colon-separated (<code>;</code> on Windows) list of directories to search for <code>.va</code> model files. These are searched <strong>before</strong> config file paths.</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a><span class="c1"># Single directory</span>
+<a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a><span class="nb">export</span><span class="w"> </span><span class="nv">VAJAX_MODEL_PATH</span><span class="o">=</span>/path/to/my/models
+<a id="__codelineno-1-3" name="__codelineno-1-3" href="#__codelineno-1-3"></a>
+<a id="__codelineno-1-4" name="__codelineno-1-4" href="#__codelineno-1-4"></a><span class="c1"># Multiple directories</span>
+<a id="__codelineno-1-5" name="__codelineno-1-5" href="#__codelineno-1-5"></a><span class="nb">export</span><span class="w"> </span><span class="nv">VAJAX_MODEL_PATH</span><span class="o">=</span>/path/to/models1:/path/to/models2
+<a id="__codelineno-1-6" name="__codelineno-1-6" href="#__codelineno-1-6"></a>
+<a id="__codelineno-1-7" name="__codelineno-1-7" href="#__codelineno-1-7"></a><span class="c1"># Windows (PowerShell)</span>
+<a id="__codelineno-1-8" name="__codelineno-1-8" href="#__codelineno-1-8"></a><span class="nv">$env</span>:VAJAX_MODEL_PATH<span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;C:\models1;C:\models2&quot;</span>
+</code></pre></div>
+<h3 id="other-environment-variables">Other environment variables<a class="headerlink" href="#other-environment-variables" title="Permanent link">&para;</a></h3>
 <table>
 <thead>
 <tr>
-<th>Benchmark</th>
-<th>Steps</th>
-<th>VAJAX (ms/step)</th>
-<th>VACASK (ms/step)</th>
-<th>Ratio</th>
-<th>Startup</th>
+<th>Variable</th>
+<th>Description</th>
 </tr>
 </thead>
 <tbody>
 <tr>
-<td>c6288</td>
-<td>20</td>
-<td>162.8884</td>
-<td>285.3000</td>
-<td>0.57x</td>
-<td>155.4s</td>
+<td><code>VAJAX_CACHE_DIR</code></td>
+<td>Override cache directory (default: <code>~/.cache/vajax/</code>)</td>
 </tr>
 <tr>
-<td>mul64</td>
-<td>5</td>
-<td>8802.4023</td>
-<td>N/A</td>
-<td>N/A</td>
-<td>911.3s</td>
+<td><code>VAJAX_NO_PROGRESS</code></td>
+<td>Set to <code>1</code> to disable progress bars</td>
+</tr>
+<tr>
+<td><code>JAX_PLATFORMS</code></td>
+<td>Force JAX platform: <code>cpu</code>, <code>cuda</code>, <code>gpu</code></td>
+</tr>
+<tr>
+<td><code>JAX_ENABLE_X64</code></td>
+<td>Enable float64: <code>1</code> or <code>0</code></td>
 </tr>
 </tbody>
 </table>
-<p><em>No gpu benchmarks benchmark data available.</em></p>
-<hr />
-<p><a href="https://github.com/ChipFlow/vajax/actions">View workflows</a> | 
-<a href="https://github.com/ChipFlow/vajax">Repository</a></p>
+<h2 id="search-order">Search Order<a class="headerlink" href="#search-order" title="Permanent link">&para;</a></h2>
+<p>Both <code>load</code> (VA models) and <code>include</code> (netlist files) use the same search order:</p>
+<ol>
+<li><strong>Netlist directory</strong> — relative to the file containing the <code>load</code>/<code>include</code> statement</li>
+<li><strong><code>VAJAX_MODEL_PATH</code></strong> — environment variable directories</li>
+<li><strong>Config file <code>[models].paths</code></strong> — project config first, then user config</li>
+<li><strong>Bundled models</strong> — <code>vajax/devices/models/</code> (resistor, capacitor, etc.)</li>
+<li><strong>Vendor directories</strong> — <code>vendor/OpenVAF/integration_tests</code>, <code>vendor/VACASK/devices</code></li>
+</ol>
+<p>The first match wins. This means you can override bundled models by placing your version in an earlier search path.</p>
+<h2 id="examples">Examples<a class="headerlink" href="#examples" title="Permanent link">&para;</a></h2>
+<h3 id="point-to-a-local-pdk">Point to a local PDK<a class="headerlink" href="#point-to-a-local-pdk" title="Permanent link">&para;</a></h3>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a><span class="c1"># vajax.toml (in project directory)</span>
+<a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a><span class="k">[models]</span>
+<a id="__codelineno-2-3" name="__codelineno-2-3" href="#__codelineno-2-3"></a><span class="n">paths</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">[</span><span class="s2">&quot;/opt/pdk/sky130/models&quot;</span><span class="p">]</span>
+</code></pre></div>
+<h3 id="use-vacask-models-from-a-separate-install">Use VACASK models from a separate install<a class="headerlink" href="#use-vacask-models-from-a-separate-install" title="Permanent link">&para;</a></h3>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a><span class="c1"># ~/.config/vajax/config.toml</span>
+<a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a><span class="k">[models]</span>
+<a id="__codelineno-3-3" name="__codelineno-3-3" href="#__codelineno-3-3"></a><span class="n">paths</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">[</span><span class="s2">&quot;/usr/local/share/vacask/devices&quot;</span><span class="p">]</span>
+</code></pre></div>
+<h3 id="temporary-override-for-a-single-run">Temporary override for a single run<a class="headerlink" href="#temporary-override-for-a-single-run" title="Permanent link">&para;</a></h3>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a><span class="nv">VAJAX_MODEL_PATH</span><span class="o">=</span>/tmp/test_models<span class="w"> </span>vajax<span class="w"> </span>circuit.sim
+</code></pre></div>
+<h2 id="programmatic-access">Programmatic Access<a class="headerlink" href="#programmatic-access" title="Permanent link">&para;</a></h2>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a><span class="kn">from</span><span class="w"> </span><span class="nn">vajax.user_config</span><span class="w"> </span><span class="kn">import</span> <span class="n">get_config</span><span class="p">,</span> <span class="n">get_model_paths</span>
+<a id="__codelineno-5-2" name="__codelineno-5-2" href="#__codelineno-5-2"></a>
+<a id="__codelineno-5-3" name="__codelineno-5-3" href="#__codelineno-5-3"></a><span class="c1"># Get merged config dict</span>
+<a id="__codelineno-5-4" name="__codelineno-5-4" href="#__codelineno-5-4"></a><span class="n">config</span> <span class="o">=</span> <span class="n">get_config</span><span class="p">()</span>
+<a id="__codelineno-5-5" name="__codelineno-5-5" href="#__codelineno-5-5"></a>
+<a id="__codelineno-5-6" name="__codelineno-5-6" href="#__codelineno-5-6"></a><span class="c1"># Get resolved model search paths (existing directories only)</span>
+<a id="__codelineno-5-7" name="__codelineno-5-7" href="#__codelineno-5-7"></a><span class="n">paths</span> <span class="o">=</span> <span class="n">get_model_paths</span><span class="p">()</span>
+</code></pre></div>
 
 
 
