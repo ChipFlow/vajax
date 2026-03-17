@@ -27,6 +27,7 @@ import jax.numpy as jnp
 import numpy as np
 from jax import Array, lax
 
+from vajax import get_float_dtype
 from vajax._logging import logger
 
 if TYPE_CHECKING:
@@ -192,10 +193,11 @@ def _make_nr_solver_common(
 
     # Per-unknown absolute tolerance for VACASK-style delta convergence check.
     # Voltage unknowns use vntol, branch current unknowns use abstol.
+    fdtype = get_float_dtype()
     delta_abs_tol = jnp.concatenate(
         [
-            jnp.full(n_unknowns, vntol, dtype=jnp.float64),
-            jnp.full(n_vsources, abstol, dtype=jnp.float64),
+            jnp.full(n_unknowns, vntol, dtype=fdtype),
+            jnp.full(n_vsources, abstol, dtype=fdtype),
         ]
     )
 
@@ -347,29 +349,29 @@ def _make_nr_solver_common(
         res_tol_floor: Array | None = None,
     ):
         _dQdt_prev = (
-            dQdt_prev if dQdt_prev is not None else jnp.zeros(n_unknowns, dtype=jnp.float64)
+            dQdt_prev if dQdt_prev is not None else jnp.zeros(n_unknowns, dtype=fdtype)
         )
-        _Q_prev2 = Q_prev2 if Q_prev2 is not None else jnp.zeros(n_unknowns, dtype=jnp.float64)
+        _Q_prev2 = Q_prev2 if Q_prev2 is not None else jnp.zeros(n_unknowns, dtype=fdtype)
         _limit_state = (
             limit_state_in
             if limit_state_in is not None
-            else jnp.zeros(total_limit_states, dtype=jnp.float64)
+            else jnp.zeros(total_limit_states, dtype=fdtype)
         )
         _res_tol_floor = (
             res_tol_floor
             if res_tol_floor is not None
-            else jnp.full(n_unknowns, abstol, dtype=jnp.float64)
+            else jnp.full(n_unknowns, abstol, dtype=fdtype)
         )
 
         # Convert scalar parameters to JAX arrays to avoid weak_type retracing
-        _integ_c0 = jnp.asarray(integ_c0, dtype=jnp.float64)
-        _gmin = jnp.asarray(gmin, dtype=jnp.float64)
-        _gshunt = jnp.asarray(gshunt, dtype=jnp.float64)
-        _integ_c1 = jnp.asarray(integ_c1, dtype=jnp.float64)
-        _integ_d1 = jnp.asarray(integ_d1, dtype=jnp.float64)
-        _integ_c2 = jnp.asarray(integ_c2, dtype=jnp.float64)
+        _integ_c0 = jnp.asarray(integ_c0, dtype=fdtype)
+        _gmin = jnp.asarray(gmin, dtype=fdtype)
+        _gshunt = jnp.asarray(gshunt, dtype=fdtype)
+        _integ_c1 = jnp.asarray(integ_c1, dtype=fdtype)
+        _integ_d1 = jnp.asarray(integ_d1, dtype=fdtype)
+        _integ_c2 = jnp.asarray(integ_c2, dtype=fdtype)
 
-        init_Q = jnp.zeros(n_unknowns, dtype=jnp.float64)
+        init_Q = jnp.zeros(n_unknowns, dtype=fdtype)
         init_state = (
             X_init,
             jnp.array(0, dtype=jnp.int32),

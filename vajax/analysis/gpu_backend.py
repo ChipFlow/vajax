@@ -119,20 +119,26 @@ def get_device(backend: str) -> jax.Device:
 def get_default_dtype(backend: str):
     """Get default dtype for the selected backend.
 
+    .. deprecated::
+        Use ``vajax.get_float_dtype()`` instead, which handles Metal detection
+        via ``configure_precision()`` at import time.
+
     Args:
         backend: 'gpu' or 'cpu'
 
     Returns:
         jax.numpy dtype (float64 for CPU/CUDA, float32 for Metal/IREE Metal)
     """
-    import jax.numpy as jnp
+    import warnings
 
-    # Metal backends (Apple Silicon) only support float32
-    backend_name = jax.default_backend().lower()
-    if "metal" in backend_name:
-        return jnp.float32
+    from vajax import get_float_dtype
 
-    return jnp.float64
+    warnings.warn(
+        "get_default_dtype() is deprecated, use vajax.get_float_dtype() instead",
+        DeprecationWarning,
+        stacklevel=2,
+    )
+    return get_float_dtype()
 
 
 def backend_info() -> dict:

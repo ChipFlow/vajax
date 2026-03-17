@@ -34,6 +34,7 @@ import jax.numpy as jnp
 import numpy as np
 from jax import lax
 
+from vajax import get_float_dtype
 from vajax._logging import logger
 from vajax.analysis.solver_factories import (
     make_dense_full_mna_solver,
@@ -69,7 +70,7 @@ def compute_checkpoint_interval(
     n_external: int,
     n_vsources: int,
     max_steps: int,
-    dtype: Any = jnp.float64,
+    dtype: Any = None,
     target_memory_gb: Optional[float] = None,
 ) -> Optional[int]:
     """Compute optimal checkpoint interval based on available GPU memory.
@@ -86,6 +87,7 @@ def compute_checkpoint_interval(
         Checkpoint interval, or None if checkpointing not needed (fits in memory)
     """
     # Bytes per element
+    dtype = dtype or get_float_dtype()
     bytes_per_elem = 8 if dtype == jnp.float64 else 4
 
     # Memory per step: times (1) + V_out (n_external) + I_out (n_vsources)
@@ -411,14 +413,15 @@ class FullMNAStrategy(TransientStrategy):
                 )
             )
 
-            X_trial = jnp.zeros(n_nodes + n_vsources, dtype=jnp.float64)
+            _fdtype = get_float_dtype()
+            X_trial = jnp.zeros(n_nodes + n_vsources, dtype=_fdtype)
             vsource_trial = (
-                jnp.zeros(n_vsources, dtype=jnp.float64)
+                jnp.zeros(n_vsources, dtype=_fdtype)
                 if n_vsources > 0
-                else jnp.zeros(0, dtype=jnp.float64)
+                else jnp.zeros(0, dtype=_fdtype)
             )
-            isource_trial = jnp.zeros(0, dtype=jnp.float64)
-            Q_trial = jnp.zeros(setup.n_unknowns, dtype=jnp.float64)
+            isource_trial = jnp.zeros(0, dtype=_fdtype)
+            Q_trial = jnp.zeros(setup.n_unknowns, dtype=_fdtype)
 
             J_bcoo_trial, _, _, _, _, _ = build_system_coo(
                 X_trial,
@@ -644,7 +647,7 @@ class FullMNAStrategy(TransientStrategy):
 
         vdd_value = self.runner._get_vdd_value()
         mid_rail = vdd_value / 2.0
-        V = jnp.full(n_total, mid_rail, dtype=jnp.float64)
+        V = jnp.full(n_total, mid_rail, dtype=get_float_dtype())
         V = V.at[0].set(0.0)  # Ground is always 0
 
         # Set VDD/GND nodes
@@ -799,7 +802,7 @@ class FullMNAStrategy(TransientStrategy):
             )
 
         device_arrays = self._device_arrays_full_mna
-        dtype = jnp.float64
+        dtype = get_float_dtype()
 
         # Build JIT-compatible source evaluator
         jit_source_eval = self._make_jit_source_eval(setup, source_fn)
@@ -1363,7 +1366,7 @@ class FullMNAStrategy(TransientStrategy):
         n_vsources = len(vsource_names)
         n_isources = len(isource_names)
 
-        dtype = jnp.float64
+        dtype = get_float_dtype()
 
         if n_vsources == 0 and n_isources == 0:
 

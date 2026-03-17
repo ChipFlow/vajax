@@ -32,6 +32,7 @@ import jax
 import jax.numpy as jnp
 from jax import Array
 
+from vajax import get_float_dtype
 from vajax.config import K_BOLTZMANN, Q_ELECTRON
 
 logger = logging.getLogger(__name__)
@@ -516,14 +517,15 @@ def run_noise_analysis(
             detailed_contribs[key].append(det_c.get(key, 0.0))
 
     # Convert to arrays
-    output_noise = jnp.array(output_noise_list, dtype=jnp.float64)
-    power_gain = jnp.array(power_gain_list, dtype=jnp.float64)
+    _fdtype = get_float_dtype()
+    output_noise = jnp.array(output_noise_list, dtype=_fdtype)
+    power_gain = jnp.array(power_gain_list, dtype=_fdtype)
 
     contributions = {
-        name: jnp.array(vals, dtype=jnp.float64) for name, vals in device_contribs.items()
+        name: jnp.array(vals, dtype=_fdtype) for name, vals in device_contribs.items()
     }
 
-    detailed = {key: jnp.array(vals, dtype=jnp.float64) for key, vals in detailed_contribs.items()}
+    detailed = {key: jnp.array(vals, dtype=_fdtype) for key, vals in detailed_contribs.items()}
 
     return NoiseResult(
         frequencies=frequencies,

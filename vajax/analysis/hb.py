@@ -32,6 +32,8 @@ import jax
 import jax.numpy as jnp
 from jax import Array
 
+from vajax import get_float_dtype
+
 logger = logging.getLogger(__name__)
 
 # Constants
@@ -301,7 +303,7 @@ def build_apft_matrices(
     # [DC, Re(f1), Im(f1), Re(f2), Im(f2), ...]
 
     # Build basis matrix B: rows are timepoints, cols are basis functions
-    B = jnp.zeros((nt, 2 * nf - 1), dtype=jnp.float64)
+    B = jnp.zeros((nt, 2 * nf - 1), dtype=get_float_dtype())
 
     # DC component
     B = B.at[:, 0].set(1.0)
@@ -329,7 +331,7 @@ def build_apft_matrices(
     # DDT = IAPFT * diag(j*omega) * APFT
     # Since we work with real representation, this becomes:
     # For each frequency k: [Re, Im] -> omega * [-Im, Re]
-    Omega = jnp.zeros((2 * nf - 1, 2 * nf - 1), dtype=jnp.float64)
+    Omega = jnp.zeros((2 * nf - 1, 2 * nf - 1), dtype=get_float_dtype())
     for k in range(1, nf):
         omega_k = 2.0 * jnp.pi * frequencies[k]
         # [Re, Im] -> omega * [-Im, Re]
@@ -372,7 +374,7 @@ def complex_to_phasors(phasors: Array) -> Array:
         Real spectrum [DC, Re1, Im1, Re2, Im2, ...]
     """
     nf = len(phasors)
-    spectrum = jnp.zeros(2 * nf - 1, dtype=jnp.float64)
+    spectrum = jnp.zeros(2 * nf - 1, dtype=get_float_dtype())
     # DC
     spectrum = spectrum.at[0].set(jnp.real(phasors[0]))
     # Non-DC

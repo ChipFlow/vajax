@@ -1066,11 +1066,12 @@ class CircuitEngine:
             source_fn, openvaf_by_type, vmapped_fns, static_inputs_cache,
             source_device_data
         """
-        from vajax.analysis.gpu_backend import get_default_dtype, get_device
+        from vajax import get_float_dtype
+        from vajax.analysis.gpu_backend import get_device
 
         ground = 0
         device = get_device(backend)
-        dtype = get_default_dtype(backend)
+        dtype = get_float_dtype()
 
         # Create transient setup cache key (topology-based)
         setup_cache_key = f"{self.num_nodes}_{len(self.devices)}_{use_dense}_{backend}"

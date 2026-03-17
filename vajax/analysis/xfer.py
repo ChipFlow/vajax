@@ -24,6 +24,8 @@ import jax
 import jax.numpy as jnp
 from jax import Array
 
+from vajax import get_float_dtype
+
 logger = logging.getLogger(__name__)
 
 
@@ -153,7 +155,7 @@ def build_dcinc_excitation(
     Returns:
         Excitation vector, shape (n_unknowns,)
     """
-    du = jnp.zeros(n_unknowns, dtype=jnp.float64)
+    du = jnp.zeros(n_unknowns, dtype=get_float_dtype())
 
     # High conductance used for voltage sources
     G = 1e12
@@ -275,7 +277,7 @@ def solve_dcxf(
         neg_node = source.get("neg_node", 0)
 
         # Build unity excitation for this source
-        du = jnp.zeros(n, dtype=jnp.float64)
+        du = jnp.zeros(n, dtype=get_float_dtype())
 
         if source_type == "vsource":
             # Unity voltage excitation
