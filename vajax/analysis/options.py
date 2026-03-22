@@ -121,6 +121,19 @@ class SimulationOptions:
     icmode: str = "op"
     """Initial condition mode: 'op' (DC operating point), 'ic' (use .ic), or 'uic' (use IC)."""
 
+    # NR loop fusion for GPU parallelism
+    use_fori_loop: bool = False
+    """Use lax.fori_loop instead of lax.while_loop for the NR solver.
+    Compiles to scf.for which IREE can fuse into a single stream.async.execute,
+    eliminating per-iteration GPU<->CPU sync barriers. Recommended for Metal
+    backends where sync overhead dominates. Trade-off: always runs max_nr_iters
+    iterations (no early exit)."""
+
+    max_nr_iters: Optional[int] = None
+    """Fixed NR iteration count for fori_loop mode. If None, defaults to
+    min(tran_itl, 8). Must be <= 128 for IREE FuseLoopIterationExecution
+    to fully unroll. Only used when use_fori_loop=True."""
+
     # Homotopy chain control
     op_homotopy: Tuple[str, ...] = ("gdev", "gshunt", "src")
     """Homotopy algorithms to try (in order) when plain OP fails."""

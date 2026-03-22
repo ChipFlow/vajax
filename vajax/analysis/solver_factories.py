@@ -152,6 +152,8 @@ def _make_nr_solver_common(
     max_step: float = 1e30,
     residual_mask: Optional[Array] = None,
     residual_conv_mask: Optional[Array] = None,
+    use_fori_loop: bool = False,
+    max_nr_iters: Optional[int] = None,
 ) -> Callable:
     """Create a JIT-compiled NR solver with a pluggable linear solve.
 
@@ -159,6 +161,13 @@ def _make_nr_solver_common(
     The only difference between dense, Spineax, and UMFPACK is how the
     linear system J*delta = -f is solved and how NOI constraints are
     enforced on the Jacobian.
+
+    When use_fori_loop=True, the NR loop uses lax.fori_loop instead of
+    lax.while_loop. This compiles to scf.for with a known trip count,
+    enabling IREE's FuseLoopIterationExecution pass to unroll all NR
+    iterations into a single stream.async.execute region -- eliminating
+    the per-iteration GPU<->CPU sync barrier that dominates execution time
+    on Metal backends.
 
     Args:
         build_system_jit: JIT-wrapped full MNA function
@@ -171,13 +180,19 @@ def _make_nr_solver_common(
             constraints on the Jacobian/residual before solving.
         noi_indices: Optional array of NOI node indices to constrain to 0V
         internal_device_indices: Array of internal device node indices
-        max_iterations: Maximum NR iterations
+        max_iterations: Maximum NR iterations (for while_loop mode)
         abstol: Absolute tolerance for convergence
         total_limit_states: Total number of limit states across all device models
         options: SimulationOptions for NR damping and other solver parameters
         max_step: Maximum voltage change per NR iteration
         residual_mask: Pre-computed NOI residual mask (augmented with vsources)
         residual_conv_mask: Pre-computed internal device node mask (augmented)
+        use_fori_loop: If True, use lax.fori_loop with fixed iteration count
+            for GPU parallelism. If False (default), use lax.while_loop with
+            early termination.
+        max_nr_iters: Fixed iteration count for fori_loop mode. If None,
+            defaults to min(max_iterations, 8). Must be <= 128 for IREE
+            FuseLoopIterationExecution to fully unroll.
 
     Returns:
         JIT-compiled solver function with signature:
@@ -201,34 +216,23 @@ def _make_nr_solver_common(
         ]
     )
 
-    def cond_fn(state):
-        _, iteration, converged, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _ = state
-        return jnp.logical_and(~converged, iteration < max_iterations)
+    # Resolve fori_loop iteration count
+    if use_fori_loop:
+        if max_nr_iters is None:
+            max_nr_iters = min(max_iterations, 8)
+        # Clamp to IREE's kMaxUnrollIterations for full fusion
+        max_nr_iters = min(max_nr_iters, 128)
+        logger.info(
+            f"NR solver using fori_loop with {max_nr_iters} fixed iterations "
+            f"(enables IREE loop fusion for GPU parallelism)"
+        )
 
-    def body_fn(state):
-        (
-            X,
-            iteration,
-            _,
-            _,
-            _,
-            _,
-            limit_state,
-            vsource_vals,
-            isource_vals,
-            Q_prev,
-            integ_c0,
-            device_arrays_arg,
-            gmin,
-            gshunt,
-            integ_c1,
-            integ_d1,
-            _dQdt_prev,
-            integ_c2,
-            _Q_prev2,
-            res_tol_floor,
-        ) = state
-
+    def _nr_body_common(iteration, X, converged, max_f_prev, max_delta_prev,
+                        Q_prev_iter, limit_state,
+                        vsource_vals, isource_vals, Q_prev, integ_c0,
+                        device_arrays_arg, gmin, gshunt, integ_c1, integ_d1,
+                        _dQdt_prev, integ_c2, _Q_prev2, res_tol_floor):
+        """Common NR iteration body shared by while_loop and fori_loop modes."""
         J_or_data, f, Q, _, limit_state_out, max_res_contrib = build_system_jit(
             X,
             vsource_vals,
@@ -247,10 +251,7 @@ def _make_nr_solver_common(
             iteration,
         )
 
-        # VACASK-style residual tolerance (coreopnr.cpp:929):
-        #   tol[i] = max(|maxResContrib[i]| * reltol, residual_abstol[i])
-        # With historic floor (coreopnr.cpp:921, relref=alllocal):
-        #   tolref = max(maxResContrib[i], historicMaxResContrib[i])
+        # VACASK-style residual tolerance (coreopnr.cpp:929)
         res_tol_nodes = jnp.maximum(max_res_contrib * reltol, res_tol_floor)
         res_tol = jnp.concatenate(
             [res_tol_nodes, jnp.full(n_vsources, vntol, dtype=res_tol_nodes.dtype)]
@@ -267,7 +268,6 @@ def _make_nr_solver_common(
         delta = linear_solve_fn(J_or_data, f_solve)
 
         # VACASK-style delta convergence (before step limiting)
-        # Check the damped correction that would actually be applied
         conv_delta = jnp.concatenate(
             [
                 delta[:n_unknowns] * nr_damping,
@@ -278,182 +278,402 @@ def _make_nr_solver_common(
         tol = jnp.maximum(jnp.abs(X_ref) * reltol, delta_abs_tol)
         if residual_mask is not None:
             conv_delta = jnp.where(residual_mask, conv_delta, 0.0)
-        # VACASK skips delta check at iteration 0 (coreopnr.cpp: if(iteration>1))
+        # VACASK skips delta check at iteration 0
         delta_converged = (iteration == 0) | jnp.all(jnp.abs(conv_delta) < tol)
 
-        # Track max delta for diagnostics
         max_delta = jnp.max(jnp.abs(delta))
 
-        # Voltage-only step limiting: cap max voltage change per iteration.
+        # Voltage-only step limiting
         V_delta = delta[:n_unknowns]
         max_V_delta = jnp.max(jnp.abs(V_delta))
         V_scale = jnp.minimum(1.0, max_step / jnp.maximum(max_V_delta, 1e-30))
         V_damped = V_delta * V_scale * nr_damping
-        X_new = X.at[1:n_total].add(V_damped)
-        X_new = X_new.at[n_total:].add(delta[n_unknowns:])
+        X_candidate = X.at[1:n_total].add(V_damped)
+        X_candidate = X_candidate.at[n_total:].add(delta[n_unknowns:])
 
         # Clamp NOI nodes to 0V
         if noi_indices is not None and len(noi_indices) > 0:
-            X_new = X_new.at[noi_indices].set(0.0)
+            X_candidate = X_candidate.at[noi_indices].set(0.0)
 
-        # VACASK-style AND convergence (nrsolver.h:226).
-        # Both solution delta and KCL residual must be below tolerance.
-        converged = jnp.logical_and(residual_converged, delta_converged)
+        # VACASK-style AND convergence
+        this_converged = jnp.logical_and(residual_converged, delta_converged)
 
-        # VACASK preventedConvergence (nrsolver.cpp:326, coreopnr.cpp:778):
-        # When device limiting (pnjlim/fetlim) is active, block convergence.
+        # VACASK preventedConvergence
         if total_limit_states > 0:
             limit_delta = jnp.max(jnp.abs(limit_state_out - limit_state))
             limit_ref = jnp.maximum(jnp.max(jnp.abs(limit_state)) * reltol, vntol)
             limit_settled = limit_delta < limit_ref
-            converged = converged & limit_settled & (iteration >= 1)
+            this_converged = this_converged & limit_settled & (iteration >= 1)
 
-        return (
-            X_new,
-            iteration + 1,
-            converged,
-            max_f,
-            max_delta,
-            Q,
-            limit_state_out,
-            vsource_vals,
-            isource_vals,
-            Q_prev,
-            integ_c0,
-            device_arrays_arg,
-            gmin,
-            gshunt,
-            integ_c1,
-            integ_d1,
-            _dQdt_prev,
-            integ_c2,
-            _Q_prev2,
-            res_tol_floor,
-        )
+        return (X_candidate, this_converged, max_f, max_delta, Q,
+                limit_state_out)
 
-    def nr_solve(
-        X_init: Array,
-        vsource_vals: Array,
-        isource_vals: Array,
-        Q_prev: Array,
-        integ_c0: float | Array,
-        device_arrays_arg: Dict[str, Array],
-        gmin: float | Array = 1e-12,
-        gshunt: float | Array = 0.0,
-        integ_c1: float | Array = 0.0,
-        integ_d1: float | Array = 0.0,
-        dQdt_prev: Array | None = None,
-        integ_c2: float | Array = 0.0,
-        Q_prev2: Array | None = None,
-        limit_state_in: Array | None = None,
-        res_tol_floor: Array | None = None,
-    ):
-        _dQdt_prev = (
-            dQdt_prev if dQdt_prev is not None else jnp.zeros(n_unknowns, dtype=fdtype)
-        )
-        _Q_prev2 = Q_prev2 if Q_prev2 is not None else jnp.zeros(n_unknowns, dtype=fdtype)
-        _limit_state = (
-            limit_state_in
-            if limit_state_in is not None
-            else jnp.zeros(total_limit_states, dtype=fdtype)
-        )
-        _res_tol_floor = (
-            res_tol_floor
-            if res_tol_floor is not None
-            else jnp.full(n_unknowns, abstol, dtype=fdtype)
-        )
+    if use_fori_loop:
+        # --- fori_loop mode: fixed iteration count, no early exit ---
+        # All iterations execute; converged iterations skip state updates
+        # via jnp.where. This enables IREE to fuse all iterations into a
+        # single stream.async.execute (one Metal command buffer).
 
-        # Convert scalar parameters to JAX arrays to avoid weak_type retracing
-        _integ_c0 = jnp.asarray(integ_c0, dtype=fdtype)
-        _gmin = jnp.asarray(gmin, dtype=fdtype)
-        _gshunt = jnp.asarray(gshunt, dtype=fdtype)
-        _integ_c1 = jnp.asarray(integ_c1, dtype=fdtype)
-        _integ_d1 = jnp.asarray(integ_d1, dtype=fdtype)
-        _integ_c2 = jnp.asarray(integ_c2, dtype=fdtype)
+        def body_fn_fori(iteration, state):
+            (
+                X,
+                converged,
+                max_f,
+                max_delta,
+                Q_iter,
+                limit_state,
+                vsource_vals,
+                isource_vals,
+                Q_prev,
+                integ_c0,
+                device_arrays_arg,
+                gmin,
+                gshunt,
+                integ_c1,
+                integ_d1,
+                _dQdt_prev,
+                integ_c2,
+                _Q_prev2,
+                res_tol_floor,
+            ) = state
 
-        init_Q = jnp.zeros(n_unknowns, dtype=fdtype)
-        init_state = (
-            X_init,
-            jnp.array(0, dtype=jnp.int32),
-            jnp.array(False),
-            jnp.array(jnp.inf),
-            jnp.array(jnp.inf),
-            init_Q,
-            _limit_state,
-            vsource_vals,
-            isource_vals,
-            Q_prev,
-            _integ_c0,
-            device_arrays_arg,
-            _gmin,
-            _gshunt,
-            _integ_c1,
-            _integ_d1,
-            _dQdt_prev,
-            _integ_c2,
-            _Q_prev2,
-            _res_tol_floor,
-        )
+            X_candidate, this_converged, new_max_f, new_max_delta, Q_new, \
+                limit_state_new = _nr_body_common(
+                    iteration, X, converged, max_f, max_delta,
+                    Q_iter, limit_state,
+                    vsource_vals, isource_vals, Q_prev, integ_c0,
+                    device_arrays_arg, gmin, gshunt, integ_c1, integ_d1,
+                    _dQdt_prev, integ_c2, _Q_prev2, res_tol_floor)
 
-        result_state = lax.while_loop(cond_fn, body_fn, init_state)
-        (
-            X_final,
-            iterations,
-            converged,
-            max_f,
-            _,
-            _,
-            limit_state_final,
-            _,
-            _,
-            _,
-            _,
-            _,
-            _,
-            _,
-            _,
-            _,
-            _,
-            _,
-            _,
-            _,
-        ) = result_state
+            # Update convergence flag (once converged, stays converged)
+            new_converged = converged | this_converged
 
-        # Recompute Q and I_vsource from converged solution
-        _, _, Q_final, I_vsource, _, max_res_contrib_final = build_system_jit(
-            X_final,
-            vsource_vals,
-            isource_vals,
-            Q_prev,
-            _integ_c0,
-            device_arrays_arg,
-            _gmin,
-            _gshunt,
-            _integ_c1,
-            _integ_d1,
-            _dQdt_prev,
-            _integ_c2,
-            _Q_prev2,
-            limit_state_final,
-            iterations,
-        )
+            # Only update state if not yet converged (skip wasted work output)
+            X_out = jnp.where(converged, X, X_candidate)
+            Q_out = jnp.where(converged, Q_iter, Q_new)
+            limit_out = jnp.where(converged, limit_state, limit_state_new)
+            max_f_out = jnp.where(converged, max_f, new_max_f)
+            max_delta_out = jnp.where(converged, max_delta, new_max_delta)
 
-        # Compute dQdt for next timestep (needed for trapezoidal and Gear2 methods)
-        dQdt_final = (
-            _integ_c0 * Q_final + _integ_c1 * Q_prev + _integ_d1 * _dQdt_prev + _integ_c2 * _Q_prev2
-        )
+            return (
+                X_out,
+                new_converged,
+                max_f_out,
+                max_delta_out,
+                Q_out,
+                limit_out,
+                vsource_vals,
+                isource_vals,
+                Q_prev,
+                integ_c0,
+                device_arrays_arg,
+                gmin,
+                gshunt,
+                integ_c1,
+                integ_d1,
+                _dQdt_prev,
+                integ_c2,
+                _Q_prev2,
+                res_tol_floor,
+            )
 
-        return (
-            X_final,
-            iterations,
-            converged,
-            max_f,
-            Q_final,
-            dQdt_final,
-            I_vsource,
-            limit_state_final,
-            max_res_contrib_final,
-        )
+        def nr_solve(
+            X_init: Array,
+            vsource_vals: Array,
+            isource_vals: Array,
+            Q_prev: Array,
+            integ_c0: float | Array,
+            device_arrays_arg: Dict[str, Array],
+            gmin: float | Array = 1e-12,
+            gshunt: float | Array = 0.0,
+            integ_c1: float | Array = 0.0,
+            integ_d1: float | Array = 0.0,
+            dQdt_prev: Array | None = None,
+            integ_c2: float | Array = 0.0,
+            Q_prev2: Array | None = None,
+            limit_state_in: Array | None = None,
+            res_tol_floor: Array | None = None,
+        ):
+            _dQdt_prev = (
+                dQdt_prev if dQdt_prev is not None else jnp.zeros(n_unknowns, dtype=fdtype)
+            )
+            _Q_prev2 = Q_prev2 if Q_prev2 is not None else jnp.zeros(n_unknowns, dtype=fdtype)
+            _limit_state = (
+                limit_state_in
+                if limit_state_in is not None
+                else jnp.zeros(total_limit_states, dtype=fdtype)
+            )
+            _res_tol_floor = (
+                res_tol_floor
+                if res_tol_floor is not None
+                else jnp.full(n_unknowns, abstol, dtype=fdtype)
+            )
+
+            _integ_c0 = jnp.asarray(integ_c0, dtype=fdtype)
+            _gmin = jnp.asarray(gmin, dtype=fdtype)
+            _gshunt = jnp.asarray(gshunt, dtype=fdtype)
+            _integ_c1 = jnp.asarray(integ_c1, dtype=fdtype)
+            _integ_d1 = jnp.asarray(integ_d1, dtype=fdtype)
+            _integ_c2 = jnp.asarray(integ_c2, dtype=fdtype)
+
+            init_Q = jnp.zeros(n_unknowns, dtype=fdtype)
+            # fori_loop state: iteration counter provided as first arg
+            init_state = (
+                X_init,
+                jnp.array(False),         # converged
+                jnp.array(jnp.inf),       # max_f
+                jnp.array(jnp.inf),       # max_delta
+                init_Q,                    # Q
+                _limit_state,              # limit_state
+                vsource_vals,              # passthroughs below
+                isource_vals,
+                Q_prev,
+                _integ_c0,
+                device_arrays_arg,
+                _gmin,
+                _gshunt,
+                _integ_c1,
+                _integ_d1,
+                _dQdt_prev,
+                _integ_c2,
+                _Q_prev2,
+                _res_tol_floor,
+            )
+
+            result_state = lax.fori_loop(0, max_nr_iters, body_fn_fori, init_state)
+            (
+                X_final,
+                converged,
+                max_f,
+                _,
+                _,
+                limit_state_final,
+                *_rest,
+            ) = result_state
+
+            # Iteration count is always max_nr_iters for fori_loop
+            iterations = jnp.array(max_nr_iters, dtype=jnp.int32)
+
+            # Recompute Q and I_vsource from converged solution
+            _, _, Q_final, I_vsource, _, max_res_contrib_final = build_system_jit(
+                X_final,
+                vsource_vals,
+                isource_vals,
+                Q_prev,
+                _integ_c0,
+                device_arrays_arg,
+                _gmin,
+                _gshunt,
+                _integ_c1,
+                _integ_d1,
+                _dQdt_prev,
+                _integ_c2,
+                _Q_prev2,
+                limit_state_final,
+                iterations,
+            )
+
+            dQdt_final = (
+                _integ_c0 * Q_final + _integ_c1 * Q_prev + _integ_d1 * _dQdt_prev + _integ_c2 * _Q_prev2
+            )
+
+            return (
+                X_final,
+                iterations,
+                converged,
+                max_f,
+                Q_final,
+                dQdt_final,
+                I_vsource,
+                limit_state_final,
+                max_res_contrib_final,
+            )
+
+    else:
+        # --- while_loop mode: dynamic iteration count with early exit ---
+        # Original behavior: exits as soon as convergence is detected.
+
+        def cond_fn(state):
+            _, iteration, converged, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _ = state
+            return jnp.logical_and(~converged, iteration < max_iterations)
+
+        def body_fn(state):
+            (
+                X,
+                iteration,
+                _,
+                _,
+                _,
+                _,
+                limit_state,
+                vsource_vals,
+                isource_vals,
+                Q_prev,
+                integ_c0,
+                device_arrays_arg,
+                gmin,
+                gshunt,
+                integ_c1,
+                integ_d1,
+                _dQdt_prev,
+                integ_c2,
+                _Q_prev2,
+                res_tol_floor,
+            ) = state
+
+            X_new, converged, max_f, max_delta, Q, limit_state_out = \
+                _nr_body_common(
+                    iteration, X, jnp.array(False), jnp.array(jnp.inf),
+                    jnp.array(jnp.inf), jnp.zeros(n_unknowns, dtype=fdtype),
+                    limit_state,
+                    vsource_vals, isource_vals, Q_prev, integ_c0,
+                    device_arrays_arg, gmin, gshunt, integ_c1, integ_d1,
+                    _dQdt_prev, integ_c2, _Q_prev2, res_tol_floor)
+
+            return (
+                X_new,
+                iteration + 1,
+                converged,
+                max_f,
+                max_delta,
+                Q,
+                limit_state_out,
+                vsource_vals,
+                isource_vals,
+                Q_prev,
+                integ_c0,
+                device_arrays_arg,
+                gmin,
+                gshunt,
+                integ_c1,
+                integ_d1,
+                _dQdt_prev,
+                integ_c2,
+                _Q_prev2,
+                res_tol_floor,
+            )
+
+        def nr_solve(
+            X_init: Array,
+            vsource_vals: Array,
+            isource_vals: Array,
+            Q_prev: Array,
+            integ_c0: float | Array,
+            device_arrays_arg: Dict[str, Array],
+            gmin: float | Array = 1e-12,
+            gshunt: float | Array = 0.0,
+            integ_c1: float | Array = 0.0,
+            integ_d1: float | Array = 0.0,
+            dQdt_prev: Array | None = None,
+            integ_c2: float | Array = 0.0,
+            Q_prev2: Array | None = None,
+            limit_state_in: Array | None = None,
+            res_tol_floor: Array | None = None,
+        ):
+            _dQdt_prev = (
+                dQdt_prev if dQdt_prev is not None else jnp.zeros(n_unknowns, dtype=fdtype)
+            )
+            _Q_prev2 = Q_prev2 if Q_prev2 is not None else jnp.zeros(n_unknowns, dtype=fdtype)
+            _limit_state = (
+                limit_state_in
+                if limit_state_in is not None
+                else jnp.zeros(total_limit_states, dtype=fdtype)
+            )
+            _res_tol_floor = (
+                res_tol_floor
+                if res_tol_floor is not None
+                else jnp.full(n_unknowns, abstol, dtype=fdtype)
+            )
+
+            _integ_c0 = jnp.asarray(integ_c0, dtype=fdtype)
+            _gmin = jnp.asarray(gmin, dtype=fdtype)
+            _gshunt = jnp.asarray(gshunt, dtype=fdtype)
+            _integ_c1 = jnp.asarray(integ_c1, dtype=fdtype)
+            _integ_d1 = jnp.asarray(integ_d1, dtype=fdtype)
+            _integ_c2 = jnp.asarray(integ_c2, dtype=fdtype)
+
+            init_Q = jnp.zeros(n_unknowns, dtype=fdtype)
+            init_state = (
+                X_init,
+                jnp.array(0, dtype=jnp.int32),
+                jnp.array(False),
+                jnp.array(jnp.inf),
+                jnp.array(jnp.inf),
+                init_Q,
+                _limit_state,
+                vsource_vals,
+                isource_vals,
+                Q_prev,
+                _integ_c0,
+                device_arrays_arg,
+                _gmin,
+                _gshunt,
+                _integ_c1,
+                _integ_d1,
+                _dQdt_prev,
+                _integ_c2,
+                _Q_prev2,
+                _res_tol_floor,
+            )
+
+            result_state = lax.while_loop(cond_fn, body_fn, init_state)
+            (
+                X_final,
+                iterations,
+                converged,
+                max_f,
+                _,
+                _,
+                limit_state_final,
+                _,
+                _,
+                _,
+                _,
+                _,
+                _,
+                _,
+                _,
+                _,
+                _,
+                _,
+                _,
+                _,
+            ) = result_state
+
+            # Recompute Q and I_vsource from converged solution
+            _, _, Q_final, I_vsource, _, max_res_contrib_final = build_system_jit(
+                X_final,
+                vsource_vals,
+                isource_vals,
+                Q_prev,
+                _integ_c0,
+                device_arrays_arg,
+                _gmin,
+                _gshunt,
+                _integ_c1,
+                _integ_d1,
+                _dQdt_prev,
+                _integ_c2,
+                _Q_prev2,
+                limit_state_final,
+                iterations,
+            )
+
+            dQdt_final = (
+                _integ_c0 * Q_final + _integ_c1 * Q_prev + _integ_d1 * _dQdt_prev + _integ_c2 * _Q_prev2
+            )
+
+            return (
+                X_final,
+                iterations,
+                converged,
+                max_f,
+                Q_final,
+                dQdt_final,
+                I_vsource,
+                limit_state_final,
+                max_res_contrib_final,
+            )
 
     return nr_solve
 
@@ -469,6 +689,8 @@ def make_dense_full_mna_solver(
     total_limit_states: int = 0,
     options: Optional["SimulationOptions"] = None,
     max_step: float = 1e30,
+    use_fori_loop: bool = False,
+    max_nr_iters: Optional[int] = None,
 ) -> Callable:
     """Create a JIT-compiled dense NR solver for full MNA formulation.
 
@@ -535,6 +757,8 @@ def make_dense_full_mna_solver(
         max_step=max_step,
         residual_mask=residual_mask,
         residual_conv_mask=residual_conv_mask,
+        use_fori_loop=use_fori_loop,
+        max_nr_iters=max_nr_iters,
     )
 
 
@@ -556,6 +780,8 @@ def make_spineax_full_mna_solver(
     max_step: float = 1e30,
     use_csr_direct: bool = False,
     factorize_f32: bool = False,
+    use_fori_loop: bool = False,
+    max_nr_iters: Optional[int] = None,
 ) -> Callable:
     """Create a JIT-compiled sparse NR solver using Spineax/cuDSS for full MNA.
 
@@ -685,6 +911,8 @@ def make_spineax_full_mna_solver(
         max_step=max_step,
         residual_mask=residual_mask,
         residual_conv_mask=residual_conv_mask,
+        use_fori_loop=use_fori_loop,
+        max_nr_iters=max_nr_iters,
     )
 
 
@@ -722,6 +950,8 @@ def make_umfpack_ffi_full_mna_solver(
     options: Optional["SimulationOptions"] = None,
     max_step: float = 1e30,
     use_csr_direct: bool = False,
+    use_fori_loop: bool = False,
+    max_nr_iters: Optional[int] = None,
 ) -> Callable:
     """Create a JIT-compiled UMFPACK FFI NR solver for full MNA formulation.
 
@@ -800,6 +1030,8 @@ def make_umfpack_ffi_full_mna_solver(
         max_step=max_step,
         residual_mask=residual_mask,
         residual_conv_mask=residual_conv_mask,
+        use_fori_loop=use_fori_loop,
+        max_nr_iters=max_nr_iters,
     )
 
 

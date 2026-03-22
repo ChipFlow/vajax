@@ -372,6 +372,20 @@ class FullMNAStrategy(TransientStrategy):
         )
 
         # Create full MNA solver
+        # Auto-enable fori_loop on Metal backends for GPU parallelism
+        use_fori = self.runner.options.use_fori_loop
+        if not use_fori:
+            try:
+                backend = jax.default_backend().lower()
+                if "metal" in backend or "iree_metal" in backend:
+                    use_fori = True
+                    logger.info(
+                        "Auto-enabling fori_loop NR mode for Metal backend "
+                        "(set options.use_fori_loop=False to disable)"
+                    )
+            except Exception:
+                pass
+
         if self.use_dense:
             # Dense path: no CSR needed, use COO assembly
             build_system_fn, device_arrays, total_limit_states = (
@@ -397,6 +411,8 @@ class FullMNAStrategy(TransientStrategy):
                 abstol=self.runner.options.abstol,
                 total_limit_states=total_limit_states,
                 options=self.runner.options,
+                use_fori_loop=use_fori,
+                max_nr_iters=self.runner.options.max_nr_iters,
             )
         else:
             # Sparse path: use CSR direct stamping to eliminate COO intermediates
@@ -587,6 +603,8 @@ class FullMNAStrategy(TransientStrategy):
                         options=self.runner.options,
                         use_csr_direct=True,
                         factorize_f32=True,
+                        use_fori_loop=use_fori,
+                        max_nr_iters=self.runner.options.max_nr_iters,
                     )
                 except (RuntimeError, Exception) as e:
                     # cuDSS may OOM during symbolic factorization for very large circuits.
@@ -618,6 +636,8 @@ class FullMNAStrategy(TransientStrategy):
                     total_limit_states=total_limit_states,
                     options=self.runner.options,
                     use_csr_direct=True,
+                    use_fori_loop=use_fori,
+                    max_nr_iters=self.runner.options.max_nr_iters,
                 )
 
         self._cached_full_mna_solver = nr_solve
