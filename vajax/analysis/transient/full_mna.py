@@ -1018,6 +1018,44 @@ class FullMNAStrategy(TransientStrategy):
         # Cache key does NOT include t_stop or max_dt since they're passed dynamically via state
         cache_key = (max_steps, n_total, n_unknowns, n_external, n_vsources, dtype)
 
+        # =====================================================================
+        # Fixed-step fori_loop path (for GPU parallelism)
+        # =====================================================================
+        use_fixed_step = self.runner.options.fixed_step_transient
+        # Auto-enable on Metal when use_fori_loop is True
+        if not use_fixed_step and self.runner.options.use_fori_loop:
+            try:
+                backend = jax.default_backend().lower()
+                if "metal" in backend or "iree_metal" in backend:
+                    use_fixed_step = True
+                    logger.info(
+                        "Auto-enabling fixed_step_transient for Metal backend "
+                        "(set options.fixed_step_transient=False to disable)"
+                    )
+            except Exception:
+                pass
+
+        if use_fixed_step:
+            return self._run_fixed_step(
+                nr_solve=nr_solve,
+                jit_source_eval=jit_source_eval,
+                device_arrays=device_arrays,
+                config=config,
+                init_state=init_state,
+                n_total=n_total,
+                n_unknowns=n_unknowns,
+                n_external=n_external,
+                n_vsources=n_vsources,
+                max_steps=max_steps,
+                t_stop=t_stop,
+                dt=dt,
+                dtype=dtype,
+            )
+
+        # =====================================================================
+        # Adaptive while_loop path (default)
+        # =====================================================================
+
         if cache_key not in self._jit_run_while_cache:
             # LRU eviction: limit cache size to prevent unbounded growth
             MAX_JIT_CACHE_SIZE = 8
@@ -1113,6 +1151,228 @@ class FullMNAStrategy(TransientStrategy):
         )
 
         return times, V_out, stats
+
+    def _run_fixed_step(
+        self,
+        nr_solve: Callable,
+        jit_source_eval: Callable,
+        device_arrays: Any,
+        config,  # AdaptiveConfig
+        init_state,  # FullMNAState (for initial X, Q_prev, etc.)
+        n_total: int,
+        n_unknowns: int,
+        n_external: int,
+        n_vsources: int,
+        max_steps: int,
+        t_stop: float,
+        dt: float,
+        dtype: Any,
+    ) -> Tuple[jax.Array, jax.Array, Dict]:
+        """Run fixed-step transient using lax.fori_loop.
+
+        This eliminates all adaptive timestepping (LTE, step rejection) in
+        favor of a known step count that compiles to scf.for, which IREE can
+        fuse into a single stream.async.execute region on Metal GPU.
+
+        The entire simulation (all timesteps x all NR iterations) executes
+        as a single Metal command buffer with zero CPU<->GPU sync barriers.
+        """
+        n_steps = min(int(t_stop / dt), max_steps - 1)  # -1 for initial condition at idx 0
+        if n_steps < 1:
+            n_steps = 1
+
+        logger.info(
+            f"{self.name}: Fixed-step mode: {n_steps} steps, dt={dt:.2e}s "
+            f"(fori_loop, no adaptive dt)"
+        )
+
+        # Extract initial conditions from the FullMNAState
+        X0 = init_state.X
+        Q_prev_init = init_state.Q_prev
+
+        # Backward Euler integration coefficients (fixed for all steps)
+        inv_dt = 1.0 / dt
+        c0 = inv_dt
+        c1 = -inv_dt
+        d1 = 0.0
+        c2 = 0.0
+
+        # Use trapezoidal if configured
+        integ_method = config.integration_method
+        if integ_method == IntegrationMethod.TRAPEZOIDAL:
+            c0 = 2.0 * inv_dt
+            c1 = -2.0 * inv_dt
+            d1 = -1.0
+        elif integ_method == IntegrationMethod.GEAR2:
+            # Constant-step Gear2 (ω=1 since dt is fixed)
+            c0 = 1.5 * inv_dt
+            c1 = -2.0 * inv_dt
+            c2 = 0.5 * inv_dt
+
+        # Pre-allocate output arrays (n_steps + 1 for initial condition)
+        total_out = n_steps + 1
+        times_out = jnp.zeros(total_out, dtype=dtype)
+        V_out = jnp.zeros((total_out, n_external), dtype=dtype)
+        I_out = jnp.zeros((total_out, max(n_vsources, 1)), dtype=dtype)
+
+        # Set initial conditions at index 0
+        times_out = times_out.at[0].set(0.0)
+        V_out = V_out.at[0].set(X0[:n_external])
+
+        # Fixed-step state as a tuple (for fori_loop compatibility)
+        # (X, Q_prev, dQdt_prev, Q_prev2, times_out, V_out, I_out,
+        #  total_nr_iters, limit_state)
+        total_limit_states = self._total_limit_states
+        limit_state_init = (
+            jnp.zeros(total_limit_states, dtype=dtype)
+            if total_limit_states > 0
+            else jnp.zeros(0, dtype=dtype)
+        )
+        init_loop_state = (
+            X0,                                           # 0: X
+            Q_prev_init,                                  # 1: Q_prev
+            jnp.zeros(n_unknowns, dtype=dtype),           # 2: dQdt_prev
+            jnp.zeros(n_unknowns, dtype=dtype),           # 3: Q_prev2
+            times_out,                                    # 4: times_out
+            V_out,                                        # 5: V_out
+            I_out,                                        # 6: I_out
+            jnp.array(0, dtype=jnp.int32),                # 7: total_nr_iters
+            limit_state_init,                             # 8: limit_state
+        )
+
+        # NR tolerance floor (static for fixed-step mode)
+        nr_reltol = config.reltol
+        nr_abstol = config.abstol
+
+        def body_fn(i, state):
+            """One fixed-step timestep: evaluate sources, NR solve, store output."""
+            (X, Q_prev, dQdt_prev, Q_prev2, t_out, v_out, i_out,
+             total_nr, limit_state) = state
+
+            # Time for this step (i is 0-based, output index is i+1)
+            t_next = (jnp.float64(i) + 1.0) * dt if dtype == jnp.float64 else (jnp.float32(i) + 1.0) * dt
+
+            # Evaluate sources at next time
+            vsource_vals, isource_vals = jit_source_eval(t_next)
+
+            # No prediction in fixed-step mode (simpler, avoids history tracking)
+            X_init = X
+
+            # Static tolerance floor
+            res_tol_floor = jnp.full(n_unknowns, nr_abstol, dtype=dtype)
+
+            # NR solve (uses fori_loop internally when use_fori_loop=True)
+            (X_new, iterations, converged, max_f, Q, dQdt_out,
+             I_vsource, limit_state_out, max_res_contrib_out) = nr_solve(
+                X_init, vsource_vals, isource_vals, Q_prev,
+                c0, device_arrays, 1e-12, 0.0,  # gshunt=0 for fixed step
+                c1, d1, dQdt_prev, c2, Q_prev2,
+                limit_state_in=limit_state,
+                res_tol_floor=res_tol_floor,
+            )
+
+            # Always accept (no step rejection in fixed-step mode)
+            # If NR didn't converge, we use the best result anyway
+            new_total_nr = total_nr + jnp.int32(iterations)
+
+            # Store output at index i+1
+            out_idx = i + 1
+            new_t_out = t_out.at[out_idx].set(t_next)
+            new_v_out = v_out.at[out_idx].set(X_new[:n_external])
+            new_i_out = i_out  # Default: keep previous
+            if n_vsources > 0:
+                new_i_out = i_out.at[out_idx].set(I_vsource[:n_vsources])
+
+            # Update limit state
+            new_limit_state = (
+                jnp.where(converged, limit_state_out, limit_state)
+                if limit_state.size > 0
+                else limit_state
+            )
+
+            return (
+                X_new, Q, dQdt_out, Q_prev,  # Q_prev2 = old Q_prev
+                new_t_out, new_v_out, new_i_out,
+                new_total_nr, new_limit_state,
+            )
+
+        # Cache key for the fixed-step JIT function
+        fori_cache_key = ("fori", n_steps, n_total, n_unknowns, n_external, n_vsources, dtype)
+
+        if fori_cache_key not in self._jit_run_while_cache:
+            MAX_JIT_CACHE_SIZE = 8
+            if len(self._jit_run_while_cache) >= MAX_JIT_CACHE_SIZE:
+                oldest_key = next(iter(self._jit_run_while_cache))
+                del self._jit_run_while_cache[oldest_key]
+
+            @jax.jit
+            def run_fori(state):
+                return lax.fori_loop(0, n_steps, body_fn, state)
+
+            self._jit_run_while_cache[fori_cache_key] = run_fori
+            logger.debug(
+                f"{self.name}: Created fori_loop JIT runner for {n_steps} fixed steps"
+            )
+
+        run_fori = self._jit_run_while_cache[fori_cache_key]
+
+        # Run simulation
+        logger.info(
+            f"{self.name}: Starting fixed-step simulation ({n_steps} steps, "
+            f"dt={dt:.2e}s, {'sparse' if self.use_sparse else 'dense'})"
+        )
+        t_start = time_module.perf_counter()
+
+        final_state = run_fori(init_loop_state)
+
+        # Block until computation completes for accurate timing
+        final_state[4].block_until_ready()  # times_out
+        wall_time = time_module.perf_counter() - t_start
+
+        # Unpack final state
+        _, _, _, _, times_final, V_out_final, I_out_final, total_nr_final, _ = final_state
+
+        actual_steps = n_steps + 1  # including initial condition
+        setup = self.ensure_setup()
+
+        # Build node name -> column index mapping
+        node_indices: Dict[str, int] = {}
+        for name, idx in self.runner.node_names.items():
+            if 0 < idx < n_external:
+                node_indices[name] = idx
+
+        current_indices: Dict[str, int] = {}
+        if setup.branch_data and n_vsources > 0:
+            current_indices = dict(setup.branch_data.name_to_idx)
+
+        stats = {
+            "n_steps": actual_steps,
+            "total_timesteps": actual_steps,
+            "accepted_steps": n_steps,
+            "rejected_steps": 0,
+            "total_nr_iterations": int(total_nr_final),
+            "avg_nr_iterations": float(total_nr_final) / max(n_steps, 1),
+            "wall_time": wall_time,
+            "time_per_step_ms": wall_time / n_steps * 1000 if n_steps > 0 else 0,
+            "min_dt_used": dt,
+            "max_dt_used": dt,
+            "convergence_rate": 1.0,
+            "strategy": "fixed_step_full_mna",
+            "solver": "sparse" if self.use_sparse else "dense",
+            "V_out": V_out_final,
+            "I_out": I_out_final,
+            "node_indices": node_indices,
+            "current_indices": current_indices,
+            "fixed_step": True,
+        }
+
+        logger.info(
+            f"{self.name}: Fixed-step completed {n_steps} steps in {wall_time:.3f}s "
+            f"({stats['time_per_step_ms']:.2f}ms/step, "
+            f"total NR iters={int(total_nr_final)})"
+        )
+
+        return times_final, V_out_final, stats
 
     def _run_with_checkpoints(
         self,

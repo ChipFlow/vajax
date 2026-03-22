@@ -134,6 +134,16 @@ class SimulationOptions:
     min(tran_itl, 8). Must be <= 128 for IREE FuseLoopIterationExecution
     to fully unroll. Only used when use_fori_loop=True."""
 
+    fixed_step_transient: bool = False
+    """Use fixed-step transient mode (no adaptive timestepping).
+    When enabled, the outer timestep loop uses lax.fori_loop instead of
+    lax.while_loop, enabling IREE's FuseLoopIterationExecution pass to
+    fuse all timesteps into a single Metal command buffer. Trade-offs:
+    - No LTE-based timestep adaptation (all steps use initial dt)
+    - No step rejection on NR failure (simulation continues with best result)
+    - Ideal for well-behaved circuits where convergence is reliable
+    Auto-enabled on Metal when use_fori_loop is True."""
+
     # Homotopy chain control
     op_homotopy: Tuple[str, ...] = ("gdev", "gshunt", "src")
     """Homotopy algorithms to try (in order) when plain OP fails."""
