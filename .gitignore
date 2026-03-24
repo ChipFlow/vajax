@@ -29,6 +29,7 @@ ENV/
 target/
 
 # IDE
+.env
 .idea/
 .vscode/
 *.swp
