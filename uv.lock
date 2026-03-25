@@ -20,6 +20,7 @@ resolution-markers = [
 members = [
     "openvaf-py",
     "osdi-py",
+    "sprux-jax",
     "umfpack-jax",
     "va-builder",
     "vajax",
@@ -2280,6 +2281,21 @@ wheels = [
 ]
 
 [[package]]
+name = "sprux-jax"
+version = "0.1.0"
+source = { editable = "vajax/sprux" }
+dependencies = [
+    { name = "jax" },
+    { name = "numpy" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "jax", specifier = ">=0.4.29,<0.10" },
+    { name = "numpy", specifier = ">=1.24.0" },
+]
+
+[[package]]
 name = "sympy"
 version = "1.14.0"
 source = { registry = "https://pypi.org/simple" }
@@ -2496,6 +2512,9 @@ docs = [
 sax = [
     { name = "sax" },
 ]
+sprux-ffi = [
+    { name = "sprux-jax" },
+]
 test = [
     { name = "beartype" },
     { name = "osdi-py" },
@@ -2540,10 +2559,11 @@ requires-dist = [
     { name = "scipy", specifier = ">=1.11.0" },
     { name = "simpleeval", specifier = ">=1.0.0" },
     { name = "spineax-vajax", marker = "extra == 'cuda12'", specifier = ">=0.0.2" },
+    { name = "sprux-jax", marker = "extra == 'sprux-ffi'", editable = "vajax/sprux" },
     { name = "umfpack-jax", marker = "extra == 'umfpack-ffi'", editable = "vajax/sparse" },
     { name = "va-builder", editable = "va-builder" },
 ]
-provides-extras = ["cuda12", "dev", "docs", "sax", "test", "umfpack", "umfpack-ffi"]
+provides-extras = ["cuda12", "dev", "docs", "sax", "sprux-ffi", "test", "umfpack", "umfpack-ffi"]
 
 [package.metadata.requires-dev]
 dev = [{ name = "radon", specifier = ">=6.0.1" }]

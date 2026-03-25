@@ -1,0 +1,32 @@
+# Sprux JAX FFI Extension
+# Metal-accelerated sparse LU solver for JAX on Apple Silicon.
+# Build with: cd vajax/sprux && pip install .
+
+[project]
+name = "sprux-jax"
+version = "0.1.0"
+description = "Sprux Metal FFI bindings for JAX — sparse LU solver for Apple Silicon"
+authors = [{name = "ChipFlow"}]
+requires-python = ">=3.11"
+dependencies = [
+    "jax>=0.4.29,<0.10",
+    "numpy>=1.24.0",
+]
+license = "Apache-2.0"
+
+[project.urls]
+Homepage = "https://github.com/ChipFlow/vajax"
+Repository = "https://github.com/ChipFlow/vajax/tree/main/vajax/sprux"
+Issues = "https://github.com/ChipFlow/vajax/issues"
+
+[build-system]
+requires = [
+    "scikit-build-core>=0.8",
+    "nanobind>=1.8",
+    "jax>=0.4.29,<0.10",
+]
+build-backend = "scikit_build_core.build"
+
+[tool.scikit-build]
+cmake.build-type = "Release"
+build.verbose = true

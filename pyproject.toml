@@ -25,12 +25,13 @@ Issues = "https://github.com/ChipFlow/vajax/issues"
 Changelog = "https://github.com/ChipFlow/vajax/releases"
 
 [tool.uv.workspace]
-members = ["openvaf_jax/openvaf_py", "openvaf_jax/osdi_py", "vajax/sparse", "va-builder"]
+members = ["openvaf_jax/openvaf_py", "openvaf_jax/osdi_py", "vajax/sparse", "vajax/sprux", "va-builder"]
 
 [tool.uv.sources]
 openvaf-py = { workspace = true }
 osdi-py = { workspace = true }
 umfpack-jax = { workspace = true }
+sprux-jax = { workspace = true }
 va-builder = { workspace = true }
 
 [project.optional-dependencies]
@@ -49,6 +50,10 @@ umfpack = [
 # UMFPACK FFI extension - zero callback overhead (requires libsuitesparse-dev)
 umfpack-ffi = [
     "umfpack-jax",
+]
+# Sprux Metal sparse solver for Apple Silicon (macOS ARM only)
+sprux-ffi = [
+    "sprux-jax",
 ]
 sax = [
     "sax>=0.13.0",

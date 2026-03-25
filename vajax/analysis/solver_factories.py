@@ -1035,6 +1035,121 @@ def make_umfpack_ffi_full_mna_solver(
     )
 
 
+def is_sprux_ffi_available() -> bool:
+    """Check if the Sprux Metal FFI extension is available.
+
+    Sprux provides Metal-accelerated sparse LU on Apple Silicon with
+    f32 factorization + CPU f64 iterative refinement.
+
+    Returns:
+        True if the FFI extension is installed and working.
+    """
+    try:
+        from vajax.sprux import sprux_jax
+
+        return sprux_jax.is_available()
+    except ImportError:
+        return False
+
+
+def make_sprux_ffi_full_mna_solver(
+    build_system_jit: Callable,
+    n_nodes: int,
+    n_vsources: int,
+    nse: int,
+    bcsr_indptr: Array,
+    bcsr_indices: Array,
+    noi_indices: Optional[Array] = None,
+    internal_device_indices: Optional[Array] = None,
+    max_iterations: int = 100,
+    abstol: float = 1e-12,
+    coo_sort_perm: Optional[Array] = None,
+    csr_segment_ids: Optional[Array] = None,
+    total_limit_states: int = 0,
+    options: Optional["SimulationOptions"] = None,
+    max_step: float = 1e30,
+    use_csr_direct: bool = False,
+    use_fori_loop: bool = False,
+    max_nr_iters: Optional[int] = None,
+) -> Callable:
+    """Create a JIT-compiled Sprux FFI NR solver for full MNA formulation.
+
+    Uses Sprux Metal-accelerated sparse LU with f32 factorization and
+    CPU f64 iterative refinement. The solver handles BTF preprocessing,
+    equilibration, and permutation internally.
+
+    Args:
+        build_system_jit: JIT-wrapped full MNA function
+        n_nodes: Total node count including ground
+        n_vsources: Number of voltage sources
+        nse: Number of stored elements after summing duplicates
+        bcsr_indptr: Pre-computed BCSR row pointers
+        bcsr_indices: Pre-computed BCSR column indices
+        noi_indices: Optional array of NOI node indices
+        max_iterations: Maximum NR iterations
+        abstol: Absolute tolerance for convergence
+        options: SimulationOptions for NR damping
+
+    Returns:
+        JIT-compiled solver function
+    """
+    from vajax.sprux import sprux_jax
+
+    if not sprux_jax.is_available():
+        raise RuntimeError(
+            "Sprux FFI extension not available. Install with: cd vajax/sprux && pip install ."
+        )
+
+    n_unknowns = n_nodes - 1
+    use_precomputed = coo_sort_perm is not None and csr_segment_ids is not None
+
+    masks = _compute_noi_masks(
+        noi_indices,
+        n_nodes,
+        bcsr_indptr,
+        bcsr_indices,
+        internal_device_indices=internal_device_indices,
+    )
+
+    residual_mask = _build_augmented_mask(masks["residual_mask"], n_vsources)
+    residual_conv_mask = _build_augmented_conv_mask(
+        masks["residual_conv_mask"], residual_mask, n_vsources
+    )
+
+    enforce_noi, linear_solve = _make_sparse_solve_fns(
+        masks,
+        nse,
+        use_precomputed,
+        coo_sort_perm,
+        csr_segment_ids,
+        solve_fn=lambda csr_data, f_solve: sprux_jax.solve(
+            bcsr_indptr, bcsr_indices, csr_data, -f_solve
+        ),
+        n_unknowns=n_unknowns,
+        use_csr_direct=use_csr_direct,
+    )
+
+    logger.info(f"Creating Sprux FFI full MNA solver: V({n_nodes}) + I({n_vsources})")
+    return _make_nr_solver_common(
+        build_system_jit=build_system_jit,
+        n_nodes=n_nodes,
+        n_vsources=n_vsources,
+        linear_solve_fn=linear_solve,
+        enforce_noi_fn=enforce_noi,
+        noi_indices=noi_indices,
+        internal_device_indices=internal_device_indices,
+        max_iterations=max_iterations,
+        abstol=abstol,
+        total_limit_states=total_limit_states,
+        options=options,
+        max_step=max_step,
+        residual_mask=residual_mask,
+        residual_conv_mask=residual_conv_mask,
+        use_fori_loop=use_fori_loop,
+        max_nr_iters=max_nr_iters,
+    )
+
+
 # ---------------------------------------------------------------------------
 # Helpers for building augmented masks and sparse solve functions
 # ---------------------------------------------------------------------------

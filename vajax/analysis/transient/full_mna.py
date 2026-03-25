@@ -37,8 +37,10 @@ from jax import lax
 from vajax import get_float_dtype
 from vajax._logging import logger
 from vajax.analysis.solver_factories import (
+    is_sprux_ffi_available,
     make_dense_full_mna_solver,
     make_spineax_full_mna_solver,
+    make_sprux_ffi_full_mna_solver,
     make_umfpack_ffi_full_mna_solver,
 )
 
@@ -619,6 +621,31 @@ class FullMNAStrategy(TransientStrategy):
                     "Sparse solver required on CUDA but Spineax/cuDSS is not available. "
                     "UMFPACK FFI only works on CPU. "
                     "Install spineax-vajax with cuDSS support, or run without --force-gpu."
+                )
+            elif is_sprux_ffi_available():
+                import platform
+
+                on_arm_mac = platform.system() == "Darwin" and platform.machine() == "arm64"
+                if on_arm_mac:
+                    logger.info("Using Sprux FFI solver (Metal GPU sparse, f32+refinement)")
+                else:
+                    logger.info("Using Sprux FFI solver (CPU sparse, f32+refinement)")
+                nr_solve = make_sprux_ffi_full_mna_solver(
+                    build_system_jit,
+                    n_nodes,
+                    n_vsources,
+                    nse,
+                    bcsr_indptr=bcsr_indptr_jax,
+                    bcsr_indices=bcsr_indices_jax,
+                    noi_indices=noi_indices,
+                    internal_device_indices=internal_device_indices,
+                    max_iterations=self.runner.options.tran_itl,
+                    abstol=self.runner.options.abstol,
+                    total_limit_states=total_limit_states,
+                    options=self.runner.options,
+                    use_csr_direct=True,
+                    use_fori_loop=use_fori,
+                    max_nr_iters=self.runner.options.max_nr_iters,
                 )
             else:
                 logger.info("Using UMFPACK FFI solver (zero callback overhead)")

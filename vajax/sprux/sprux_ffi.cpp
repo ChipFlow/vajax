@@ -1,0 +1,187 @@
+/**
+ * Sprux FFI for JAX
+ *
+ * XLA FFI bindings for the Sprux Metal-accelerated sparse LU solver.
+ * Provides solve and SpMV operations for JAX on Apple Silicon.
+ *
+ * The SpruxFFISolver handles all preprocessing (BTF, equilibration),
+ * f32 GPU factorization, and f64 iterative refinement internally.
+ * The JAX FFI interface is identical to UMFPACK: (indptr, indices, data, b) → x.
+ */
+
+#include <cstdint>
+#include <memory>
+#include <mutex>
+
+// XLA FFI API
+#include "xla/ffi/api/ffi.h"
+
+// Sprux FFI solver
+#include "sprux/sprux/SpruxFFISolver.h"
+
+// Nanobind for Python bindings
+#include <nanobind/nanobind.h>
+
+namespace nb = nanobind;
+namespace ffi = xla::ffi;
+
+// =============================================================================
+// Cached solver (reused across solves with same sparsity pattern)
+// =============================================================================
+
+namespace {
+
+struct SpruxCache {
+    std::unique_ptr<Sprux::SpruxFFISolver> solver;
+    int32_t n = 0;
+    int32_t nnz = 0;
+    std::mutex mutex;
+
+    // Prevent crash during Python shutdown: release solver before
+    // global destructors run (mutex may be destroyed first).
+    ~SpruxCache() {
+        solver.reset();
+    }
+};
+
+// Use a pointer to avoid global destructor ordering issues.
+// Leaked intentionally — the OS reclaims the memory on exit.
+SpruxCache& cache() {
+    static SpruxCache* instance = new SpruxCache();
+    return *instance;
+}
+
+}  // namespace
+
+// =============================================================================
+// XLA FFI Handler: solve Ax = b
+// =============================================================================
+
+ffi::Error SpruxSolveF64Impl(
+    ffi::Buffer<ffi::DataType::S32> csr_indptr,
+    ffi::Buffer<ffi::DataType::S32> csr_indices,
+    ffi::Buffer<ffi::DataType::F64> csr_data,
+    ffi::Buffer<ffi::DataType::F64> b,
+    ffi::Result<ffi::Buffer<ffi::DataType::F64>> x
+) {
+    int64_t n = b.dimensions()[0];
+    int64_t nnz = csr_indices.dimensions()[0];
+
+    if (csr_indptr.dimensions()[0] != n + 1) {
+        return ffi::Error::InvalidArgument(
+            "csr_indptr must have length n+1");
+    }
+
+    const int32_t* indptr_ptr = csr_indptr.typed_data();
+    const int32_t* indices_ptr = csr_indices.typed_data();
+    const double* data_ptr = csr_data.typed_data();
+    const double* b_ptr = b.typed_data();
+    double* x_ptr = x->typed_data();
+
+    int32_t n32 = static_cast<int32_t>(n);
+    int32_t nnz32 = static_cast<int32_t>(nnz);
+
+    std::lock_guard<std::mutex> lock(cache().mutex);
+
+    // Create solver on first call (or if dimensions changed)
+    if (!cache().solver || cache().n != n32 || cache().nnz != nnz32) {
+        // Default to 10 refinement steps — converges to machine epsilon
+        // for typical circuit Jacobians (c6288 needs ~7 steps)
+        cache().solver = std::make_unique<Sprux::SpruxFFISolver>(
+            n32, nnz32, indptr_ptr, indices_ptr, data_ptr,
+            /*max_refine_steps=*/10);
+        cache().n = n32;
+        cache().nnz = nnz32;
+    }
+
+    cache().solver->solve(data_ptr, b_ptr, x_ptr);
+
+    return ffi::Error::Success();
+}
+
+XLA_FFI_DEFINE_HANDLER_SYMBOL(
+    sprux_solve_f64,
+    SpruxSolveF64Impl,
+    ffi::Ffi::Bind()
+        .Arg<ffi::Buffer<ffi::DataType::S32>>()  // csr_indptr
+        .Arg<ffi::Buffer<ffi::DataType::S32>>()  // csr_indices
+        .Arg<ffi::Buffer<ffi::DataType::F64>>()  // csr_data
+        .Arg<ffi::Buffer<ffi::DataType::F64>>()  // b
+        .Ret<ffi::Buffer<ffi::DataType::F64>>()  // x
+);
+
+// =============================================================================
+// XLA FFI Handler: sparse matrix-vector multiply b = A @ x
+// =============================================================================
+
+ffi::Error SpruxDotF64Impl(
+    ffi::Buffer<ffi::DataType::S32> csr_indptr,
+    ffi::Buffer<ffi::DataType::S32> csr_indices,
+    ffi::Buffer<ffi::DataType::F64> csr_data,
+    ffi::Buffer<ffi::DataType::F64> x,
+    ffi::Result<ffi::Buffer<ffi::DataType::F64>> b
+) {
+    int64_t n = x.dimensions()[0];
+    int64_t nnz = csr_indices.dimensions()[0];
+
+    const int32_t* indptr_ptr = csr_indptr.typed_data();
+    const int32_t* indices_ptr = csr_indices.typed_data();
+    const double* data_ptr = csr_data.typed_data();
+    const double* x_ptr = x.typed_data();
+    double* b_ptr = b->typed_data();
+
+    int32_t n32 = static_cast<int32_t>(n);
+    int32_t nnz32 = static_cast<int32_t>(nnz);
+
+    std::lock_guard<std::mutex> lock(cache().mutex);
+
+    // Create solver if needed (dot doesn't need init data, but solver
+    // must exist for the CSR structure). Use the provided data as init.
+    if (!cache().solver || cache().n != n32 || cache().nnz != nnz32) {
+        cache().solver = std::make_unique<Sprux::SpruxFFISolver>(
+            n32, nnz32, indptr_ptr, indices_ptr, data_ptr,
+            /*max_refine_steps=*/10);
+        cache().n = n32;
+        cache().nnz = nnz32;
+    }
+
+    cache().solver->dot(data_ptr, x_ptr, b_ptr);
+
+    return ffi::Error::Success();
+}
+
+XLA_FFI_DEFINE_HANDLER_SYMBOL(
+    sprux_dot_f64,
+    SpruxDotF64Impl,
+    ffi::Ffi::Bind()
+        .Arg<ffi::Buffer<ffi::DataType::S32>>()  // csr_indptr
+        .Arg<ffi::Buffer<ffi::DataType::S32>>()  // csr_indices
+        .Arg<ffi::Buffer<ffi::DataType::F64>>()  // csr_data
+        .Arg<ffi::Buffer<ffi::DataType::F64>>()  // x
+        .Ret<ffi::Buffer<ffi::DataType::F64>>()  // b
+);
+
+// =============================================================================
+// Python module definition using nanobind
+// =============================================================================
+
+NB_MODULE(sprux_jax_cpp, m) {
+    m.doc() = "Sprux Metal FFI for JAX - sparse LU solver for Apple Silicon";
+
+    // Export FFI handler capsules for JAX registration
+    m.def("sprux_solve_f64", []() {
+        return nb::capsule(reinterpret_cast<void*>(sprux_solve_f64));
+    }, "Get FFI capsule for Sprux solve (float64)");
+
+    m.def("sprux_dot_f64", []() {
+        return nb::capsule(reinterpret_cast<void*>(sprux_dot_f64));
+    }, "Get FFI capsule for sparse matrix-vector multiply (float64)");
+
+    // Utility to clear solver cache
+    m.def("clear_cache", []() {
+        std::lock_guard<std::mutex> lock(cache().mutex);
+        cache().solver.reset();
+        cache().n = 0;
+        cache().nnz = 0;
+    }, "Clear the cached solver (call when switching circuits)");
+}
