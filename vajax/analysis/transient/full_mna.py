@@ -581,10 +581,17 @@ class FullMNAStrategy(TransientStrategy):
             bcsr_indptr_jax = jnp.array(csr_indptr, dtype=jnp.int32)
             bcsr_indices_jax = jnp.array(csr_indices, dtype=jnp.int32)
 
-            # Step 5: Create solver - try Spineax/cuDSS on CUDA, fall back to UMFPACK
-            # Note: UMFPACK FFI only works on CPU — its JAX FFI handler is not
-            # registered for CUDA, so we cannot use it as a GPU fallback.
-            if on_cuda and is_spineax_available():
+            # Step 5: Create solver
+            # Priority: VAJAX_SPARSE_SOLVER env var > CUDA/Spineax > Sprux > UMFPACK
+            # Set VAJAX_SPARSE_SOLVER=sprux|umfpack|spineax to force a specific solver.
+            import os
+            sparse_solver_override = os.environ.get("VAJAX_SPARSE_SOLVER", "auto").lower()
+            if sparse_solver_override != "auto":
+                logger.info(f"Sparse solver override: VAJAX_SPARSE_SOLVER={sparse_solver_override}")
+
+            if sparse_solver_override == "spineax" or (
+                sparse_solver_override == "auto" and on_cuda and is_spineax_available()
+            ):
                 try:
                     # Always use float32 factorization with iterative refinement on GPU.
                     # Halves VRAM, factorization is faster in f32, and one refinement
@@ -622,7 +629,9 @@ class FullMNAStrategy(TransientStrategy):
                     "UMFPACK FFI only works on CPU. "
                     "Install spineax-vajax with cuDSS support, or run without --force-gpu."
                 )
-            elif is_sprux_ffi_available():
+            elif sparse_solver_override == "sprux" or (
+                sparse_solver_override == "auto" and is_sprux_ffi_available()
+            ):
                 import platform
 
                 on_arm_mac = platform.system() == "Darwin" and platform.machine() == "arm64"
@@ -647,7 +656,7 @@ class FullMNAStrategy(TransientStrategy):
                     use_fori_loop=use_fori,
                     max_nr_iters=self.runner.options.max_nr_iters,
                 )
-            else:
+            elif sparse_solver_override == "umfpack" or sparse_solver_override == "auto":
                 logger.info("Using UMFPACK FFI solver (zero callback overhead)")
                 nr_solve = make_umfpack_ffi_full_mna_solver(
                     build_system_jit,
@@ -665,6 +674,12 @@ class FullMNAStrategy(TransientStrategy):
                     use_csr_direct=True,
                     use_fori_loop=use_fori,
                     max_nr_iters=self.runner.options.max_nr_iters,
+                )
+            else:
+                raise RuntimeError(
+                    f"No sparse solver available for VAJAX_SPARSE_SOLVER={sparse_solver_override}. "
+                    f"Available: sprux={'yes' if is_sprux_ffi_available() else 'no'}, "
+                    f"umfpack={'yes' if make_umfpack_ffi_full_mna_solver else 'no'}"
                 )
 
         self._cached_full_mna_solver = nr_solve
