@@ -154,6 +154,7 @@ def _make_nr_solver_common(
     residual_conv_mask: Optional[Array] = None,
     use_fori_loop: bool = False,
     max_nr_iters: Optional[int] = None,
+    chord_solve_fn: Optional[Callable] = None,
 ) -> Callable:
     """Create a JIT-compiled NR solver with a pluggable linear solve.
 
@@ -1129,7 +1130,21 @@ def make_sprux_ffi_full_mna_solver(
         use_csr_direct=use_csr_direct,
     )
 
-    logger.info(f"Creating Sprux FFI full MNA solver: V({n_nodes}) + I({n_vsources})")
+    # Chord Newton: solve_only reuses cached factorization from iteration 0
+    _, chord_linear_solve = _make_sparse_solve_fns(
+        masks,
+        nse,
+        use_precomputed,
+        coo_sort_perm,
+        csr_segment_ids,
+        solve_fn=lambda csr_data, f_solve: sprux_jax.solve_only(
+            bcsr_indptr, bcsr_indices, csr_data, -f_solve
+        ),
+        n_unknowns=n_unknowns,
+        use_csr_direct=use_csr_direct,
+    )
+
+    logger.info(f"Creating Sprux FFI full MNA solver: V({n_nodes}) + I({n_vsources}) [chord Newton]")
     return _make_nr_solver_common(
         build_system_jit=build_system_jit,
         n_nodes=n_nodes,
@@ -1147,6 +1162,7 @@ def make_sprux_ffi_full_mna_solver(
         residual_conv_mask=residual_conv_mask,
         use_fori_loop=use_fori_loop,
         max_nr_iters=max_nr_iters,
+        chord_solve_fn=chord_linear_solve,
     )
 
 
