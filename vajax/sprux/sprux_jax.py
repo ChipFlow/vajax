@@ -31,7 +31,7 @@ from jax.interpreters import mlir
 from jaxtyping import Array
 
 __version__ = "0.1.0"
-__all__ = ["solve", "dot", "clear_cache", "is_available"]
+__all__ = ["solve", "dot", "clear_cache", "is_available", "begin_capture", "end_capture"]
 
 # =============================================================================
 # Configuration
@@ -87,6 +87,29 @@ def clear_cache() -> None:
     """
     if _SPRUX_FFI_AVAILABLE:
         _sprux_jax_cpp.clear_cache()
+
+
+def begin_capture(output_path: str = "/tmp/sprux.gputrace") -> bool:
+    """Start GPU trace capture to a .gputrace file.
+
+    The .gputrace can be opened in Xcode or analyzed with apple-profiler tools.
+    Call end_capture() to stop and flush the trace.
+
+    Args:
+        output_path: Path for the .gputrace output file.
+
+    Returns:
+        True if capture started, False if not available.
+    """
+    if not _SPRUX_FFI_AVAILABLE:
+        return False
+    return _sprux_jax_cpp.begin_capture(output_path)
+
+
+def end_capture() -> None:
+    """Stop GPU trace capture started with begin_capture()."""
+    if _SPRUX_FFI_AVAILABLE:
+        _sprux_jax_cpp.end_capture()
 
 
 # =============================================================================

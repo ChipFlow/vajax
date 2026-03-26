@@ -16,8 +16,9 @@
 // XLA FFI API
 #include "xla/ffi/api/ffi.h"
 
-// Sprux FFI solver
+// Sprux FFI solver + capture API
 #include "sprux/sprux/SpruxFFISolver.h"
+#include "sprux/sprux/sprux_c_api.h"
 
 // Nanobind for Python bindings
 #include <nanobind/nanobind.h>
@@ -184,4 +185,13 @@ NB_MODULE(sprux_jax_cpp, m) {
         cache().n = 0;
         cache().nnz = 0;
     }, "Clear the cached solver (call when switching circuits)");
+
+    // GPU trace capture
+    m.def("begin_capture", [](const char* path) {
+        return sprux_begin_capture(path) != 0;
+    }, "Start GPU trace capture to .gputrace file");
+
+    m.def("end_capture", []() {
+        sprux_end_capture();
+    }, "Stop GPU trace capture");
 }
