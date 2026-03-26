@@ -620,24 +620,41 @@ CPU:    [prep₀][prep₁───────][prep₂────────�
 
 Where "prep" = build_system + equilibrate + scatter (CPU, ~20-25ms on c6288).
 
-This requires a slot-based API in SpruxFFISolver:
+This is implemented via `SpruxFFISolver::beginSolve()` / `endSolve()`:
 
 ```cpp
-// CPU: equilibrate + scatter + permute RHS into slot k's buffers
-int prepare_solve(const double* csr_data, const double* rhs);
-//  ^returns slot id (0 or 1, ping-pong)
+// CPU preprocessing + GPU factor+solve (async, returns immediately)
+void beginSolve(const double* csr_data, const double* rhs);
 
-// GPU: encode factorLU + solveLU for slot k
-void encode_factor_solve(int slot);
-
-// CPU: flush GPU, refine from slot k, write result
-int flush_and_refine(int slot, const double* csr_data,
-                     const double* rhs, double* x_out);
+// GPU sync + CPU iterative refinement → result
+int endSolve(double* x_out);
 ```
 
-Each slot owns: `MetalMirror<float> dataGpu`, `MetalMirror<float> xGpu`,
-cached equilibration scales. `devPivots` and `numCtx`/`solveCtx` are shared
-(GPU processes slots sequentially within the command buffer).
+Internally, Sprux uses double-buffered slots (ping-pong). Each slot owns
+its own `MetalMirror<float> dataGpu`, `xGpu`, cached equilibration scales.
+The `devPivots` and `numCtx`/`solveCtx` are shared (GPU processes slots
+sequentially).
+
+**Python API** (exposed via nanobind, NOT XLA FFI — used outside JIT):
+
+```python
+from vajax.sprux import sprux_jax
+
+sprux_jax.begin_solve(indptr, indices, data, rhs)  # GPU async
+# ... CPU work here (build_system for next NR iteration) ...
+x = np.zeros(n, dtype=np.float64)
+sprux_jax.end_solve(x)  # GPU sync + refine → writes to x
+```
+
+**JAX FFI API** (inside JIT, `lax.while_loop`):
+```python
+# One-shot (current) — no pipelining
+x = sprux_jax.solve(indptr, indices, data, rhs)
+```
+
+The pipelined API is currently Python-only (nanobind). Integrating it into
+the JAX-JIT NR loop requires either `jax.debug.callback` or restructuring
+the NR loop to break the while_loop into explicit iterations.
 
 ### Combined Strategy
 
