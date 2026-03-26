@@ -377,3 +377,252 @@ This is why the `fori_loop` path exists — IREE can fuse all iterations.
   }
 }
 ```
+
+## Batch-Adaptive Mode
+
+### Motivation
+
+The current adaptive mode is strictly sequential: each step's `dt_new`
+depends on the LTE check which needs the full NR solution. This prevents
+inter-step pipelining and GPU fusion.
+
+The existing `fori_loop` mode solves this by using fixed dt — but loses
+adaptive timestep control, leading to either too many steps (dt too small)
+or accuracy problems (dt too large).
+
+**Batch-adaptive** bridges the gap: hold dt constant for a batch of K steps,
+then adapt dt between batches. This enables GPU fusion within each batch
+while retaining adaptive timestep control at the batch boundary.
+
+### Algorithm
+
+```
+while t < t_stop:
+    # 1. Predict and choose batch parameters
+    V_pred = predict_voltage(history, dt)
+    source_vals[0..K-1] = eval_sources(t + dt, t + 2*dt, ..., t + K*dt)
+
+    # 2. Execute batch of K steps with fixed dt (fusible)
+    X_batch, Q_batch = scan(nr_step, init=(X, Q), xs=source_vals)
+    #                  ^^^^
+    #   lax.scan / fori_loop: K steps, same dt, same integ coefficients
+    #   GPU can pipeline/fuse all K factorizations
+
+    # 3. LTE check at batch boundary
+    V_final = X_batch[-1]
+    dt_lte = compute_lte(V_final, V_pred, dt)
+
+    if dt / dt_lte > redo_factor:
+        # Reject batch: halve dt, reduce K, retry
+        dt = dt / 2
+        K = max(K // 2, 1)
+    else:
+        # Accept batch: advance time, update history
+        t += K * dt
+        update_history(X_batch, dt)
+        dt = dt_lte
+        K = min(K * 2, K_max)  # grow batch if stable
+```
+
+### Data Flow
+
+```
+                    ┌──────────────────┐
+                    │  Batch Start     │
+                    │  X, Q, dt, K     │
+                    └────────┬─────────┘
+                             │
+              ┌──────────────┼──────────────┐
+              ▼              ▼              ▼
+    ┌─────────────┐  ┌──────────────┐  ┌────────────┐
+    │ integ_coeff │  │ source_eval  │  │  predict   │
+    │ (constant   │  │ (all K steps │  │  V_pred    │
+    │  for batch) │  │  vectorized) │  │  (once)    │
+    └──────┬──────┘  └──────┬───────┘  └─────┬──────┘
+           │                │                │
+           └────────────────┼────────────────┘
+                            ▼
+              ┌─────────────────────────┐
+              │  lax.scan over K steps  │ ◄── GPU-fusible
+              │                         │
+              │  step 0: build→NR→solve │
+              │  step 1: build→NR→solve │ (uses step 0 output)
+              │  step 2: build→NR→solve │ (uses step 1 output)
+              │  ...                    │
+              │  step K-1: → X_final    │
+              └────────────┬────────────┘
+                           │
+                    ┌──────┴──────┐
+                    ▼             ▼
+             ┌───────────┐  ┌──────────┐
+             │ LTE check │  │ NR check │
+             │ V_final   │  │ all steps│
+             │ vs V_pred │  │converged?│
+             └─────┬─────┘  └────┬─────┘
+                   │              │
+            ┌──────┴──────────────┘
+            ▼
+     ┌──────┴──────┐
+     ▼             ▼
+┌─────────┐  ┌──────────┐
+│ ACCEPT  │  │  REJECT  │
+│ batch   │  │  batch   │
+│ t += K*dt│  │ dt /= 2 │
+│ grow K  │  │ shrink K │
+└─────────┘  └──────────┘
+```
+
+### Why Batching Enables GPU Fusion
+
+Within a batch:
+- `dt` is constant → `integ_coeff` (c0, c1, c2) is constant
+- Source waveforms are precomputed for all K timesteps
+- No LTE check between steps → no CPU↔GPU sync barrier
+- `lax.scan` compiles to a loop that XLA/IREE can fuse
+
+For Sprux specifically, batching means:
+- **One recording pass** covers all K factorizations (same structure)
+- **One command buffer** can encode all K × (factor + solve) dispatches
+- GPU stays busy without encoder cycling gaps between steps
+- CPU preprocessing (equilibrate, scatter) for step k+1 can overlap
+  with GPU factor+solve for step k
+
+### Batch Size Selection
+
+The optimal K depends on how smoothly the solution changes:
+
+| Circuit phase | dt stability | Optimal K |
+|---------------|-------------|-----------|
+| DC ramp-up | dt grows rapidly | K=1-2 (nearly per-step adaptive) |
+| Steady oscillation | dt stable | K=8-16 (long batches) |
+| Sharp transient | dt drops suddenly | K=1 (fall back to per-step) |
+| Post-transient settling | dt grows | K=4-8 |
+
+An adaptive K strategy:
+- Start with K=1 (equivalent to current mode)
+- After M consecutive accepted batches at the same dt, double K
+- On rejection, halve K (minimum 1)
+- Cap K at K_max (e.g., 16 or 32)
+
+### LTE Accuracy with Batching
+
+Standard LTE compares `V_new` with a prediction `V_pred` made from
+history points *before* the current step. With batch size K:
+
+- `V_pred` is computed once at batch start using the pre-batch history
+- After K steps, `V_final` has drifted K×dt from the prediction point
+- The LTE estimate is for the accumulated error over K steps
+
+This is conservative: if K steps with the same dt pass LTE at the batch
+boundary, each individual step would also pass. The converse is not true —
+a batch might fail LTE even though each step individually would pass
+(because error accumulates). This means:
+
+- Batching never accepts steps that per-step mode would reject ✓
+- Batching may reject batches that per-step mode would accept (conservative) ✓
+- The adaptive K strategy compensates: if batches keep failing, K shrinks to 1
+
+### Implementation Sketch
+
+```python
+def batch_adaptive_body(state):
+    """Outer loop: manages batch execution and dt adaptation."""
+    K = state.batch_size
+    dt = state.dt
+
+    # Precompute sources for all K steps
+    t_points = state.t + dt * jnp.arange(1, K + 1)
+    source_vals = vmap(jit_source_eval)(t_points)  # (K, n_sources)
+
+    # Predict from history (for LTE at batch end)
+    V_pred, pred_err_coeff = predict_voltage(state.V_history, ...)
+
+    # Fixed integ coefficients for the batch
+    c0, c1, d1, c2 = compute_integ_coeffs(dt, state.dt_history, method)
+
+    # Run K steps with lax.scan (GPU-fusible)
+    def scan_step(carry, source_k):
+        X, Q, dQdt, Q_prev2, limit_state = carry
+        vsrc, isrc = source_k
+
+        X_new, _, converged, _, Q_new, dQdt_new, I_vs, ls_new, _ = nr_solve(
+            X, vsrc, isrc, Q, c0, device_arrays,
+            gmin, gshunt, c1, d1, dQdt, c2, Q_prev2,
+            limit_state, res_tol_floor,
+        )
+        # For GEAR2: shift Q history
+        return (X_new, Q_new, dQdt_new, Q, ls_new), (X_new, converged)
+
+    init_carry = (state.X, state.Q_prev, state.dQdt_prev,
+                  state.Q_prev2, state.limit_state)
+    final_carry, (X_traj, converged_traj) = lax.scan(
+        scan_step, init_carry, (source_vals_v, source_vals_i)
+    )
+
+    # Check: did all NR solves converge?
+    all_converged = jnp.all(converged_traj)
+
+    # LTE check on final solution
+    X_final = final_carry[0]
+    V_final = X_final[:n_total]
+    dt_lte, lte_norm = compute_lte(V_final, V_pred, ...)
+
+    # Accept/reject batch
+    lte_reject = (dt / dt_lte > redo_factor) & all_converged
+    nr_reject = ~all_converged
+
+    # ... update state, adjust K and dt ...
+```
+
+### Comparison
+
+| Mode | dt control | GPU fusion | Overhead |
+|------|-----------|-----------|----------|
+| while_loop (current) | per-step | none (CPU↔GPU sync each step) | ~80ms/step |
+| fori_loop (fixed) | none | full (IREE fuses all iters) | ~0.2ms/step |
+| **batch-adaptive** | per-batch | within batch (scan fusible) | per-step + batch overhead |
+
+### DOT Graph
+
+```dot
+digraph batch_adaptive {
+  rankdir=TB;
+  node [shape=box, style=rounded];
+
+  batch_start [label="Batch Start\nX, Q, dt, K"];
+
+  subgraph cluster_prep {
+    label="Batch Preparation (once)";
+    style=dashed;
+    integ [label="integ_coeff\n(constant for batch)"];
+    sources [label="source_eval\n(vectorized, K steps)"];
+    pred [label="predict_voltage\n(once, for LTE)"];
+  }
+
+  subgraph cluster_scan {
+    label="lax.scan (K steps, GPU-fusible)";
+    color=blue;
+    step0 [label="step 0\nbuild→NR→solve"];
+    step1 [label="step 1\nbuild→NR→solve"];
+    step2 [label="step 2\nbuild→NR→solve"];
+    stepK [label="step K-1\n→ X_final"];
+
+    step0 -> step1 [label="X₀,Q₀"];
+    step1 -> step2 [label="X₁,Q₁"];
+    step2 -> stepK [style=dashed, label="..."];
+  }
+
+  lte [label="LTE check\nV_final vs V_pred"];
+  nr_check [label="NR check\nall converged?"];
+  accept [label="ACCEPT\nt += K*dt\ngrow K"];
+  reject [label="REJECT\ndt /= 2\nshrink K"];
+
+  batch_start -> {integ sources pred};
+  {integ sources} -> step0;
+  stepK -> {lte nr_check};
+  pred -> lte;
+  {lte nr_check} -> accept;
+  {lte nr_check} -> reject;
+  reject -> batch_start [style=dashed, label="retry"];
+  accept -> batch_start [style=dashed, label="next batch"];
+}
