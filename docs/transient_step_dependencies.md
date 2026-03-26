@@ -582,6 +582,82 @@ def batch_adaptive_body(state):
 | fori_loop (fixed) | none | full (IREE fuses all iters) | ~0.2ms/step |
 | **batch-adaptive** | per-batch | within batch (scan fusible) | per-step + batch overhead |
 
+### Empirical LTE Analysis (c6288)
+
+Measured on c6288 (5123 nodes, 100 steps, Apple M4 Pro):
+
+| Phase | Steps | dt range | LTE/tol range | NR iters | Batchable? |
+|-------|-------|----------|---------------|----------|------------|
+| Warmup | 2-6 | 0.5→0.05ps | n/a (no estimate) | 3-5 | No (dt shrinking) |
+| Ramp-up | 7-43 | 0.04→4.0ps | 0.05-4.4 | 1-3 | Marginal (dt growing fast) |
+| Steady state | 43-61 | 2.5-4.0ps | 0.5-2.5 | 1 | **Yes (38 consecutive accepts)** |
+| Transition | 62-70 | 0.17-3.2ps | 0.04-89 | 1-4 | No (rejections, dt crash) |
+| Post-transition | 71-120 | 0.8-3.0ps | 0.2-20 | 1 | Partial (dt varies 2x) |
+
+Key findings:
+- **4 rejections in 120 steps** (3.3% rejection rate)
+- **38 consecutive accepted steps** in steady state (steps 24-61), all NR=1
+- dt changes ~20-50% per step even in steady state (not constant)
+- LTE/tol rarely exceeds 10 in steady state → conservative acceptance
+- **K=4 is safe** for steady state; K=8 possible but riskier
+- Near input transitions (t≈100ps), K must drop to 1
+
+### Double-Buffered Pipelined NR
+
+Within each batch step, NR iterations are sequential (each depends on the
+previous solution). But with double-buffered GPU data slots, we can **pipeline
+CPU prep with GPU factorization**:
+
+```
+Slot A: prep₀ → encode₀ ──────────────── flush₀+refine₀
+Slot B:          prep₁ → encode₁ ──────────────── flush₁+refine₁
+Slot A:                    prep₂ → encode₂ ──────────────── ...
+
+GPU:    [──factor₀+solve₀──][──factor₁+solve₁──][──factor₂+solve₂──]
+CPU:    [prep₀][prep₁───────][prep₂──────────────][prep₃─────────────]
+                ↑ overlaps    ↑ overlaps           ↑ overlaps
+```
+
+Where "prep" = build_system + equilibrate + scatter (CPU, ~20-25ms on c6288).
+
+This requires a slot-based API in SpruxFFISolver:
+
+```cpp
+// CPU: equilibrate + scatter + permute RHS into slot k's buffers
+int prepare_solve(const double* csr_data, const double* rhs);
+//  ^returns slot id (0 or 1, ping-pong)
+
+// GPU: encode factorLU + solveLU for slot k
+void encode_factor_solve(int slot);
+
+// CPU: flush GPU, refine from slot k, write result
+int flush_and_refine(int slot, const double* csr_data,
+                     const double* rhs, double* x_out);
+```
+
+Each slot owns: `MetalMirror<float> dataGpu`, `MetalMirror<float> xGpu`,
+cached equilibration scales. `devPivots` and `numCtx`/`solveCtx` are shared
+(GPU processes slots sequentially within the command buffer).
+
+### Combined Strategy
+
+The full optimization combines batch-adaptive (inter-step) with
+double-buffered pipelining (intra-step NR):
+
+```
+Batch k (K steps, fixed dt):
+  lax.scan:
+    step 0: [prep₀(slotA)] [encode₀] ... [flush₀] → X₀
+    step 1: [prep₁(slotB)] [encode₁] ... [flush₁] → X₁  (pipelined)
+    ...
+  LTE check on X_{K-1} vs V_pred
+
+Batch k+1:
+  dt_new from LTE
+  K_new = adjust(K, accepted?)
+  ...
+```
+
 ### DOT Graph
 
 ```dot
