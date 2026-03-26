@@ -22,6 +22,7 @@
 
 // Nanobind for Python bindings
 #include <nanobind/nanobind.h>
+#include <nanobind/ndarray.h>
 
 namespace nb = nanobind;
 namespace ffi = xla::ffi;
@@ -185,6 +186,35 @@ NB_MODULE(sprux_jax_cpp, m) {
         cache().n = 0;
         cache().nnz = 0;
     }, "Clear the cached solver (call when switching circuits)");
+
+    // Split-phase solve (for pipelined batch processing)
+    m.def("begin_solve", [](
+        nb::ndarray<const int32_t, nb::ndim<1>> indptr,
+        nb::ndarray<const int32_t, nb::ndim<1>> indices,
+        nb::ndarray<const double, nb::ndim<1>> data,
+        nb::ndarray<const double, nb::ndim<1>> rhs
+    ) {
+        std::lock_guard<std::mutex> lock(cache().mutex);
+        int32_t n32 = static_cast<int32_t>(rhs.shape(0));
+        int32_t nnz32 = static_cast<int32_t>(indices.shape(0));
+
+        if (!cache().solver || cache().n != n32 || cache().nnz != nnz32) {
+            cache().solver = std::make_unique<Sprux::SpruxFFISolver>(
+                n32, nnz32, indptr.data(), indices.data(), data.data(),
+                /*max_refine_steps=*/10);
+            cache().n = n32;
+            cache().nnz = nnz32;
+        }
+        cache().solver->beginSolve(data.data(), rhs.data());
+    }, "Submit GPU factor+solve asynchronously (call end_solve to get result)");
+
+    m.def("end_solve", [](nb::ndarray<double, nb::ndim<1>> x_out) {
+        std::lock_guard<std::mutex> lock(cache().mutex);
+        if (!cache().solver) {
+            throw std::runtime_error("end_solve called without begin_solve");
+        }
+        return cache().solver->endSolve(x_out.data());
+    }, "Complete iterative refinement and write result");
 
     // GPU trace capture
     m.def("begin_capture", [](const char* path) {

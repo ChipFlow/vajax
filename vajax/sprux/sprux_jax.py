@@ -31,7 +31,11 @@ from jax.interpreters import mlir
 from jaxtyping import Array
 
 __version__ = "0.1.0"
-__all__ = ["solve", "dot", "clear_cache", "is_available", "begin_capture", "end_capture"]
+__all__ = [
+    "solve", "dot", "clear_cache", "is_available",
+    "begin_solve", "end_solve",
+    "begin_capture", "end_capture",
+]
 
 # =============================================================================
 # Configuration
@@ -110,6 +114,56 @@ def end_capture() -> None:
     """Stop GPU trace capture started with begin_capture()."""
     if _SPRUX_FFI_AVAILABLE:
         _sprux_jax_cpp.end_capture()
+
+
+def begin_solve(
+    indptr: "np.ndarray",
+    indices: "np.ndarray",
+    data: "np.ndarray",
+    rhs: "np.ndarray",
+) -> None:
+    """Submit GPU factor+solve asynchronously (split-phase).
+
+    CPU preprocessing (equilibrate, scatter) runs immediately, then GPU
+    factor+solve is submitted and returns without waiting. Call end_solve()
+    to complete refinement and get the result.
+
+    Uses double-buffered GPU slots — safe to call begin_solve for step k+1
+    before calling end_solve for step k.
+
+    Args:
+        indptr: CSR row pointers (length n+1), int32, numpy array
+        indices: CSR column indices (length nnz), int32, numpy array
+        data: CSR non-zero values (length nnz), float64, numpy array
+        rhs: Right-hand side vector (length n), float64, numpy array
+    """
+    if not _SPRUX_FFI_AVAILABLE:
+        raise RuntimeError("Sprux FFI extension not available")
+    import numpy as np  # nanobind needs numpy arrays, not JAX
+
+    _sprux_jax_cpp.begin_solve(
+        np.ascontiguousarray(indptr, dtype=np.int32),
+        np.ascontiguousarray(indices, dtype=np.int32),
+        np.ascontiguousarray(data, dtype=np.float64),
+        np.ascontiguousarray(rhs, dtype=np.float64),
+    )
+
+
+def end_solve(x_out: "np.ndarray") -> int:
+    """Complete iterative refinement and write result (split-phase).
+
+    Must be called after begin_solve(). Waits for GPU completion,
+    runs CPU f64 iterative refinement, writes result to x_out.
+
+    Args:
+        x_out: Solution vector (length n), float64, numpy array (output)
+
+    Returns:
+        Number of refinement iterations performed.
+    """
+    if not _SPRUX_FFI_AVAILABLE:
+        raise RuntimeError("Sprux FFI extension not available")
+    return _sprux_jax_cpp.end_solve(x_out)
 
 
 # =============================================================================
