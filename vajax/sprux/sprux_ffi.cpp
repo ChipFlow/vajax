@@ -113,6 +113,46 @@ XLA_FFI_DEFINE_HANDLER_SYMBOL(
 );
 
 // =============================================================================
+// XLA FFI Handler: solve with cached factorization (chord Newton)
+// =============================================================================
+
+ffi::Error SpruxSolveOnlyF64Impl(
+    ffi::Buffer<ffi::DataType::S32> csr_indptr,
+    ffi::Buffer<ffi::DataType::S32> csr_indices,
+    ffi::Buffer<ffi::DataType::F64> csr_data,
+    ffi::Buffer<ffi::DataType::F64> b,
+    ffi::Result<ffi::Buffer<ffi::DataType::F64>> x
+) {
+    int64_t n = b.dimensions()[0];
+
+    const double* data_ptr = csr_data.typed_data();
+    const double* b_ptr = b.typed_data();
+    double* x_ptr = x->typed_data();
+
+    std::lock_guard<std::mutex> lock(cache().mutex);
+
+    if (!cache().solver) {
+        return ffi::Error::Internal(
+            "sprux_solve_only called before sprux_solve (no cached factorization)");
+    }
+
+    cache().solver->solveOnly(data_ptr, b_ptr, x_ptr);
+
+    return ffi::Error::Success();
+}
+
+XLA_FFI_DEFINE_HANDLER_SYMBOL(
+    sprux_solve_only_f64,
+    SpruxSolveOnlyF64Impl,
+    ffi::Ffi::Bind()
+        .Arg<ffi::Buffer<ffi::DataType::S32>>()  // csr_indptr (structure, for consistency)
+        .Arg<ffi::Buffer<ffi::DataType::S32>>()  // csr_indices
+        .Arg<ffi::Buffer<ffi::DataType::F64>>()  // csr_data (for refinement SpMV)
+        .Arg<ffi::Buffer<ffi::DataType::F64>>()  // b
+        .Ret<ffi::Buffer<ffi::DataType::F64>>()  // x
+);
+
+// =============================================================================
 // XLA FFI Handler: sparse matrix-vector multiply b = A @ x
 // =============================================================================
 
@@ -178,6 +218,10 @@ NB_MODULE(sprux_jax_cpp, m) {
     m.def("sprux_dot_f64", []() {
         return nb::capsule(reinterpret_cast<void*>(sprux_dot_f64));
     }, "Get FFI capsule for sparse matrix-vector multiply (float64)");
+
+    m.def("sprux_solve_only_f64", []() {
+        return nb::capsule(reinterpret_cast<void*>(sprux_solve_only_f64));
+    }, "Get FFI capsule for solve with cached factorization (chord Newton)");
 
     // Utility to clear solver cache
     m.def("clear_cache", []() {

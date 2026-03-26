@@ -32,7 +32,7 @@ from jaxtyping import Array
 
 __version__ = "0.1.0"
 __all__ = [
-    "solve", "dot", "clear_cache", "is_available",
+    "solve", "solve_only", "dot", "clear_cache", "is_available",
     "begin_solve", "end_solve",
     "begin_capture", "end_capture",
 ]
@@ -204,6 +204,41 @@ def solve(
     return solve_f64.bind(indptr, indices, data, b)
 
 
+def solve_only(
+    indptr: Array,
+    indices: Array,
+    data: Array,
+    b: Array,
+) -> Array:
+    """Solve using cached LU factorization (chord Newton).
+
+    Reuses the factorization from the most recent solve() call.
+    No equilibration, no scatter, no refactorization — just permute
+    RHS, forward/backward substitution, and iterative refinement.
+
+    Must be called after at least one solve() call to establish the
+    cached factorization.
+
+    Args:
+        indptr: CSR row pointers (length n+1), int32
+        indices: CSR column indices (length nnz), int32
+        data: CSR non-zero values (length nnz), float64 (for refinement SpMV)
+        b: Right-hand side vector (length n), float64
+
+    Returns:
+        x: Solution vector (length n), float64
+    """
+    if not _SPRUX_FFI_AVAILABLE:
+        raise RuntimeError("Sprux FFI extension not available")
+
+    indptr = jnp.asarray(indptr, dtype=jnp.int32)
+    indices = jnp.asarray(indices, dtype=jnp.int32)
+    data = jnp.asarray(data, dtype=jnp.float64)
+    b = jnp.asarray(b, dtype=jnp.float64)
+
+    return solve_only_f64.bind(indptr, indices, data, b)
+
+
 def dot(
     indptr: Array,
     indices: Array,
@@ -237,6 +272,7 @@ def dot(
 # =============================================================================
 
 solve_f64 = jax.extend.core.Primitive("sprux_solve_f64")
+solve_only_f64 = jax.extend.core.Primitive("sprux_solve_only_f64")
 dot_f64 = jax.extend.core.Primitive("sprux_dot_f64")
 
 # =============================================================================
@@ -258,6 +294,11 @@ def solve_f64_impl(indptr: Array, indices: Array, data: Array, b: Array) -> Arra
     return _ffi_call("sprux_solve_f64", indptr, indices, data, b)
 
 
+@solve_only_f64.def_impl
+def solve_only_f64_impl(indptr: Array, indices: Array, data: Array, b: Array) -> Array:
+    return _ffi_call("sprux_solve_only_f64", indptr, indices, data, b)
+
+
 @dot_f64.def_impl
 def dot_f64_impl(indptr: Array, indices: Array, data: Array, x: Array) -> Array:
     return _ffi_call("sprux_dot_f64", indptr, indices, data, x)
@@ -275,6 +316,12 @@ if _SPRUX_FFI_AVAILABLE:
     )
 
     jax.ffi.register_ffi_target(
+        "sprux_solve_only_f64",
+        _sprux_jax_cpp.sprux_solve_only_f64(),
+        platform="cpu",
+    )
+
+    jax.ffi.register_ffi_target(
         "sprux_dot_f64",
         _sprux_jax_cpp.sprux_dot_f64(),
         platform="cpu",
@@ -288,6 +335,9 @@ if _SPRUX_FFI_AVAILABLE:
     solve_f64_low = mlir.lower_fun(solve_f64_impl, multiple_results=False)
     mlir.register_lowering(solve_f64, solve_f64_low)
 
+    solve_only_f64_low = mlir.lower_fun(solve_only_f64_impl, multiple_results=False)
+    mlir.register_lowering(solve_only_f64, solve_only_f64_low)
+
     dot_f64_low = mlir.lower_fun(dot_f64_impl, multiple_results=False)
     mlir.register_lowering(dot_f64, dot_f64_low)
 
@@ -297,6 +347,7 @@ if _SPRUX_FFI_AVAILABLE:
 
 
 @solve_f64.def_abstract_eval
+@solve_only_f64.def_abstract_eval
 @dot_f64.def_abstract_eval
 def general_abstract_eval(
     indptr: ShapedArray, indices: ShapedArray, data: ShapedArray, x: ShapedArray
