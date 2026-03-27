@@ -1,0 +1,2329 @@
+
+<!doctype html>
+<html lang="en" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+        <meta name="description" content="GPU-Accelerated Analog Circuit Simulator built on JAX">
+      
+      
+      
+      
+      
+      
+        
+      
+      
+      <link rel="icon" href="../assets/images/favicon.png">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.7.3">
+    
+    
+      
+        <title>Transient Step Data Dependencies - VAJAX</title>
+      
+    
+    
+      <link rel="stylesheet" href="../assets/stylesheets/main.484c7ddc.min.css">
+      
+        
+        <link rel="stylesheet" href="../assets/stylesheets/palette.ab4e12ef.min.css">
+      
+      
+
+
+    
+    
+      
+    
+    
+      
+        
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Roboto:300,300i,400,400i,700,700i%7CRoboto+Mono:400,400i,700,700i&display=fallback">
+        <style>:root{--md-text-font:"Roboto";--md-code-font:"Roboto Mono"}</style>
+      
+    
+    
+    <script>__md_scope=new URL("..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    
+      
+
+    
+    
+  </head>
+  
+  
+    
+    
+      
+    
+    
+    
+    
+    <body dir="ltr" data-md-color-scheme="default" data-md-color-primary="indigo" data-md-color-accent="indigo">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#transient-step-data-dependencies" class="md-skip">
+          Skip to content
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+    
+      
+
+  
+
+<header class="md-header md-header--shadow" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="Header">
+    <a href=".." title="VAJAX" class="md-header__button md-logo" aria-label="VAJAX" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            VAJAX
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              Transient Step Data Dependencies
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+      
+        <form class="md-header__option" data-md-component="palette">
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="" data-md-color-scheme="default" data-md-color-primary="indigo" data-md-color-accent="indigo"  aria-label="Switch to dark mode"  type="radio" name="__palette" id="__palette_0">
+    
+      <label class="md-header__button md-icon" title="Switch to dark mode" for="__palette_1" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a4 4 0 0 0-4 4 4 4 0 0 0 4 4 4 4 0 0 0 4-4 4 4 0 0 0-4-4m0 10a6 6 0 0 1-6-6 6 6 0 0 1 6-6 6 6 0 0 1 6 6 6 6 0 0 1-6 6m8-9.31V4h-4.69L12 .69 8.69 4H4v4.69L.69 12 4 15.31V20h4.69L12 23.31 15.31 20H20v-4.69L23.31 12z"/></svg>
+      </label>
+    
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="" data-md-color-scheme="slate" data-md-color-primary="indigo" data-md-color-accent="indigo"  aria-label="Switch to light mode"  type="radio" name="__palette" id="__palette_1">
+    
+      <label class="md-header__button md-icon" title="Switch to light mode" for="__palette_0" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 18c-.89 0-1.74-.2-2.5-.55C11.56 16.5 13 14.42 13 12s-1.44-4.5-3.5-5.45C10.26 6.2 11.11 6 12 6a6 6 0 0 1 6 6 6 6 0 0 1-6 6m8-9.31V4h-4.69L12 .69 8.69 4H4v4.69L.69 12 4 15.31V20h4.69L12 23.31 15.31 20H20v-4.69L23.31 12z"/></svg>
+      </label>
+    
+  
+</form>
+      
+    
+    
+      <script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
+    
+    
+    
+      
+      
+        <label class="md-header__button md-icon" for="__search">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        </label>
+        <div class="md-search" data-md-component="search" role="dialog">
+  <label class="md-search__overlay" for="__search"></label>
+  <div class="md-search__inner" role="search">
+    <form class="md-search__form" name="search">
+      <input type="text" class="md-search__input" name="query" aria-label="Search" placeholder="Search" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" data-md-component="search-query" required>
+      <label class="md-search__icon md-icon" for="__search">
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+      </label>
+      <nav class="md-search__options" aria-label="Search">
+        
+        <button type="reset" class="md-search__icon md-icon" title="Clear" aria-label="Clear" tabindex="-1">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+        </button>
+      </nav>
+      
+    </form>
+    <div class="md-search__output">
+      <div class="md-search__scrollwrap" tabindex="0" data-md-scrollfix>
+        <div class="md-search-result" data-md-component="search-result">
+          <div class="md-search-result__meta">
+            Initializing search
+          </div>
+          <ol class="md-search-result__list" role="presentation"></ol>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+      
+    
+    
+      <div class="md-header__source">
+        <a href="https://github.com/ChipFlow/vajax" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    ChipFlow/vajax
+  </div>
+</a>
+      </div>
+    
+  </nav>
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+          
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+
+<nav class="md-nav md-nav--primary" aria-label="Navigation" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href=".." title="VAJAX" class="md-nav__button md-logo" aria-label="VAJAX" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    VAJAX
+  </label>
+  
+    <div class="md-nav__source">
+      <a href="https://github.com/ChipFlow/vajax" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    ChipFlow/vajax
+  </div>
+</a>
+    </div>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href=".." class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Home
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_2" >
+        
+          
+          <label class="md-nav__link" for="__nav_2" id="__nav_2_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    User Guide
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_2_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_2">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    User Guide
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../getting_started/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Getting Started
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../supported_devices/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Supported Devices
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../api_reference/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    API Reference
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../cli_reference/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    CLI Reference
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../transient_options/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Transient Options
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../performance_analysis/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Performance Analysis
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../vacask_sim_format/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    VACASK Sim Format
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3" >
+        
+          
+          <label class="md-nav__link" for="__nav_3" id="__nav_3_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Developer Guide
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_3_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Developer Guide
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../architecture_overview/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Architecture Overview
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../parallelism_architecture/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Parallelism Architecture
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../gpu_solver_architecture/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    GPU Solver Architecture
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../gpu_solver_jacobian/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    GPU Solver Jacobian
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../sparse_solver_roadmap/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Sparse Solver Roadmap
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../debug_tools/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Debug Tools
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../phi_nodes_guide/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    PHI Nodes Guide
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../verilog_a_system_functions/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Verilog-A System Functions
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../osdi_parameter_architecture/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    OSDI Parameter Architecture
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../vacask_osdi_inputs/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    OSDI Inputs
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../sim_back_vs_openvaf_jax/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Code Generation Backends
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4" >
+        
+          
+          <label class="md-nav__link" for="__nav_4" id="__nav_4_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Packages
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_4_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_4">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Packages
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../packages/openvaf-py/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    openvaf-py
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../packages/osdi-py/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    osdi-py
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../packages/umfpack-jax/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    umfpack-jax
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../ci-status/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    CI Status
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#overview" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Overview
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#dependency-graph-ascii" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Dependency Graph (ASCII)
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#machine-readable-graph-dot" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Machine-Readable Graph (DOT)
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#phase-timing-c6288-5k-nodes-apple-m4-pro" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Phase Timing (c6288, ~5k nodes, Apple M4 Pro)
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#parallelism-opportunities" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Parallelism Opportunities
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Parallelism Opportunities">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#1-scatter-permute_rhs" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        1. scatter ∥ permute_rhs
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#2-split-phase-factorization" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        2. Split-phase factorization
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#3-speculative-next-nr-build_system" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        3. Speculative next-NR build_system
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#4-pipelined-equilibrate-scatter" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        4. Pipelined equilibrate + scatter
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#5-cpu-spmv-parallelization" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        5. CPU SpMV parallelization
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#inter-step-data-dependencies" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Inter-Step Data Dependencies
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Inter-Step Data Dependencies">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#state-flow-between-steps" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        State Flow Between Steps
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#detailed-inter-step-dependencies" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Detailed Inter-Step Dependencies
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#critical-path-for-step-startup" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Critical Path for Step Startup
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#what-could-be-pipelined-speculative" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        What COULD Be Pipelined (Speculative)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#fixed-step-opportunity" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Fixed-Step Opportunity
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#machine-readable-dependency-table-json" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Machine-Readable Dependency Table (JSON)
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#batch-adaptive-mode" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Batch-Adaptive Mode
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Batch-Adaptive Mode">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#motivation" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Motivation
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#algorithm" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Algorithm
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#data-flow" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Data Flow
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#why-batching-enables-gpu-fusion" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Why Batching Enables GPU Fusion
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#batch-size-selection" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Batch Size Selection
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#lte-accuracy-with-batching" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        LTE Accuracy with Batching
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#implementation-sketch" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Implementation Sketch
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#comparison" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Comparison
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#empirical-lte-analysis-c6288" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Empirical LTE Analysis (c6288)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#double-buffered-pipelined-nr" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Double-Buffered Pipelined NR
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#combined-strategy" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Combined Strategy
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#dot-graph" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        DOT Graph
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              
+              <article class="md-content__inner md-typeset">
+                
+                  
+
+
+  
+  
+
+
+<h1 id="transient-step-data-dependencies">Transient Step Data Dependencies<a class="headerlink" href="#transient-step-data-dependencies" title="Permanent link">&para;</a></h1>
+<p>This document describes the data flow and dependencies within a single adaptive
+transient timestep, including the Newton-Raphson solve loop and the Sprux Metal
+sparse solver phases. It identifies parallelism opportunities.</p>
+<h2 id="overview">Overview<a class="headerlink" href="#overview" title="Permanent link">&para;</a></h2>
+<p>Each timestep in the adaptive transient simulation (<code>body_fn</code> in <code>full_mna.py</code>)
+follows this pipeline:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>State(prev) → [prep] → [NR loop] → [LTE check] → [accept/reject] → State(next)
+</code></pre></div>
+<h2 id="dependency-graph-ascii">Dependency Graph (ASCII)<a class="headerlink" href="#dependency-graph-ascii" title="Permanent link">&para;</a></h2>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a>TRANSIENT STEP
+<a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a>══════════════
+<a id="__codelineno-1-3" name="__codelineno-1-3" href="#__codelineno-1-3"></a>
+<a id="__codelineno-1-4" name="__codelineno-1-4" href="#__codelineno-1-4"></a>                    ┌─────────────────┐
+<a id="__codelineno-1-5" name="__codelineno-1-5" href="#__codelineno-1-5"></a>                    │  State (prev)   │
+<a id="__codelineno-1-6" name="__codelineno-1-6" href="#__codelineno-1-6"></a>                    │ X, Q, dQdt, dt  │
+<a id="__codelineno-1-7" name="__codelineno-1-7" href="#__codelineno-1-7"></a>                    └────────┬────────┘
+<a id="__codelineno-1-8" name="__codelineno-1-8" href="#__codelineno-1-8"></a>                             │
+<a id="__codelineno-1-9" name="__codelineno-1-9" href="#__codelineno-1-9"></a>              ┌──────────────┼──────────────┐
+<a id="__codelineno-1-10" name="__codelineno-1-10" href="#__codelineno-1-10"></a>              ▼              ▼              ▼
+<a id="__codelineno-1-11" name="__codelineno-1-11" href="#__codelineno-1-11"></a>    ┌─────────────┐  ┌──────────────┐  ┌────────────┐
+<a id="__codelineno-1-12" name="__codelineno-1-12" href="#__codelineno-1-12"></a>    │  integ_coeff│  │  source_eval │  │  predict   │
+<a id="__codelineno-1-13" name="__codelineno-1-13" href="#__codelineno-1-13"></a>    │  c0,c1,c2   │  │  vsrc, isrc  │  │  V_pred    │
+<a id="__codelineno-1-14" name="__codelineno-1-14" href="#__codelineno-1-14"></a>    └──────┬──────┘  └──────┬───────┘  └─────┬──────┘
+<a id="__codelineno-1-15" name="__codelineno-1-15" href="#__codelineno-1-15"></a>           │                │                │
+<a id="__codelineno-1-16" name="__codelineno-1-16" href="#__codelineno-1-16"></a>           └────────────────┼────────────────┘
+<a id="__codelineno-1-17" name="__codelineno-1-17" href="#__codelineno-1-17"></a>                            ▼
+<a id="__codelineno-1-18" name="__codelineno-1-18" href="#__codelineno-1-18"></a>              ┌─────────────────────────┐
+<a id="__codelineno-1-19" name="__codelineno-1-19" href="#__codelineno-1-19"></a>              │     NR SOLVE LOOP       │ ◄── lax.while_loop
+<a id="__codelineno-1-20" name="__codelineno-1-20" href="#__codelineno-1-20"></a>              │  (1-N iterations)       │     or lax.fori_loop
+<a id="__codelineno-1-21" name="__codelineno-1-21" href="#__codelineno-1-21"></a>              └────────────┬────────────┘
+<a id="__codelineno-1-22" name="__codelineno-1-22" href="#__codelineno-1-22"></a>                           │
+<a id="__codelineno-1-23" name="__codelineno-1-23" href="#__codelineno-1-23"></a>           ┌───────────────┼───────────────┐
+<a id="__codelineno-1-24" name="__codelineno-1-24" href="#__codelineno-1-24"></a>           ▼               ▼               ▼
+<a id="__codelineno-1-25" name="__codelineno-1-25" href="#__codelineno-1-25"></a>    ┌─────────────┐  ┌───────────┐  ┌────────────┐
+<a id="__codelineno-1-26" name="__codelineno-1-26" href="#__codelineno-1-26"></a>    │build_system │  │enforce_noi│  │ converge?  │
+<a id="__codelineno-1-27" name="__codelineno-1-27" href="#__codelineno-1-27"></a>    │ device eval │  │ mask J, f │  │ δ + f check│
+<a id="__codelineno-1-28" name="__codelineno-1-28" href="#__codelineno-1-28"></a>    │ + MNA stamp │  │           │  │            │
+<a id="__codelineno-1-29" name="__codelineno-1-29" href="#__codelineno-1-29"></a>    └──────┬──────┘  └─────┬─────┘  └────────────┘
+<a id="__codelineno-1-30" name="__codelineno-1-30" href="#__codelineno-1-30"></a>           │               │
+<a id="__codelineno-1-31" name="__codelineno-1-31" href="#__codelineno-1-31"></a>           ▼               ▼
+<a id="__codelineno-1-32" name="__codelineno-1-32" href="#__codelineno-1-32"></a>    ┌──────────────────────────────────────────────┐
+<a id="__codelineno-1-33" name="__codelineno-1-33" href="#__codelineno-1-33"></a>    │           Sprux FFI: solve(J, -f)            │
+<a id="__codelineno-1-34" name="__codelineno-1-34" href="#__codelineno-1-34"></a>    │                                              │
+<a id="__codelineno-1-35" name="__codelineno-1-35" href="#__codelineno-1-35"></a>    │  ┌──────────────┐                            │
+<a id="__codelineno-1-36" name="__codelineno-1-36" href="#__codelineno-1-36"></a>    │  │ equilibrate  │  CPU, O(nnz)               │
+<a id="__codelineno-1-37" name="__codelineno-1-37" href="#__codelineno-1-37"></a>    │  └──────┬───────┘                            │
+<a id="__codelineno-1-38" name="__codelineno-1-38" href="#__codelineno-1-38"></a>    │         ▼                                    │
+<a id="__codelineno-1-39" name="__codelineno-1-39" href="#__codelineno-1-39"></a>    │  ┌──────────────┐  ┌──────────────┐          │
+<a id="__codelineno-1-40" name="__codelineno-1-40" href="#__codelineno-1-40"></a>    │  │   scatter    │  │ permute_rhs  │          │
+<a id="__codelineno-1-41" name="__codelineno-1-41" href="#__codelineno-1-41"></a>    │  │ CSR→coalesced│  │ BTF+AMD perm │          │
+<a id="__codelineno-1-42" name="__codelineno-1-42" href="#__codelineno-1-42"></a>    │  │ CPU, O(nnz)  │  │ CPU, O(n)    │          │
+<a id="__codelineno-1-43" name="__codelineno-1-43" href="#__codelineno-1-43"></a>    │  └──────┬───────┘  └──────┬───────┘          │
+<a id="__codelineno-1-44" name="__codelineno-1-44" href="#__codelineno-1-44"></a>    │         └────────┬────────┘                  │
+<a id="__codelineno-1-45" name="__codelineno-1-45" href="#__codelineno-1-45"></a>    │                  ▼                           │
+<a id="__codelineno-1-46" name="__codelineno-1-46" href="#__codelineno-1-46"></a>    │  ┌──────────────────────────┐                │
+<a id="__codelineno-1-47" name="__codelineno-1-47" href="#__codelineno-1-47"></a>    │  │       factorLU          │  GPU            │
+<a id="__codelineno-1-48" name="__codelineno-1-48" href="#__codelineno-1-48"></a>    │  │  sparse_elim (levels)   │                 │
+<a id="__codelineno-1-49" name="__codelineno-1-49" href="#__codelineno-1-49"></a>    │  │  + dense getrf (lumps)  │                 │
+<a id="__codelineno-1-50" name="__codelineno-1-50" href="#__codelineno-1-50"></a>    │  └──────────┬──────────────┘                │
+<a id="__codelineno-1-51" name="__codelineno-1-51" href="#__codelineno-1-51"></a>    │             ▼                                │
+<a id="__codelineno-1-52" name="__codelineno-1-52" href="#__codelineno-1-52"></a>    │  ┌──────────────────────────┐                │
+<a id="__codelineno-1-53" name="__codelineno-1-53" href="#__codelineno-1-53"></a>    │  │       solveLU           │  GPU            │
+<a id="__codelineno-1-54" name="__codelineno-1-54" href="#__codelineno-1-54"></a>    │  │  fwd/back substitution  │                 │
+<a id="__codelineno-1-55" name="__codelineno-1-55" href="#__codelineno-1-55"></a>    │  └──────────┬──────────────┘                │
+<a id="__codelineno-1-56" name="__codelineno-1-56" href="#__codelineno-1-56"></a>    │             ▼                                │
+<a id="__codelineno-1-57" name="__codelineno-1-57" href="#__codelineno-1-57"></a>    │  ┌──────────────────────────┐                │
+<a id="__codelineno-1-58" name="__codelineno-1-58" href="#__codelineno-1-58"></a>    │  │   refinement (×N)       │  encoder cycle  │
+<a id="__codelineno-1-59" name="__codelineno-1-59" href="#__codelineno-1-59"></a>    │  │  ┌─ flush GPU ────────┐ │                 │
+<a id="__codelineno-1-60" name="__codelineno-1-60" href="#__codelineno-1-60"></a>    │  │  │ accumulate  (CPU)  │ │  O(n)           │
+<a id="__codelineno-1-61" name="__codelineno-1-61" href="#__codelineno-1-61"></a>    │  │  │ SpMV resid  (CPU)  │ │  O(nnz), f64    │
+<a id="__codelineno-1-62" name="__codelineno-1-62" href="#__codelineno-1-62"></a>    │  │  │ solveLU     (GPU)  │ │                 │
+<a id="__codelineno-1-63" name="__codelineno-1-63" href="#__codelineno-1-63"></a>    │  │  └────────────────────┘ │                 │
+<a id="__codelineno-1-64" name="__codelineno-1-64" href="#__codelineno-1-64"></a>    │  └──────────┬──────────────┘                │
+<a id="__codelineno-1-65" name="__codelineno-1-65" href="#__codelineno-1-65"></a>    │             ▼                                │
+<a id="__codelineno-1-66" name="__codelineno-1-66" href="#__codelineno-1-66"></a>    │  ┌──────────────────────────┐                │
+<a id="__codelineno-1-67" name="__codelineno-1-67" href="#__codelineno-1-67"></a>    │  │  final flush + unperm   │  CPU, O(n)      │
+<a id="__codelineno-1-68" name="__codelineno-1-68" href="#__codelineno-1-68"></a>    │  └──────────────────────────┘                │
+<a id="__codelineno-1-69" name="__codelineno-1-69" href="#__codelineno-1-69"></a>    └──────────────────┬───────────────────────────┘
+<a id="__codelineno-1-70" name="__codelineno-1-70" href="#__codelineno-1-70"></a>                       │
+<a id="__codelineno-1-71" name="__codelineno-1-71" href="#__codelineno-1-71"></a>                       ▼ (X_new, Q, dQdt, I_vsource)
+<a id="__codelineno-1-72" name="__codelineno-1-72" href="#__codelineno-1-72"></a>                ┌──────────────┐
+<a id="__codelineno-1-73" name="__codelineno-1-73" href="#__codelineno-1-73"></a>                │   LTE check  │
+<a id="__codelineno-1-74" name="__codelineno-1-74" href="#__codelineno-1-74"></a>                │ V_new vs     │
+<a id="__codelineno-1-75" name="__codelineno-1-75" href="#__codelineno-1-75"></a>                │ V_pred       │
+<a id="__codelineno-1-76" name="__codelineno-1-76" href="#__codelineno-1-76"></a>                └──────┬───────┘
+<a id="__codelineno-1-77" name="__codelineno-1-77" href="#__codelineno-1-77"></a>                       │
+<a id="__codelineno-1-78" name="__codelineno-1-78" href="#__codelineno-1-78"></a>                ┌──────┴──────┐
+<a id="__codelineno-1-79" name="__codelineno-1-79" href="#__codelineno-1-79"></a>                ▼             ▼
+<a id="__codelineno-1-80" name="__codelineno-1-80" href="#__codelineno-1-80"></a>          ┌─────────┐  ┌──────────┐
+<a id="__codelineno-1-81" name="__codelineno-1-81" href="#__codelineno-1-81"></a>          │ ACCEPT  │  │  REJECT  │
+<a id="__codelineno-1-82" name="__codelineno-1-82" href="#__codelineno-1-82"></a>          │ update  │  │ halve dt │
+<a id="__codelineno-1-83" name="__codelineno-1-83" href="#__codelineno-1-83"></a>          │ history │  │ retry    │
+<a id="__codelineno-1-84" name="__codelineno-1-84" href="#__codelineno-1-84"></a>          └─────────┘  └──────────┘
+</code></pre></div>
+<h2 id="machine-readable-graph-dot">Machine-Readable Graph (DOT)<a class="headerlink" href="#machine-readable-graph-dot" title="Permanent link">&para;</a></h2>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a><span class="k">digraph</span><span class="w"> </span><span class="nt">transient_step</span><span class="w"> </span><span class="p">{</span>
+<a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a><span class="w">  </span><span class="na">rankdir</span><span class="p">=</span><span class="s">TB</span><span class="p">;</span>
+<a id="__codelineno-2-3" name="__codelineno-2-3" href="#__codelineno-2-3"></a><span class="w">  </span><span class="k">node</span><span class="w"> </span><span class="p">[</span><span class="na">shape</span><span class="p">=</span><span class="s">box</span><span class="p">,</span><span class="w"> </span><span class="na">style</span><span class="p">=</span><span class="s">rounded</span><span class="p">];</span>
+<a id="__codelineno-2-4" name="__codelineno-2-4" href="#__codelineno-2-4"></a>
+<a id="__codelineno-2-5" name="__codelineno-2-5" href="#__codelineno-2-5"></a><span class="w">  </span><span class="c1">// State</span>
+<a id="__codelineno-2-6" name="__codelineno-2-6" href="#__codelineno-2-6"></a><span class="w">  </span><span class="nt">state_prev</span><span class="w"> </span><span class="p">[</span><span class="na">label</span><span class="p">=</span><span class="s2">&quot;State(prev)\nX, Q, dQdt, dt&quot;</span><span class="p">];</span>
+<a id="__codelineno-2-7" name="__codelineno-2-7" href="#__codelineno-2-7"></a><span class="w">  </span><span class="nt">state_next</span><span class="w"> </span><span class="p">[</span><span class="na">label</span><span class="p">=</span><span class="s2">&quot;State(next)&quot;</span><span class="p">];</span>
+<a id="__codelineno-2-8" name="__codelineno-2-8" href="#__codelineno-2-8"></a>
+<a id="__codelineno-2-9" name="__codelineno-2-9" href="#__codelineno-2-9"></a><span class="w">  </span><span class="c1">// Preparation (independent)</span>
+<a id="__codelineno-2-10" name="__codelineno-2-10" href="#__codelineno-2-10"></a><span class="w">  </span><span class="k">subgraph</span><span class="w"> </span><span class="nt">cluster_prep</span><span class="w"> </span><span class="p">{</span>
+<a id="__codelineno-2-11" name="__codelineno-2-11" href="#__codelineno-2-11"></a><span class="w">    </span><span class="na">label</span><span class="p">=</span><span class="s2">&quot;Preparation (independent)&quot;</span><span class="p">;</span>
+<a id="__codelineno-2-12" name="__codelineno-2-12" href="#__codelineno-2-12"></a><span class="w">    </span><span class="na">style</span><span class="p">=</span><span class="s">dashed</span><span class="p">;</span>
+<a id="__codelineno-2-13" name="__codelineno-2-13" href="#__codelineno-2-13"></a><span class="w">    </span><span class="nt">integ_coeff</span><span class="w"> </span><span class="p">[</span><span class="na">label</span><span class="p">=</span><span class="s2">&quot;integ_coeff\nc0, c1, c2\nCPU ~0µs&quot;</span><span class="p">];</span>
+<a id="__codelineno-2-14" name="__codelineno-2-14" href="#__codelineno-2-14"></a><span class="w">    </span><span class="nt">source_eval</span><span class="w"> </span><span class="p">[</span><span class="na">label</span><span class="p">=</span><span class="s2">&quot;source_eval\nvsrc(t+dt), isrc(t+dt)\nCPU ~0µs&quot;</span><span class="p">];</span>
+<a id="__codelineno-2-15" name="__codelineno-2-15" href="#__codelineno-2-15"></a><span class="w">    </span><span class="nt">predict</span><span class="w"> </span><span class="p">[</span><span class="na">label</span><span class="p">=</span><span class="s2">&quot;predict_voltage\nV_pred, pred_err_coeff\nCPU ~0µs&quot;</span><span class="p">];</span>
+<a id="__codelineno-2-16" name="__codelineno-2-16" href="#__codelineno-2-16"></a><span class="w">  </span><span class="p">}</span>
+<a id="__codelineno-2-17" name="__codelineno-2-17" href="#__codelineno-2-17"></a>
+<a id="__codelineno-2-18" name="__codelineno-2-18" href="#__codelineno-2-18"></a><span class="w">  </span><span class="c1">// NR loop</span>
+<a id="__codelineno-2-19" name="__codelineno-2-19" href="#__codelineno-2-19"></a><span class="w">  </span><span class="k">subgraph</span><span class="w"> </span><span class="nt">cluster_nr</span><span class="w"> </span><span class="p">{</span>
+<a id="__codelineno-2-20" name="__codelineno-2-20" href="#__codelineno-2-20"></a><span class="w">    </span><span class="na">label</span><span class="p">=</span><span class="s2">&quot;NR Iteration (while_loop)&quot;</span><span class="p">;</span>
+<a id="__codelineno-2-21" name="__codelineno-2-21" href="#__codelineno-2-21"></a><span class="w">    </span><span class="na">style</span><span class="p">=</span><span class="s">dashed</span><span class="p">;</span>
+<a id="__codelineno-2-22" name="__codelineno-2-22" href="#__codelineno-2-22"></a>
+<a id="__codelineno-2-23" name="__codelineno-2-23" href="#__codelineno-2-23"></a><span class="w">    </span><span class="nt">build_system</span><span class="w"> </span><span class="p">[</span><span class="na">label</span><span class="p">=</span><span class="s2">&quot;build_system\ndevice eval (vmap) + MNA stamp\nCPU/JAX, O(n_devices × n_params)&quot;</span><span class="p">];</span>
+<a id="__codelineno-2-24" name="__codelineno-2-24" href="#__codelineno-2-24"></a><span class="w">    </span><span class="nt">enforce_noi</span><span class="w"> </span><span class="p">[</span><span class="na">label</span><span class="p">=</span><span class="s2">&quot;enforce_noi\nmask J rows/cols for NOI nodes\nCPU, O(nnz)&quot;</span><span class="p">];</span>
+<a id="__codelineno-2-25" name="__codelineno-2-25" href="#__codelineno-2-25"></a><span class="w">    </span><span class="nt">convergence_check</span><span class="w"> </span><span class="p">[</span><span class="na">label</span><span class="p">=</span><span class="s2">&quot;convergence_check\nresidual + delta criteria\nCPU, O(n)&quot;</span><span class="p">];</span>
+<a id="__codelineno-2-26" name="__codelineno-2-26" href="#__codelineno-2-26"></a>
+<a id="__codelineno-2-27" name="__codelineno-2-27" href="#__codelineno-2-27"></a><span class="w">    </span><span class="c1">// Sprux phases</span>
+<a id="__codelineno-2-28" name="__codelineno-2-28" href="#__codelineno-2-28"></a><span class="w">    </span><span class="k">subgraph</span><span class="w"> </span><span class="nt">cluster_sprux</span><span class="w"> </span><span class="p">{</span>
+<a id="__codelineno-2-29" name="__codelineno-2-29" href="#__codelineno-2-29"></a><span class="w">      </span><span class="na">label</span><span class="p">=</span><span class="s2">&quot;Sprux FFI solve(J, -f)&quot;</span><span class="p">;</span>
+<a id="__codelineno-2-30" name="__codelineno-2-30" href="#__codelineno-2-30"></a><span class="w">      </span><span class="na">color</span><span class="p">=</span><span class="s">blue</span><span class="p">;</span>
+<a id="__codelineno-2-31" name="__codelineno-2-31" href="#__codelineno-2-31"></a>
+<a id="__codelineno-2-32" name="__codelineno-2-32" href="#__codelineno-2-32"></a><span class="w">      </span><span class="nt">equilibrate</span><span class="w"> </span><span class="p">[</span><span class="na">label</span><span class="p">=</span><span class="s2">&quot;equilibrate\nrow/col scaling\nCPU, O(nnz)&quot;</span><span class="p">];</span>
+<a id="__codelineno-2-33" name="__codelineno-2-33" href="#__codelineno-2-33"></a><span class="w">      </span><span class="nt">scatter</span><span class="w"> </span><span class="p">[</span><span class="na">label</span><span class="p">=</span><span class="s2">&quot;scatter\nCSR→coalesced via map\nCPU→GPU, O(nnz)&quot;</span><span class="p">];</span>
+<a id="__codelineno-2-34" name="__codelineno-2-34" href="#__codelineno-2-34"></a><span class="w">      </span><span class="nt">permute_rhs</span><span class="w"> </span><span class="p">[</span><span class="na">label</span><span class="p">=</span><span class="s2">&quot;permute_rhs\nBTF+AMD reorder\nCPU, O(n)&quot;</span><span class="p">];</span>
+<a id="__codelineno-2-35" name="__codelineno-2-35" href="#__codelineno-2-35"></a><span class="w">      </span><span class="nt">factor_lu</span><span class="w"> </span><span class="p">[</span><span class="na">label</span><span class="p">=</span><span class="s2">&quot;factorLU\nsparse_elim + dense getrf\nGPU compute&quot;</span><span class="p">];</span>
+<a id="__codelineno-2-36" name="__codelineno-2-36" href="#__codelineno-2-36"></a><span class="w">      </span><span class="nt">solve_lu</span><span class="w"> </span><span class="p">[</span><span class="na">label</span><span class="p">=</span><span class="s2">&quot;solveLU\nfwd/back substitution\nGPU compute&quot;</span><span class="p">];</span>
+<a id="__codelineno-2-37" name="__codelineno-2-37" href="#__codelineno-2-37"></a>
+<a id="__codelineno-2-38" name="__codelineno-2-38" href="#__codelineno-2-38"></a><span class="w">      </span><span class="c1">// Refinement sub-loop</span>
+<a id="__codelineno-2-39" name="__codelineno-2-39" href="#__codelineno-2-39"></a><span class="w">      </span><span class="k">subgraph</span><span class="w"> </span><span class="nt">cluster_refine</span><span class="w"> </span><span class="p">{</span>
+<a id="__codelineno-2-40" name="__codelineno-2-40" href="#__codelineno-2-40"></a><span class="w">        </span><span class="na">label</span><span class="p">=</span><span class="s2">&quot;refinement (×N, early term)&quot;</span><span class="p">;</span>
+<a id="__codelineno-2-41" name="__codelineno-2-41" href="#__codelineno-2-41"></a><span class="w">        </span><span class="na">style</span><span class="p">=</span><span class="s">dotted</span><span class="p">;</span>
+<a id="__codelineno-2-42" name="__codelineno-2-42" href="#__codelineno-2-42"></a>
+<a id="__codelineno-2-43" name="__codelineno-2-43" href="#__codelineno-2-43"></a><span class="w">        </span><span class="nt">refine_flush</span><span class="w"> </span><span class="p">[</span><span class="na">label</span><span class="p">=</span><span class="s2">&quot;flush\nclearExternalEncoder\nGPU sync&quot;</span><span class="p">];</span>
+<a id="__codelineno-2-44" name="__codelineno-2-44" href="#__codelineno-2-44"></a><span class="w">        </span><span class="nt">refine_accum</span><span class="w"> </span><span class="p">[</span><span class="na">label</span><span class="p">=</span><span class="s2">&quot;accumulate\ncolScale × solution\nCPU, O(n)&quot;</span><span class="p">];</span>
+<a id="__codelineno-2-45" name="__codelineno-2-45" href="#__codelineno-2-45"></a><span class="w">        </span><span class="nt">refine_spmv</span><span class="w"> </span><span class="p">[</span><span class="na">label</span><span class="p">=</span><span class="s2">&quot;SpMV residual\nb - A×x_accum\nCPU, O(nnz), f64&quot;</span><span class="p">];</span>
+<a id="__codelineno-2-46" name="__codelineno-2-46" href="#__codelineno-2-46"></a><span class="w">        </span><span class="nt">refine_solve</span><span class="w"> </span><span class="p">[</span><span class="na">label</span><span class="p">=</span><span class="s2">&quot;solveLU\ncorrection solve\nGPU compute&quot;</span><span class="p">];</span>
+<a id="__codelineno-2-47" name="__codelineno-2-47" href="#__codelineno-2-47"></a>
+<a id="__codelineno-2-48" name="__codelineno-2-48" href="#__codelineno-2-48"></a><span class="w">        </span><span class="nt">refine_flush</span><span class="w"> </span><span class="o">-&gt;</span><span class="w"> </span><span class="nt">refine_accum</span><span class="w"> </span><span class="o">-&gt;</span><span class="w"> </span><span class="nt">refine_spmv</span><span class="w"> </span><span class="o">-&gt;</span><span class="w"> </span><span class="nt">refine_solve</span><span class="p">;</span>
+<a id="__codelineno-2-49" name="__codelineno-2-49" href="#__codelineno-2-49"></a><span class="w">        </span><span class="nt">refine_solve</span><span class="w"> </span><span class="o">-&gt;</span><span class="w"> </span><span class="nt">refine_flush</span><span class="w"> </span><span class="p">[</span><span class="na">style</span><span class="p">=</span><span class="s">dashed</span><span class="p">,</span><span class="w"> </span><span class="na">label</span><span class="p">=</span><span class="s2">&quot;next iter&quot;</span><span class="p">];</span>
+<a id="__codelineno-2-50" name="__codelineno-2-50" href="#__codelineno-2-50"></a><span class="w">      </span><span class="p">}</span>
+<a id="__codelineno-2-51" name="__codelineno-2-51" href="#__codelineno-2-51"></a>
+<a id="__codelineno-2-52" name="__codelineno-2-52" href="#__codelineno-2-52"></a><span class="w">      </span><span class="nt">final_flush</span><span class="w"> </span><span class="p">[</span><span class="na">label</span><span class="p">=</span><span class="s2">&quot;final_flush + unpermute\nCPU, O(n)&quot;</span><span class="p">];</span>
+<a id="__codelineno-2-53" name="__codelineno-2-53" href="#__codelineno-2-53"></a><span class="w">    </span><span class="p">}</span>
+<a id="__codelineno-2-54" name="__codelineno-2-54" href="#__codelineno-2-54"></a><span class="w">  </span><span class="p">}</span>
+<a id="__codelineno-2-55" name="__codelineno-2-55" href="#__codelineno-2-55"></a>
+<a id="__codelineno-2-56" name="__codelineno-2-56" href="#__codelineno-2-56"></a><span class="w">  </span><span class="c1">// LTE</span>
+<a id="__codelineno-2-57" name="__codelineno-2-57" href="#__codelineno-2-57"></a><span class="w">  </span><span class="nt">lte_check</span><span class="w"> </span><span class="p">[</span><span class="na">label</span><span class="p">=</span><span class="s2">&quot;LTE check\nV_new vs V_pred\nCPU, O(n)&quot;</span><span class="p">];</span>
+<a id="__codelineno-2-58" name="__codelineno-2-58" href="#__codelineno-2-58"></a><span class="w">  </span><span class="nt">accept</span><span class="w"> </span><span class="p">[</span><span class="na">label</span><span class="p">=</span><span class="s2">&quot;ACCEPT\nupdate history&quot;</span><span class="p">];</span>
+<a id="__codelineno-2-59" name="__codelineno-2-59" href="#__codelineno-2-59"></a><span class="w">  </span><span class="nt">reject</span><span class="w"> </span><span class="p">[</span><span class="na">label</span><span class="p">=</span><span class="s2">&quot;REJECT\nhalve dt, retry&quot;</span><span class="p">];</span>
+<a id="__codelineno-2-60" name="__codelineno-2-60" href="#__codelineno-2-60"></a>
+<a id="__codelineno-2-61" name="__codelineno-2-61" href="#__codelineno-2-61"></a><span class="w">  </span><span class="c1">// Dependencies</span>
+<a id="__codelineno-2-62" name="__codelineno-2-62" href="#__codelineno-2-62"></a><span class="w">  </span><span class="nt">state_prev</span><span class="w"> </span><span class="o">-&gt;</span><span class="w"> </span><span class="p">{</span><span class="nt">integ_coeff</span><span class="w"> </span><span class="nt">source_eval</span><span class="w"> </span><span class="nt">predict</span><span class="p">};</span>
+<a id="__codelineno-2-63" name="__codelineno-2-63" href="#__codelineno-2-63"></a><span class="w">  </span><span class="p">{</span><span class="nt">integ_coeff</span><span class="w"> </span><span class="nt">source_eval</span><span class="w"> </span><span class="nt">predict</span><span class="p">}</span><span class="w"> </span><span class="o">-&gt;</span><span class="w"> </span><span class="nt">build_system</span><span class="p">;</span>
+<a id="__codelineno-2-64" name="__codelineno-2-64" href="#__codelineno-2-64"></a>
+<a id="__codelineno-2-65" name="__codelineno-2-65" href="#__codelineno-2-65"></a><span class="w">  </span><span class="nt">build_system</span><span class="w"> </span><span class="o">-&gt;</span><span class="w"> </span><span class="nt">enforce_noi</span><span class="p">;</span>
+<a id="__codelineno-2-66" name="__codelineno-2-66" href="#__codelineno-2-66"></a><span class="w">  </span><span class="nt">build_system</span><span class="w"> </span><span class="o">-&gt;</span><span class="w"> </span><span class="nt">convergence_check</span><span class="p">;</span>
+<a id="__codelineno-2-67" name="__codelineno-2-67" href="#__codelineno-2-67"></a><span class="w">  </span><span class="nt">enforce_noi</span><span class="w"> </span><span class="o">-&gt;</span><span class="w"> </span><span class="nt">equilibrate</span><span class="p">;</span>
+<a id="__codelineno-2-68" name="__codelineno-2-68" href="#__codelineno-2-68"></a>
+<a id="__codelineno-2-69" name="__codelineno-2-69" href="#__codelineno-2-69"></a><span class="w">  </span><span class="nt">equilibrate</span><span class="w"> </span><span class="o">-&gt;</span><span class="w"> </span><span class="nt">scatter</span><span class="p">;</span>
+<a id="__codelineno-2-70" name="__codelineno-2-70" href="#__codelineno-2-70"></a><span class="w">  </span><span class="nt">equilibrate</span><span class="w"> </span><span class="o">-&gt;</span><span class="w"> </span><span class="nt">permute_rhs</span><span class="p">;</span>
+<a id="__codelineno-2-71" name="__codelineno-2-71" href="#__codelineno-2-71"></a><span class="w">  </span><span class="nt">scatter</span><span class="w"> </span><span class="o">-&gt;</span><span class="w"> </span><span class="nt">factor_lu</span><span class="p">;</span>
+<a id="__codelineno-2-72" name="__codelineno-2-72" href="#__codelineno-2-72"></a><span class="w">  </span><span class="nt">permute_rhs</span><span class="w"> </span><span class="o">-&gt;</span><span class="w"> </span><span class="nt">factor_lu</span><span class="w"> </span><span class="p">[</span><span class="na">style</span><span class="p">=</span><span class="s">dashed</span><span class="p">,</span><span class="w"> </span><span class="na">label</span><span class="p">=</span><span class="s2">&quot;independent\nbut sequenced&quot;</span><span class="p">];</span>
+<a id="__codelineno-2-73" name="__codelineno-2-73" href="#__codelineno-2-73"></a><span class="w">  </span><span class="nt">factor_lu</span><span class="w"> </span><span class="o">-&gt;</span><span class="w"> </span><span class="nt">solve_lu</span><span class="p">;</span>
+<a id="__codelineno-2-74" name="__codelineno-2-74" href="#__codelineno-2-74"></a><span class="w">  </span><span class="nt">solve_lu</span><span class="w"> </span><span class="o">-&gt;</span><span class="w"> </span><span class="nt">refine_flush</span><span class="p">;</span>
+<a id="__codelineno-2-75" name="__codelineno-2-75" href="#__codelineno-2-75"></a><span class="w">  </span><span class="nt">refine_solve</span><span class="w"> </span><span class="o">-&gt;</span><span class="w"> </span><span class="nt">final_flush</span><span class="w"> </span><span class="p">[</span><span class="na">style</span><span class="p">=</span><span class="s">dashed</span><span class="p">,</span><span class="w"> </span><span class="na">label</span><span class="p">=</span><span class="s2">&quot;after last iter&quot;</span><span class="p">];</span>
+<a id="__codelineno-2-76" name="__codelineno-2-76" href="#__codelineno-2-76"></a>
+<a id="__codelineno-2-77" name="__codelineno-2-77" href="#__codelineno-2-77"></a><span class="w">  </span><span class="nt">final_flush</span><span class="w"> </span><span class="o">-&gt;</span><span class="w"> </span><span class="nt">convergence_check</span><span class="w"> </span><span class="p">[</span><span class="na">style</span><span class="p">=</span><span class="s">dashed</span><span class="p">,</span><span class="w"> </span><span class="na">label</span><span class="p">=</span><span class="s2">&quot;delta for\nnext NR iter&quot;</span><span class="p">];</span>
+<a id="__codelineno-2-78" name="__codelineno-2-78" href="#__codelineno-2-78"></a><span class="w">  </span><span class="nt">convergence_check</span><span class="w"> </span><span class="o">-&gt;</span><span class="w"> </span><span class="nt">build_system</span><span class="w"> </span><span class="p">[</span><span class="na">style</span><span class="p">=</span><span class="s">dashed</span><span class="p">,</span><span class="w"> </span><span class="na">label</span><span class="p">=</span><span class="s2">&quot;if not converged&quot;</span><span class="p">];</span>
+<a id="__codelineno-2-79" name="__codelineno-2-79" href="#__codelineno-2-79"></a>
+<a id="__codelineno-2-80" name="__codelineno-2-80" href="#__codelineno-2-80"></a><span class="w">  </span><span class="nt">final_flush</span><span class="w"> </span><span class="o">-&gt;</span><span class="w"> </span><span class="nt">lte_check</span><span class="p">;</span>
+<a id="__codelineno-2-81" name="__codelineno-2-81" href="#__codelineno-2-81"></a><span class="w">  </span><span class="nt">predict</span><span class="w"> </span><span class="o">-&gt;</span><span class="w"> </span><span class="nt">lte_check</span><span class="p">;</span>
+<a id="__codelineno-2-82" name="__codelineno-2-82" href="#__codelineno-2-82"></a><span class="w">  </span><span class="nt">lte_check</span><span class="w"> </span><span class="o">-&gt;</span><span class="w"> </span><span class="nt">accept</span><span class="p">;</span>
+<a id="__codelineno-2-83" name="__codelineno-2-83" href="#__codelineno-2-83"></a><span class="w">  </span><span class="nt">lte_check</span><span class="w"> </span><span class="o">-&gt;</span><span class="w"> </span><span class="nt">reject</span><span class="p">;</span>
+<a id="__codelineno-2-84" name="__codelineno-2-84" href="#__codelineno-2-84"></a><span class="w">  </span><span class="nt">accept</span><span class="w"> </span><span class="o">-&gt;</span><span class="w"> </span><span class="nt">state_next</span><span class="p">;</span>
+<a id="__codelineno-2-85" name="__codelineno-2-85" href="#__codelineno-2-85"></a><span class="w">  </span><span class="nt">reject</span><span class="w"> </span><span class="o">-&gt;</span><span class="w"> </span><span class="nt">state_prev</span><span class="w"> </span><span class="p">[</span><span class="na">style</span><span class="p">=</span><span class="s">dashed</span><span class="p">,</span><span class="w"> </span><span class="na">label</span><span class="p">=</span><span class="s2">&quot;retry with\nsmaller dt&quot;</span><span class="p">];</span>
+<a id="__codelineno-2-86" name="__codelineno-2-86" href="#__codelineno-2-86"></a><span class="p">}</span>
+</code></pre></div>
+<h2 id="phase-timing-c6288-5k-nodes-apple-m4-pro">Phase Timing (c6288, ~5k nodes, Apple M4 Pro)<a class="headerlink" href="#phase-timing-c6288-5k-nodes-apple-m4-pro" title="Permanent link">&para;</a></h2>
+<table>
+<thead>
+<tr>
+<th>Phase</th>
+<th>Location</th>
+<th>Time (ms)</th>
+<th>Complexity</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>integ_coeff</td>
+<td>CPU</td>
+<td>~0</td>
+<td>O(1)</td>
+</tr>
+<tr>
+<td>source_eval</td>
+<td>CPU</td>
+<td>~0</td>
+<td>O(n_sources)</td>
+</tr>
+<tr>
+<td>predict_voltage</td>
+<td>CPU</td>
+<td>~0</td>
+<td>O(n)</td>
+</tr>
+<tr>
+<td>build_system</td>
+<td>CPU/JAX</td>
+<td>~15-20</td>
+<td>O(n_devices × params)</td>
+</tr>
+<tr>
+<td>enforce_noi</td>
+<td>CPU</td>
+<td>~0</td>
+<td>O(nnz)</td>
+</tr>
+<tr>
+<td><strong>equilibrate</strong></td>
+<td>CPU</td>
+<td><strong>5-10</strong></td>
+<td>O(nnz)</td>
+</tr>
+<tr>
+<td><strong>scatter</strong></td>
+<td>CPU→GPU</td>
+<td><strong>2-5</strong></td>
+<td>O(nnz)</td>
+</tr>
+<tr>
+<td>permute_rhs</td>
+<td>CPU</td>
+<td>~1</td>
+<td>O(n)</td>
+</tr>
+<tr>
+<td><strong>factorLU</strong></td>
+<td>GPU</td>
+<td><strong>30-40</strong></td>
+<td>supernodal LU</td>
+</tr>
+<tr>
+<td>solveLU</td>
+<td>GPU</td>
+<td>2-5</td>
+<td>fwd/back subst</td>
+</tr>
+<tr>
+<td>refine (×N)</td>
+<td>CPU+GPU</td>
+<td>5-15</td>
+<td>N × (O(nnz) + solve)</td>
+</tr>
+<tr>
+<td>LTE check</td>
+<td>CPU</td>
+<td>~0</td>
+<td>O(n)</td>
+</tr>
+<tr>
+<td><strong>Total per step</strong></td>
+<td></td>
+<td><strong>~80</strong></td>
+<td></td>
+</tr>
+<tr>
+<td>UMFPACK comparison</td>
+<td>CPU</td>
+<td>~60</td>
+<td></td>
+</tr>
+</tbody>
+</table>
+<h2 id="parallelism-opportunities">Parallelism Opportunities<a class="headerlink" href="#parallelism-opportunities" title="Permanent link">&para;</a></h2>
+<h3 id="1-scatter-permute_rhs">1. scatter ∥ permute_rhs<a class="headerlink" href="#1-scatter-permute_rhs" title="Permanent link">&para;</a></h3>
+<p>These write to different buffers (<code>dataGpu</code> vs <code>xGpu</code>) and are independent.
+Savings: ~1ms (minor).</p>
+<h3 id="2-split-phase-factorization">2. Split-phase factorization<a class="headerlink" href="#2-split-phase-factorization" title="Permanent link">&para;</a></h3>
+<p><code>beginFactorLU</code> submits GPU sparse elimination and returns immediately.
+CPU can do refinement SpMV from the previous iteration while GPU factors.
+<code>finishFactorLU</code> waits for GPU and runs dense loop.
+Savings: overlap ~3ms CPU SpMV with GPU sparse elim.</p>
+<h3 id="3-speculative-next-nr-build_system">3. Speculative next-NR build_system<a class="headerlink" href="#3-speculative-next-nr-build_system" title="Permanent link">&para;</a></h3>
+<p>After factorLU is submitted (GPU busy), CPU could speculatively start
+<code>build_system</code> for the next NR iteration. If convergence check passes,
+discard the speculative work. If it fails, the build_system result is
+ready immediately.
+Savings: overlap ~15-20ms build_system with GPU factor+solve.
+Risk: wasted work on convergence (typical NR = 1-2 iterations).</p>
+<h3 id="4-pipelined-equilibrate-scatter">4. Pipelined equilibrate + scatter<a class="headerlink" href="#4-pipelined-equilibrate-scatter" title="Permanent link">&para;</a></h3>
+<p>For the next NR iteration, equilibration could start as soon as
+<code>build_system</code> produces the new CSR values, even before the current
+solve completes.</p>
+<h3 id="5-cpu-spmv-parallelization">5. CPU SpMV parallelization<a class="headerlink" href="#5-cpu-spmv-parallelization" title="Permanent link">&para;</a></h3>
+<p>The f64 SpMV in refinement is single-threaded. Using Accelerate's
+<code>sparse_matrix_vector_multiply_double</code> or OpenMP could give 2-4x speedup.
+Savings: ~2ms per refinement iteration.</p>
+<h2 id="inter-step-data-dependencies">Inter-Step Data Dependencies<a class="headerlink" href="#inter-step-data-dependencies" title="Permanent link">&para;</a></h2>
+<p>Each step produces state consumed by the next. The key question for
+pipelining is: which outputs from step k are needed to <em>start</em> step k+1?</p>
+<h3 id="state-flow-between-steps">State Flow Between Steps<a class="headerlink" href="#state-flow-between-steps" title="Permanent link">&para;</a></h3>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a><span class="k">digraph</span><span class="w"> </span><span class="nt">inter_step</span><span class="w"> </span><span class="p">{</span>
+<a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a><span class="w">  </span><span class="na">rankdir</span><span class="p">=</span><span class="s">LR</span><span class="p">;</span>
+<a id="__codelineno-3-3" name="__codelineno-3-3" href="#__codelineno-3-3"></a><span class="w">  </span><span class="k">node</span><span class="w"> </span><span class="p">[</span><span class="na">shape</span><span class="p">=</span><span class="s">record</span><span class="p">,</span><span class="w"> </span><span class="na">style</span><span class="p">=</span><span class="s">rounded</span><span class="p">];</span>
+<a id="__codelineno-3-4" name="__codelineno-3-4" href="#__codelineno-3-4"></a>
+<a id="__codelineno-3-5" name="__codelineno-3-5" href="#__codelineno-3-5"></a><span class="w">  </span><span class="nt">step_k</span><span class="w"> </span><span class="p">[</span><span class="na">label</span><span class="p">=</span><span class="s2">&quot;{Step k|{X_new|Q_new|dQdt_new|I_vsource}|{V_history|dt_history|dt_new}}&quot;</span><span class="p">];</span>
+<a id="__codelineno-3-6" name="__codelineno-3-6" href="#__codelineno-3-6"></a><span class="w">  </span><span class="nt">step_k1</span><span class="w"> </span><span class="p">[</span><span class="na">label</span><span class="p">=</span><span class="s2">&quot;{Step k+1|{integ_coeff|source_eval|predict|build_system|...}}&quot;</span><span class="p">];</span>
+<a id="__codelineno-3-7" name="__codelineno-3-7" href="#__codelineno-3-7"></a>
+<a id="__codelineno-3-8" name="__codelineno-3-8" href="#__codelineno-3-8"></a><span class="w">  </span><span class="nt">step_k</span><span class="w"> </span><span class="o">-&gt;</span><span class="w"> </span><span class="nt">step_k1</span><span class="w"> </span><span class="p">[</span><span class="na">label</span><span class="p">=</span><span class="s2">&quot;all state&quot;</span><span class="p">];</span>
+<a id="__codelineno-3-9" name="__codelineno-3-9" href="#__codelineno-3-9"></a><span class="p">}</span>
+</code></pre></div>
+<h3 id="detailed-inter-step-dependencies">Detailed Inter-Step Dependencies<a class="headerlink" href="#detailed-inter-step-dependencies" title="Permanent link">&para;</a></h3>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a>Step k outputs              Step k+1 inputs              When needed
+<a id="__codelineno-4-2" name="__codelineno-4-2" href="#__codelineno-4-2"></a>─────────────────           ──────────────────           ────────────
+<a id="__codelineno-4-3" name="__codelineno-4-3" href="#__codelineno-4-3"></a>X_new (voltages)     ──→    build_system (X_init)        NR iteration start
+<a id="__codelineno-4-4" name="__codelineno-4-4" href="#__codelineno-4-4"></a>                     ──→    predict_voltage (V_history)   step start (via history)
+<a id="__codelineno-4-5" name="__codelineno-4-5" href="#__codelineno-4-5"></a>                     ──→    LTE V_max_historic update     step end
+<a id="__codelineno-4-6" name="__codelineno-4-6" href="#__codelineno-4-6"></a>
+<a id="__codelineno-4-7" name="__codelineno-4-7" href="#__codelineno-4-7"></a>Q_new (charges)      ──→    integ companion (Q_prev)     NR iteration (c1 term)
+<a id="__codelineno-4-8" name="__codelineno-4-8" href="#__codelineno-4-8"></a>Q_prev → Q_prev2    ──→    GEAR2 companion (c2 term)    NR iteration
+<a id="__codelineno-4-9" name="__codelineno-4-9" href="#__codelineno-4-9"></a>
+<a id="__codelineno-4-10" name="__codelineno-4-10" href="#__codelineno-4-10"></a>dQdt_new             ──→    TRAP companion (d1 term)     NR iteration
+<a id="__codelineno-4-11" name="__codelineno-4-11" href="#__codelineno-4-11"></a>
+<a id="__codelineno-4-12" name="__codelineno-4-12" href="#__codelineno-4-12"></a>dt_new               ──→    integ_coeff (c0=f(dt))       step start
+<a id="__codelineno-4-13" name="__codelineno-4-13" href="#__codelineno-4-13"></a>                     ──→    source_eval (t + dt)          step start
+<a id="__codelineno-4-14" name="__codelineno-4-14" href="#__codelineno-4-14"></a>                     ──→    predict_voltage               step start
+<a id="__codelineno-4-15" name="__codelineno-4-15" href="#__codelineno-4-15"></a>                     ──→    GEAR2 omega (dt/dt_prev)      step start
+<a id="__codelineno-4-16" name="__codelineno-4-16" href="#__codelineno-4-16"></a>
+<a id="__codelineno-4-17" name="__codelineno-4-17" href="#__codelineno-4-17"></a>V_history[0..N]      ──→    predict_voltage               step start
+<a id="__codelineno-4-18" name="__codelineno-4-18" href="#__codelineno-4-18"></a>dt_history[0..N]     ──→    predict_voltage               step start
+<a id="__codelineno-4-19" name="__codelineno-4-19" href="#__codelineno-4-19"></a>                     ──→    GEAR2 omega                   step start
+<a id="__codelineno-4-20" name="__codelineno-4-20" href="#__codelineno-4-20"></a>
+<a id="__codelineno-4-21" name="__codelineno-4-21" href="#__codelineno-4-21"></a>limit_state          ──→    build_system (limiting)       NR iteration start
+<a id="__codelineno-4-22" name="__codelineno-4-22" href="#__codelineno-4-22"></a>V_max_historic       ──→    LTE tolerance                 step end
+<a id="__codelineno-4-23" name="__codelineno-4-23" href="#__codelineno-4-23"></a>max_res_contrib      ──→    NR residual floor             NR iteration
+<a id="__codelineno-4-24" name="__codelineno-4-24" href="#__codelineno-4-24"></a>accept/reject        ──→    dt selection, history update  step end
+</code></pre></div>
+<h3 id="critical-path-for-step-startup">Critical Path for Step Startup<a class="headerlink" href="#critical-path-for-step-startup" title="Permanent link">&para;</a></h3>
+<p>Step k+1 CANNOT start until step k completes because:</p>
+<ol>
+<li><strong>dt_new</strong> depends on LTE check which needs X_new (full NR solution)</li>
+<li><strong>X_new</strong> is the initial guess for step k+1's NR iteration</li>
+<li><strong>Q_new</strong> is needed for the integration companion model</li>
+<li>On <strong>reject</strong>: step k retries with halved dt (same state, no advancement)</li>
+</ol>
+<p>This means <strong>steps are strictly sequential</strong> — no pipelining between steps.</p>
+<h3 id="what-could-be-pipelined-speculative">What COULD Be Pipelined (Speculative)<a class="headerlink" href="#what-could-be-pipelined-speculative" title="Permanent link">&para;</a></h3>
+<p>If we split step k+1's startup into phases:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a>Step k:  [...factorLU...][solveLU][refine][LTE][accept]
+<a id="__codelineno-5-2" name="__codelineno-5-2" href="#__codelineno-5-2"></a>Step k+1:                                       [integ][source][predict][build_system][...]
+<a id="__codelineno-5-3" name="__codelineno-5-3" href="#__codelineno-5-3"></a>                                                 ↑
+<a id="__codelineno-5-4" name="__codelineno-5-4" href="#__codelineno-5-4"></a>                                        only needs: dt_new, X_new, Q_new
+</code></pre></div>
+<p>The <code>integ_coeff</code> + <code>source_eval</code> + <code>predict_voltage</code> only need <code>dt_new</code>
+and history. If we <strong>speculated</strong> that step k would be accepted (common case),
+we could start step k+1's preparation while step k's LTE check runs.
+But this requires:
+- Accepting the risk of wasted work on rejection (~5-10% of steps)
+- Buffering two steps' worth of state
+- Breaking the <code>lax.while_loop</code> abstraction (JAX traces the whole loop)</p>
+<h3 id="fixed-step-opportunity">Fixed-Step Opportunity<a class="headerlink" href="#fixed-step-opportunity" title="Permanent link">&para;</a></h3>
+<p>For <strong>fixed-step mode</strong> (no LTE, no rejection):
+- <code>dt</code> is constant → <code>integ_coeff</code> is constant → can precompute
+- <code>source_eval(t + dt)</code> can be precomputed for all steps (vectorized)
+- No rejection → steps always accepted → pipelining is safe
+- GPU factor of step k+1 could overlap with CPU refinement of step k</p>
+<p>This is why the <code>fori_loop</code> path exists — IREE can fuse all iterations.</p>
+<h2 id="machine-readable-dependency-table-json">Machine-Readable Dependency Table (JSON)<a class="headerlink" href="#machine-readable-dependency-table-json" title="Permanent link">&para;</a></h2>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a><span class="p">{</span>
+<a id="__codelineno-6-2" name="__codelineno-6-2" href="#__codelineno-6-2"></a><span class="w">  </span><span class="nt">&quot;intra_step_phases&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">[</span>
+<a id="__codelineno-6-3" name="__codelineno-6-3" href="#__codelineno-6-3"></a><span class="w">    </span><span class="p">{</span><span class="nt">&quot;id&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;integ_coeff&quot;</span><span class="p">,</span><span class="w"> </span><span class="nt">&quot;deps&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">[</span><span class="s2">&quot;state_prev&quot;</span><span class="p">],</span><span class="w"> </span><span class="nt">&quot;location&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;cpu&quot;</span><span class="p">,</span><span class="w"> </span><span class="nt">&quot;cost&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;O(1)&quot;</span><span class="p">},</span>
+<a id="__codelineno-6-4" name="__codelineno-6-4" href="#__codelineno-6-4"></a><span class="w">    </span><span class="p">{</span><span class="nt">&quot;id&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;source_eval&quot;</span><span class="p">,</span><span class="w"> </span><span class="nt">&quot;deps&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">[</span><span class="s2">&quot;state_prev&quot;</span><span class="p">],</span><span class="w"> </span><span class="nt">&quot;location&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;cpu&quot;</span><span class="p">,</span><span class="w"> </span><span class="nt">&quot;cost&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;O(n_sources)&quot;</span><span class="p">},</span>
+<a id="__codelineno-6-5" name="__codelineno-6-5" href="#__codelineno-6-5"></a><span class="w">    </span><span class="p">{</span><span class="nt">&quot;id&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;predict&quot;</span><span class="p">,</span><span class="w"> </span><span class="nt">&quot;deps&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">[</span><span class="s2">&quot;state_prev&quot;</span><span class="p">],</span><span class="w"> </span><span class="nt">&quot;location&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;cpu&quot;</span><span class="p">,</span><span class="w"> </span><span class="nt">&quot;cost&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;O(n)&quot;</span><span class="p">},</span>
+<a id="__codelineno-6-6" name="__codelineno-6-6" href="#__codelineno-6-6"></a><span class="w">    </span><span class="p">{</span><span class="nt">&quot;id&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;build_system&quot;</span><span class="p">,</span><span class="w"> </span><span class="nt">&quot;deps&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">[</span><span class="s2">&quot;integ_coeff&quot;</span><span class="p">,</span><span class="w"> </span><span class="s2">&quot;source_eval&quot;</span><span class="p">,</span><span class="w"> </span><span class="s2">&quot;predict&quot;</span><span class="p">,</span><span class="w"> </span><span class="s2">&quot;state_prev&quot;</span><span class="p">],</span><span class="w"> </span><span class="nt">&quot;location&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;cpu_jax&quot;</span><span class="p">,</span><span class="w"> </span><span class="nt">&quot;cost&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;O(n_devices)&quot;</span><span class="p">},</span>
+<a id="__codelineno-6-7" name="__codelineno-6-7" href="#__codelineno-6-7"></a><span class="w">    </span><span class="p">{</span><span class="nt">&quot;id&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;enforce_noi&quot;</span><span class="p">,</span><span class="w"> </span><span class="nt">&quot;deps&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">[</span><span class="s2">&quot;build_system&quot;</span><span class="p">],</span><span class="w"> </span><span class="nt">&quot;location&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;cpu&quot;</span><span class="p">,</span><span class="w"> </span><span class="nt">&quot;cost&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;O(nnz)&quot;</span><span class="p">},</span>
+<a id="__codelineno-6-8" name="__codelineno-6-8" href="#__codelineno-6-8"></a><span class="w">    </span><span class="p">{</span><span class="nt">&quot;id&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;equilibrate&quot;</span><span class="p">,</span><span class="w"> </span><span class="nt">&quot;deps&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">[</span><span class="s2">&quot;enforce_noi&quot;</span><span class="p">],</span><span class="w"> </span><span class="nt">&quot;location&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;cpu&quot;</span><span class="p">,</span><span class="w"> </span><span class="nt">&quot;cost&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;O(nnz)&quot;</span><span class="p">},</span>
+<a id="__codelineno-6-9" name="__codelineno-6-9" href="#__codelineno-6-9"></a><span class="w">    </span><span class="p">{</span><span class="nt">&quot;id&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;scatter&quot;</span><span class="p">,</span><span class="w"> </span><span class="nt">&quot;deps&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">[</span><span class="s2">&quot;equilibrate&quot;</span><span class="p">],</span><span class="w"> </span><span class="nt">&quot;location&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;cpu_to_gpu&quot;</span><span class="p">,</span><span class="w"> </span><span class="nt">&quot;cost&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;O(nnz)&quot;</span><span class="p">},</span>
+<a id="__codelineno-6-10" name="__codelineno-6-10" href="#__codelineno-6-10"></a><span class="w">    </span><span class="p">{</span><span class="nt">&quot;id&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;permute_rhs&quot;</span><span class="p">,</span><span class="w"> </span><span class="nt">&quot;deps&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">[</span><span class="s2">&quot;equilibrate&quot;</span><span class="p">],</span><span class="w"> </span><span class="nt">&quot;location&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;cpu&quot;</span><span class="p">,</span><span class="w"> </span><span class="nt">&quot;cost&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;O(n)&quot;</span><span class="p">},</span>
+<a id="__codelineno-6-11" name="__codelineno-6-11" href="#__codelineno-6-11"></a><span class="w">    </span><span class="p">{</span><span class="nt">&quot;id&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;factor_lu&quot;</span><span class="p">,</span><span class="w"> </span><span class="nt">&quot;deps&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">[</span><span class="s2">&quot;scatter&quot;</span><span class="p">,</span><span class="w"> </span><span class="s2">&quot;permute_rhs&quot;</span><span class="p">],</span><span class="w"> </span><span class="nt">&quot;location&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;gpu&quot;</span><span class="p">,</span><span class="w"> </span><span class="nt">&quot;cost&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;supernodal_lu&quot;</span><span class="p">},</span>
+<a id="__codelineno-6-12" name="__codelineno-6-12" href="#__codelineno-6-12"></a><span class="w">    </span><span class="p">{</span><span class="nt">&quot;id&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;solve_lu&quot;</span><span class="p">,</span><span class="w"> </span><span class="nt">&quot;deps&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">[</span><span class="s2">&quot;factor_lu&quot;</span><span class="p">],</span><span class="w"> </span><span class="nt">&quot;location&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;gpu&quot;</span><span class="p">,</span><span class="w"> </span><span class="nt">&quot;cost&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;fwd_back_subst&quot;</span><span class="p">},</span>
+<a id="__codelineno-6-13" name="__codelineno-6-13" href="#__codelineno-6-13"></a><span class="w">    </span><span class="p">{</span><span class="nt">&quot;id&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;refine_flush&quot;</span><span class="p">,</span><span class="w"> </span><span class="nt">&quot;deps&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">[</span><span class="s2">&quot;solve_lu&quot;</span><span class="p">],</span><span class="w"> </span><span class="nt">&quot;location&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;gpu_sync&quot;</span><span class="p">,</span><span class="w"> </span><span class="nt">&quot;cost&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;O(1)&quot;</span><span class="p">},</span>
+<a id="__codelineno-6-14" name="__codelineno-6-14" href="#__codelineno-6-14"></a><span class="w">    </span><span class="p">{</span><span class="nt">&quot;id&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;refine_spmv&quot;</span><span class="p">,</span><span class="w"> </span><span class="nt">&quot;deps&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">[</span><span class="s2">&quot;refine_flush&quot;</span><span class="p">],</span><span class="w"> </span><span class="nt">&quot;location&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;cpu&quot;</span><span class="p">,</span><span class="w"> </span><span class="nt">&quot;cost&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;O(nnz)&quot;</span><span class="p">},</span>
+<a id="__codelineno-6-15" name="__codelineno-6-15" href="#__codelineno-6-15"></a><span class="w">    </span><span class="p">{</span><span class="nt">&quot;id&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;refine_solve&quot;</span><span class="p">,</span><span class="w"> </span><span class="nt">&quot;deps&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">[</span><span class="s2">&quot;refine_spmv&quot;</span><span class="p">],</span><span class="w"> </span><span class="nt">&quot;location&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;gpu&quot;</span><span class="p">,</span><span class="w"> </span><span class="nt">&quot;cost&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;fwd_back_subst&quot;</span><span class="p">},</span>
+<a id="__codelineno-6-16" name="__codelineno-6-16" href="#__codelineno-6-16"></a><span class="w">    </span><span class="p">{</span><span class="nt">&quot;id&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;final_flush&quot;</span><span class="p">,</span><span class="w"> </span><span class="nt">&quot;deps&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">[</span><span class="s2">&quot;refine_solve&quot;</span><span class="p">],</span><span class="w"> </span><span class="nt">&quot;location&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;gpu_sync&quot;</span><span class="p">,</span><span class="w"> </span><span class="nt">&quot;cost&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;O(1)&quot;</span><span class="p">},</span>
+<a id="__codelineno-6-17" name="__codelineno-6-17" href="#__codelineno-6-17"></a><span class="w">    </span><span class="p">{</span><span class="nt">&quot;id&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;convergence_check&quot;</span><span class="p">,</span><span class="w"> </span><span class="nt">&quot;deps&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">[</span><span class="s2">&quot;final_flush&quot;</span><span class="p">,</span><span class="w"> </span><span class="s2">&quot;build_system&quot;</span><span class="p">],</span><span class="w"> </span><span class="nt">&quot;location&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;cpu&quot;</span><span class="p">,</span><span class="w"> </span><span class="nt">&quot;cost&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;O(n)&quot;</span><span class="p">},</span>
+<a id="__codelineno-6-18" name="__codelineno-6-18" href="#__codelineno-6-18"></a><span class="w">    </span><span class="p">{</span><span class="nt">&quot;id&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;lte_check&quot;</span><span class="p">,</span><span class="w"> </span><span class="nt">&quot;deps&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">[</span><span class="s2">&quot;final_flush&quot;</span><span class="p">,</span><span class="w"> </span><span class="s2">&quot;predict&quot;</span><span class="p">],</span><span class="w"> </span><span class="nt">&quot;location&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;cpu&quot;</span><span class="p">,</span><span class="w"> </span><span class="nt">&quot;cost&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;O(n)&quot;</span><span class="p">},</span>
+<a id="__codelineno-6-19" name="__codelineno-6-19" href="#__codelineno-6-19"></a><span class="w">    </span><span class="p">{</span><span class="nt">&quot;id&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;accept_reject&quot;</span><span class="p">,</span><span class="w"> </span><span class="nt">&quot;deps&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">[</span><span class="s2">&quot;lte_check&quot;</span><span class="p">,</span><span class="w"> </span><span class="s2">&quot;convergence_check&quot;</span><span class="p">],</span><span class="w"> </span><span class="nt">&quot;location&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;cpu&quot;</span><span class="p">,</span><span class="w"> </span><span class="nt">&quot;cost&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;O(1)&quot;</span><span class="p">}</span>
+<a id="__codelineno-6-20" name="__codelineno-6-20" href="#__codelineno-6-20"></a><span class="w">  </span><span class="p">],</span>
+<a id="__codelineno-6-21" name="__codelineno-6-21" href="#__codelineno-6-21"></a><span class="w">  </span><span class="nt">&quot;inter_step_deps&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">[</span>
+<a id="__codelineno-6-22" name="__codelineno-6-22" href="#__codelineno-6-22"></a><span class="w">    </span><span class="p">{</span><span class="nt">&quot;from&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;accept_reject&quot;</span><span class="p">,</span><span class="w"> </span><span class="nt">&quot;to&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;integ_coeff&quot;</span><span class="p">,</span><span class="w"> </span><span class="nt">&quot;data&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;dt_new&quot;</span><span class="p">},</span>
+<a id="__codelineno-6-23" name="__codelineno-6-23" href="#__codelineno-6-23"></a><span class="w">    </span><span class="p">{</span><span class="nt">&quot;from&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;accept_reject&quot;</span><span class="p">,</span><span class="w"> </span><span class="nt">&quot;to&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;source_eval&quot;</span><span class="p">,</span><span class="w"> </span><span class="nt">&quot;data&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;t_new, dt_new&quot;</span><span class="p">},</span>
+<a id="__codelineno-6-24" name="__codelineno-6-24" href="#__codelineno-6-24"></a><span class="w">    </span><span class="p">{</span><span class="nt">&quot;from&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;accept_reject&quot;</span><span class="p">,</span><span class="w"> </span><span class="nt">&quot;to&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;predict&quot;</span><span class="p">,</span><span class="w"> </span><span class="nt">&quot;data&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;V_history, dt_history&quot;</span><span class="p">},</span>
+<a id="__codelineno-6-25" name="__codelineno-6-25" href="#__codelineno-6-25"></a><span class="w">    </span><span class="p">{</span><span class="nt">&quot;from&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;final_flush&quot;</span><span class="p">,</span><span class="w"> </span><span class="nt">&quot;to&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;build_system&quot;</span><span class="p">,</span><span class="w"> </span><span class="nt">&quot;data&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;X_new (initial guess)&quot;</span><span class="p">},</span>
+<a id="__codelineno-6-26" name="__codelineno-6-26" href="#__codelineno-6-26"></a><span class="w">    </span><span class="p">{</span><span class="nt">&quot;from&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;final_flush&quot;</span><span class="p">,</span><span class="w"> </span><span class="nt">&quot;to&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;build_system&quot;</span><span class="p">,</span><span class="w"> </span><span class="nt">&quot;data&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;Q_new, dQdt_new (companion)&quot;</span><span class="p">},</span>
+<a id="__codelineno-6-27" name="__codelineno-6-27" href="#__codelineno-6-27"></a><span class="w">    </span><span class="p">{</span><span class="nt">&quot;from&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;accept_reject&quot;</span><span class="p">,</span><span class="w"> </span><span class="nt">&quot;to&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;build_system&quot;</span><span class="p">,</span><span class="w"> </span><span class="nt">&quot;data&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;limit_state&quot;</span><span class="p">}</span>
+<a id="__codelineno-6-28" name="__codelineno-6-28" href="#__codelineno-6-28"></a><span class="w">  </span><span class="p">],</span>
+<a id="__codelineno-6-29" name="__codelineno-6-29" href="#__codelineno-6-29"></a><span class="w">  </span><span class="nt">&quot;parallelism&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">{</span>
+<a id="__codelineno-6-30" name="__codelineno-6-30" href="#__codelineno-6-30"></a><span class="w">    </span><span class="nt">&quot;independent_pairs&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">[</span>
+<a id="__codelineno-6-31" name="__codelineno-6-31" href="#__codelineno-6-31"></a><span class="w">      </span><span class="p">[</span><span class="s2">&quot;integ_coeff&quot;</span><span class="p">,</span><span class="w"> </span><span class="s2">&quot;source_eval&quot;</span><span class="p">,</span><span class="w"> </span><span class="s2">&quot;predict&quot;</span><span class="p">],</span>
+<a id="__codelineno-6-32" name="__codelineno-6-32" href="#__codelineno-6-32"></a><span class="w">      </span><span class="p">[</span><span class="s2">&quot;scatter&quot;</span><span class="p">,</span><span class="w"> </span><span class="s2">&quot;permute_rhs&quot;</span><span class="p">]</span>
+<a id="__codelineno-6-33" name="__codelineno-6-33" href="#__codelineno-6-33"></a><span class="w">    </span><span class="p">],</span>
+<a id="__codelineno-6-34" name="__codelineno-6-34" href="#__codelineno-6-34"></a><span class="w">    </span><span class="nt">&quot;split_phase&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">{</span>
+<a id="__codelineno-6-35" name="__codelineno-6-35" href="#__codelineno-6-35"></a><span class="w">      </span><span class="nt">&quot;factor_lu&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">[</span><span class="s2">&quot;begin_factor_lu (gpu_async)&quot;</span><span class="p">,</span><span class="w"> </span><span class="s2">&quot;finish_factor_lu (gpu_wait + cpu_dense)&quot;</span><span class="p">],</span>
+<a id="__codelineno-6-36" name="__codelineno-6-36" href="#__codelineno-6-36"></a><span class="w">      </span><span class="nt">&quot;overlap_with&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;refine_spmv from previous iteration&quot;</span>
+<a id="__codelineno-6-37" name="__codelineno-6-37" href="#__codelineno-6-37"></a><span class="w">    </span><span class="p">},</span>
+<a id="__codelineno-6-38" name="__codelineno-6-38" href="#__codelineno-6-38"></a><span class="w">    </span><span class="nt">&quot;speculative&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">{</span>
+<a id="__codelineno-6-39" name="__codelineno-6-39" href="#__codelineno-6-39"></a><span class="w">      </span><span class="nt">&quot;step_k1_source_eval&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;can start if step_k acceptance is predicted&quot;</span><span class="p">,</span>
+<a id="__codelineno-6-40" name="__codelineno-6-40" href="#__codelineno-6-40"></a><span class="w">      </span><span class="nt">&quot;risk&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;wasted work on rejection&quot;</span>
+<a id="__codelineno-6-41" name="__codelineno-6-41" href="#__codelineno-6-41"></a><span class="w">    </span><span class="p">}</span>
+<a id="__codelineno-6-42" name="__codelineno-6-42" href="#__codelineno-6-42"></a><span class="w">  </span><span class="p">}</span>
+<a id="__codelineno-6-43" name="__codelineno-6-43" href="#__codelineno-6-43"></a><span class="p">}</span>
+</code></pre></div>
+<h2 id="batch-adaptive-mode">Batch-Adaptive Mode<a class="headerlink" href="#batch-adaptive-mode" title="Permanent link">&para;</a></h2>
+<h3 id="motivation">Motivation<a class="headerlink" href="#motivation" title="Permanent link">&para;</a></h3>
+<p>The current adaptive mode is strictly sequential: each step's <code>dt_new</code>
+depends on the LTE check which needs the full NR solution. This prevents
+inter-step pipelining and GPU fusion.</p>
+<p>The existing <code>fori_loop</code> mode solves this by using fixed dt — but loses
+adaptive timestep control, leading to either too many steps (dt too small)
+or accuracy problems (dt too large).</p>
+<p><strong>Batch-adaptive</strong> bridges the gap: hold dt constant for a batch of K steps,
+then adapt dt between batches. This enables GPU fusion within each batch
+while retaining adaptive timestep control at the batch boundary.</p>
+<h3 id="algorithm">Algorithm<a class="headerlink" href="#algorithm" title="Permanent link">&para;</a></h3>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-7-1" name="__codelineno-7-1" href="#__codelineno-7-1"></a>while t &lt; t_stop:
+<a id="__codelineno-7-2" name="__codelineno-7-2" href="#__codelineno-7-2"></a>    # 1. Predict and choose batch parameters
+<a id="__codelineno-7-3" name="__codelineno-7-3" href="#__codelineno-7-3"></a>    V_pred = predict_voltage(history, dt)
+<a id="__codelineno-7-4" name="__codelineno-7-4" href="#__codelineno-7-4"></a>    source_vals[0..K-1] = eval_sources(t + dt, t + 2*dt, ..., t + K*dt)
+<a id="__codelineno-7-5" name="__codelineno-7-5" href="#__codelineno-7-5"></a>
+<a id="__codelineno-7-6" name="__codelineno-7-6" href="#__codelineno-7-6"></a>    # 2. Execute batch of K steps with fixed dt (fusible)
+<a id="__codelineno-7-7" name="__codelineno-7-7" href="#__codelineno-7-7"></a>    X_batch, Q_batch = scan(nr_step, init=(X, Q), xs=source_vals)
+<a id="__codelineno-7-8" name="__codelineno-7-8" href="#__codelineno-7-8"></a>    #                  ^^^^
+<a id="__codelineno-7-9" name="__codelineno-7-9" href="#__codelineno-7-9"></a>    #   lax.scan / fori_loop: K steps, same dt, same integ coefficients
+<a id="__codelineno-7-10" name="__codelineno-7-10" href="#__codelineno-7-10"></a>    #   GPU can pipeline/fuse all K factorizations
+<a id="__codelineno-7-11" name="__codelineno-7-11" href="#__codelineno-7-11"></a>
+<a id="__codelineno-7-12" name="__codelineno-7-12" href="#__codelineno-7-12"></a>    # 3. LTE check at batch boundary
+<a id="__codelineno-7-13" name="__codelineno-7-13" href="#__codelineno-7-13"></a>    V_final = X_batch[-1]
+<a id="__codelineno-7-14" name="__codelineno-7-14" href="#__codelineno-7-14"></a>    dt_lte = compute_lte(V_final, V_pred, dt)
+<a id="__codelineno-7-15" name="__codelineno-7-15" href="#__codelineno-7-15"></a>
+<a id="__codelineno-7-16" name="__codelineno-7-16" href="#__codelineno-7-16"></a>    if dt / dt_lte &gt; redo_factor:
+<a id="__codelineno-7-17" name="__codelineno-7-17" href="#__codelineno-7-17"></a>        # Reject batch: halve dt, reduce K, retry
+<a id="__codelineno-7-18" name="__codelineno-7-18" href="#__codelineno-7-18"></a>        dt = dt / 2
+<a id="__codelineno-7-19" name="__codelineno-7-19" href="#__codelineno-7-19"></a>        K = max(K // 2, 1)
+<a id="__codelineno-7-20" name="__codelineno-7-20" href="#__codelineno-7-20"></a>    else:
+<a id="__codelineno-7-21" name="__codelineno-7-21" href="#__codelineno-7-21"></a>        # Accept batch: advance time, update history
+<a id="__codelineno-7-22" name="__codelineno-7-22" href="#__codelineno-7-22"></a>        t += K * dt
+<a id="__codelineno-7-23" name="__codelineno-7-23" href="#__codelineno-7-23"></a>        update_history(X_batch, dt)
+<a id="__codelineno-7-24" name="__codelineno-7-24" href="#__codelineno-7-24"></a>        dt = dt_lte
+<a id="__codelineno-7-25" name="__codelineno-7-25" href="#__codelineno-7-25"></a>        K = min(K * 2, K_max)  # grow batch if stable
+</code></pre></div>
+<h3 id="data-flow">Data Flow<a class="headerlink" href="#data-flow" title="Permanent link">&para;</a></h3>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-8-1" name="__codelineno-8-1" href="#__codelineno-8-1"></a>                    ┌──────────────────┐
+<a id="__codelineno-8-2" name="__codelineno-8-2" href="#__codelineno-8-2"></a>                    │  Batch Start     │
+<a id="__codelineno-8-3" name="__codelineno-8-3" href="#__codelineno-8-3"></a>                    │  X, Q, dt, K     │
+<a id="__codelineno-8-4" name="__codelineno-8-4" href="#__codelineno-8-4"></a>                    └────────┬─────────┘
+<a id="__codelineno-8-5" name="__codelineno-8-5" href="#__codelineno-8-5"></a>                             │
+<a id="__codelineno-8-6" name="__codelineno-8-6" href="#__codelineno-8-6"></a>              ┌──────────────┼──────────────┐
+<a id="__codelineno-8-7" name="__codelineno-8-7" href="#__codelineno-8-7"></a>              ▼              ▼              ▼
+<a id="__codelineno-8-8" name="__codelineno-8-8" href="#__codelineno-8-8"></a>    ┌─────────────┐  ┌──────────────┐  ┌────────────┐
+<a id="__codelineno-8-9" name="__codelineno-8-9" href="#__codelineno-8-9"></a>    │ integ_coeff │  │ source_eval  │  │  predict   │
+<a id="__codelineno-8-10" name="__codelineno-8-10" href="#__codelineno-8-10"></a>    │ (constant   │  │ (all K steps │  │  V_pred    │
+<a id="__codelineno-8-11" name="__codelineno-8-11" href="#__codelineno-8-11"></a>    │  for batch) │  │  vectorized) │  │  (once)    │
+<a id="__codelineno-8-12" name="__codelineno-8-12" href="#__codelineno-8-12"></a>    └──────┬──────┘  └──────┬───────┘  └─────┬──────┘
+<a id="__codelineno-8-13" name="__codelineno-8-13" href="#__codelineno-8-13"></a>           │                │                │
+<a id="__codelineno-8-14" name="__codelineno-8-14" href="#__codelineno-8-14"></a>           └────────────────┼────────────────┘
+<a id="__codelineno-8-15" name="__codelineno-8-15" href="#__codelineno-8-15"></a>                            ▼
+<a id="__codelineno-8-16" name="__codelineno-8-16" href="#__codelineno-8-16"></a>              ┌─────────────────────────┐
+<a id="__codelineno-8-17" name="__codelineno-8-17" href="#__codelineno-8-17"></a>              │  lax.scan over K steps  │ ◄── GPU-fusible
+<a id="__codelineno-8-18" name="__codelineno-8-18" href="#__codelineno-8-18"></a>              │                         │
+<a id="__codelineno-8-19" name="__codelineno-8-19" href="#__codelineno-8-19"></a>              │  step 0: build→NR→solve │
+<a id="__codelineno-8-20" name="__codelineno-8-20" href="#__codelineno-8-20"></a>              │  step 1: build→NR→solve │ (uses step 0 output)
+<a id="__codelineno-8-21" name="__codelineno-8-21" href="#__codelineno-8-21"></a>              │  step 2: build→NR→solve │ (uses step 1 output)
+<a id="__codelineno-8-22" name="__codelineno-8-22" href="#__codelineno-8-22"></a>              │  ...                    │
+<a id="__codelineno-8-23" name="__codelineno-8-23" href="#__codelineno-8-23"></a>              │  step K-1: → X_final    │
+<a id="__codelineno-8-24" name="__codelineno-8-24" href="#__codelineno-8-24"></a>              └────────────┬────────────┘
+<a id="__codelineno-8-25" name="__codelineno-8-25" href="#__codelineno-8-25"></a>                           │
+<a id="__codelineno-8-26" name="__codelineno-8-26" href="#__codelineno-8-26"></a>                    ┌──────┴──────┐
+<a id="__codelineno-8-27" name="__codelineno-8-27" href="#__codelineno-8-27"></a>                    ▼             ▼
+<a id="__codelineno-8-28" name="__codelineno-8-28" href="#__codelineno-8-28"></a>             ┌───────────┐  ┌──────────┐
+<a id="__codelineno-8-29" name="__codelineno-8-29" href="#__codelineno-8-29"></a>             │ LTE check │  │ NR check │
+<a id="__codelineno-8-30" name="__codelineno-8-30" href="#__codelineno-8-30"></a>             │ V_final   │  │ all steps│
+<a id="__codelineno-8-31" name="__codelineno-8-31" href="#__codelineno-8-31"></a>             │ vs V_pred │  │converged?│
+<a id="__codelineno-8-32" name="__codelineno-8-32" href="#__codelineno-8-32"></a>             └─────┬─────┘  └────┬─────┘
+<a id="__codelineno-8-33" name="__codelineno-8-33" href="#__codelineno-8-33"></a>                   │              │
+<a id="__codelineno-8-34" name="__codelineno-8-34" href="#__codelineno-8-34"></a>            ┌──────┴──────────────┘
+<a id="__codelineno-8-35" name="__codelineno-8-35" href="#__codelineno-8-35"></a>            ▼
+<a id="__codelineno-8-36" name="__codelineno-8-36" href="#__codelineno-8-36"></a>     ┌──────┴──────┐
+<a id="__codelineno-8-37" name="__codelineno-8-37" href="#__codelineno-8-37"></a>     ▼             ▼
+<a id="__codelineno-8-38" name="__codelineno-8-38" href="#__codelineno-8-38"></a>┌─────────┐  ┌──────────┐
+<a id="__codelineno-8-39" name="__codelineno-8-39" href="#__codelineno-8-39"></a>│ ACCEPT  │  │  REJECT  │
+<a id="__codelineno-8-40" name="__codelineno-8-40" href="#__codelineno-8-40"></a>│ batch   │  │  batch   │
+<a id="__codelineno-8-41" name="__codelineno-8-41" href="#__codelineno-8-41"></a>│ t += K*dt│  │ dt /= 2 │
+<a id="__codelineno-8-42" name="__codelineno-8-42" href="#__codelineno-8-42"></a>│ grow K  │  │ shrink K │
+<a id="__codelineno-8-43" name="__codelineno-8-43" href="#__codelineno-8-43"></a>└─────────┘  └──────────┘
+</code></pre></div>
+<h3 id="why-batching-enables-gpu-fusion">Why Batching Enables GPU Fusion<a class="headerlink" href="#why-batching-enables-gpu-fusion" title="Permanent link">&para;</a></h3>
+<p>Within a batch:
+- <code>dt</code> is constant → <code>integ_coeff</code> (c0, c1, c2) is constant
+- Source waveforms are precomputed for all K timesteps
+- No LTE check between steps → no CPU↔GPU sync barrier
+- <code>lax.scan</code> compiles to a loop that XLA/IREE can fuse</p>
+<p>For Sprux specifically, batching means:
+- <strong>One recording pass</strong> covers all K factorizations (same structure)
+- <strong>One command buffer</strong> can encode all K × (factor + solve) dispatches
+- GPU stays busy without encoder cycling gaps between steps
+- CPU preprocessing (equilibrate, scatter) for step k+1 can overlap
+  with GPU factor+solve for step k</p>
+<h3 id="batch-size-selection">Batch Size Selection<a class="headerlink" href="#batch-size-selection" title="Permanent link">&para;</a></h3>
+<p>The optimal K depends on how smoothly the solution changes:</p>
+<table>
+<thead>
+<tr>
+<th>Circuit phase</th>
+<th>dt stability</th>
+<th>Optimal K</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>DC ramp-up</td>
+<td>dt grows rapidly</td>
+<td>K=1-2 (nearly per-step adaptive)</td>
+</tr>
+<tr>
+<td>Steady oscillation</td>
+<td>dt stable</td>
+<td>K=8-16 (long batches)</td>
+</tr>
+<tr>
+<td>Sharp transient</td>
+<td>dt drops suddenly</td>
+<td>K=1 (fall back to per-step)</td>
+</tr>
+<tr>
+<td>Post-transient settling</td>
+<td>dt grows</td>
+<td>K=4-8</td>
+</tr>
+</tbody>
+</table>
+<p>An adaptive K strategy:
+- Start with K=1 (equivalent to current mode)
+- After M consecutive accepted batches at the same dt, double K
+- On rejection, halve K (minimum 1)
+- Cap K at K_max (e.g., 16 or 32)</p>
+<h3 id="lte-accuracy-with-batching">LTE Accuracy with Batching<a class="headerlink" href="#lte-accuracy-with-batching" title="Permanent link">&para;</a></h3>
+<p>Standard LTE compares <code>V_new</code> with a prediction <code>V_pred</code> made from
+history points <em>before</em> the current step. With batch size K:</p>
+<ul>
+<li><code>V_pred</code> is computed once at batch start using the pre-batch history</li>
+<li>After K steps, <code>V_final</code> has drifted K×dt from the prediction point</li>
+<li>The LTE estimate is for the accumulated error over K steps</li>
+</ul>
+<p>This is conservative: if K steps with the same dt pass LTE at the batch
+boundary, each individual step would also pass. The converse is not true —
+a batch might fail LTE even though each step individually would pass
+(because error accumulates). This means:</p>
+<ul>
+<li>Batching never accepts steps that per-step mode would reject ✓</li>
+<li>Batching may reject batches that per-step mode would accept (conservative) ✓</li>
+<li>The adaptive K strategy compensates: if batches keep failing, K shrinks to 1</li>
+</ul>
+<h3 id="implementation-sketch">Implementation Sketch<a class="headerlink" href="#implementation-sketch" title="Permanent link">&para;</a></h3>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-9-1" name="__codelineno-9-1" href="#__codelineno-9-1"></a><span class="k">def</span><span class="w"> </span><span class="nf">batch_adaptive_body</span><span class="p">(</span><span class="n">state</span><span class="p">):</span>
+<a id="__codelineno-9-2" name="__codelineno-9-2" href="#__codelineno-9-2"></a><span class="w">    </span><span class="sd">&quot;&quot;&quot;Outer loop: manages batch execution and dt adaptation.&quot;&quot;&quot;</span>
+<a id="__codelineno-9-3" name="__codelineno-9-3" href="#__codelineno-9-3"></a>    <span class="n">K</span> <span class="o">=</span> <span class="n">state</span><span class="o">.</span><span class="n">batch_size</span>
+<a id="__codelineno-9-4" name="__codelineno-9-4" href="#__codelineno-9-4"></a>    <span class="n">dt</span> <span class="o">=</span> <span class="n">state</span><span class="o">.</span><span class="n">dt</span>
+<a id="__codelineno-9-5" name="__codelineno-9-5" href="#__codelineno-9-5"></a>
+<a id="__codelineno-9-6" name="__codelineno-9-6" href="#__codelineno-9-6"></a>    <span class="c1"># Precompute sources for all K steps</span>
+<a id="__codelineno-9-7" name="__codelineno-9-7" href="#__codelineno-9-7"></a>    <span class="n">t_points</span> <span class="o">=</span> <span class="n">state</span><span class="o">.</span><span class="n">t</span> <span class="o">+</span> <span class="n">dt</span> <span class="o">*</span> <span class="n">jnp</span><span class="o">.</span><span class="n">arange</span><span class="p">(</span><span class="mi">1</span><span class="p">,</span> <span class="n">K</span> <span class="o">+</span> <span class="mi">1</span><span class="p">)</span>
+<a id="__codelineno-9-8" name="__codelineno-9-8" href="#__codelineno-9-8"></a>    <span class="n">source_vals</span> <span class="o">=</span> <span class="n">vmap</span><span class="p">(</span><span class="n">jit_source_eval</span><span class="p">)(</span><span class="n">t_points</span><span class="p">)</span>  <span class="c1"># (K, n_sources)</span>
+<a id="__codelineno-9-9" name="__codelineno-9-9" href="#__codelineno-9-9"></a>
+<a id="__codelineno-9-10" name="__codelineno-9-10" href="#__codelineno-9-10"></a>    <span class="c1"># Predict from history (for LTE at batch end)</span>
+<a id="__codelineno-9-11" name="__codelineno-9-11" href="#__codelineno-9-11"></a>    <span class="n">V_pred</span><span class="p">,</span> <span class="n">pred_err_coeff</span> <span class="o">=</span> <span class="n">predict_voltage</span><span class="p">(</span><span class="n">state</span><span class="o">.</span><span class="n">V_history</span><span class="p">,</span> <span class="o">...</span><span class="p">)</span>
+<a id="__codelineno-9-12" name="__codelineno-9-12" href="#__codelineno-9-12"></a>
+<a id="__codelineno-9-13" name="__codelineno-9-13" href="#__codelineno-9-13"></a>    <span class="c1"># Fixed integ coefficients for the batch</span>
+<a id="__codelineno-9-14" name="__codelineno-9-14" href="#__codelineno-9-14"></a>    <span class="n">c0</span><span class="p">,</span> <span class="n">c1</span><span class="p">,</span> <span class="n">d1</span><span class="p">,</span> <span class="n">c2</span> <span class="o">=</span> <span class="n">compute_integ_coeffs</span><span class="p">(</span><span class="n">dt</span><span class="p">,</span> <span class="n">state</span><span class="o">.</span><span class="n">dt_history</span><span class="p">,</span> <span class="n">method</span><span class="p">)</span>
+<a id="__codelineno-9-15" name="__codelineno-9-15" href="#__codelineno-9-15"></a>
+<a id="__codelineno-9-16" name="__codelineno-9-16" href="#__codelineno-9-16"></a>    <span class="c1"># Run K steps with lax.scan (GPU-fusible)</span>
+<a id="__codelineno-9-17" name="__codelineno-9-17" href="#__codelineno-9-17"></a>    <span class="k">def</span><span class="w"> </span><span class="nf">scan_step</span><span class="p">(</span><span class="n">carry</span><span class="p">,</span> <span class="n">source_k</span><span class="p">):</span>
+<a id="__codelineno-9-18" name="__codelineno-9-18" href="#__codelineno-9-18"></a>        <span class="n">X</span><span class="p">,</span> <span class="n">Q</span><span class="p">,</span> <span class="n">dQdt</span><span class="p">,</span> <span class="n">Q_prev2</span><span class="p">,</span> <span class="n">limit_state</span> <span class="o">=</span> <span class="n">carry</span>
+<a id="__codelineno-9-19" name="__codelineno-9-19" href="#__codelineno-9-19"></a>        <span class="n">vsrc</span><span class="p">,</span> <span class="n">isrc</span> <span class="o">=</span> <span class="n">source_k</span>
+<a id="__codelineno-9-20" name="__codelineno-9-20" href="#__codelineno-9-20"></a>
+<a id="__codelineno-9-21" name="__codelineno-9-21" href="#__codelineno-9-21"></a>        <span class="n">X_new</span><span class="p">,</span> <span class="n">_</span><span class="p">,</span> <span class="n">converged</span><span class="p">,</span> <span class="n">_</span><span class="p">,</span> <span class="n">Q_new</span><span class="p">,</span> <span class="n">dQdt_new</span><span class="p">,</span> <span class="n">I_vs</span><span class="p">,</span> <span class="n">ls_new</span><span class="p">,</span> <span class="n">_</span> <span class="o">=</span> <span class="n">nr_solve</span><span class="p">(</span>
+<a id="__codelineno-9-22" name="__codelineno-9-22" href="#__codelineno-9-22"></a>            <span class="n">X</span><span class="p">,</span> <span class="n">vsrc</span><span class="p">,</span> <span class="n">isrc</span><span class="p">,</span> <span class="n">Q</span><span class="p">,</span> <span class="n">c0</span><span class="p">,</span> <span class="n">device_arrays</span><span class="p">,</span>
+<a id="__codelineno-9-23" name="__codelineno-9-23" href="#__codelineno-9-23"></a>            <span class="n">gmin</span><span class="p">,</span> <span class="n">gshunt</span><span class="p">,</span> <span class="n">c1</span><span class="p">,</span> <span class="n">d1</span><span class="p">,</span> <span class="n">dQdt</span><span class="p">,</span> <span class="n">c2</span><span class="p">,</span> <span class="n">Q_prev2</span><span class="p">,</span>
+<a id="__codelineno-9-24" name="__codelineno-9-24" href="#__codelineno-9-24"></a>            <span class="n">limit_state</span><span class="p">,</span> <span class="n">res_tol_floor</span><span class="p">,</span>
+<a id="__codelineno-9-25" name="__codelineno-9-25" href="#__codelineno-9-25"></a>        <span class="p">)</span>
+<a id="__codelineno-9-26" name="__codelineno-9-26" href="#__codelineno-9-26"></a>        <span class="c1"># For GEAR2: shift Q history</span>
+<a id="__codelineno-9-27" name="__codelineno-9-27" href="#__codelineno-9-27"></a>        <span class="k">return</span> <span class="p">(</span><span class="n">X_new</span><span class="p">,</span> <span class="n">Q_new</span><span class="p">,</span> <span class="n">dQdt_new</span><span class="p">,</span> <span class="n">Q</span><span class="p">,</span> <span class="n">ls_new</span><span class="p">),</span> <span class="p">(</span><span class="n">X_new</span><span class="p">,</span> <span class="n">converged</span><span class="p">)</span>
+<a id="__codelineno-9-28" name="__codelineno-9-28" href="#__codelineno-9-28"></a>
+<a id="__codelineno-9-29" name="__codelineno-9-29" href="#__codelineno-9-29"></a>    <span class="n">init_carry</span> <span class="o">=</span> <span class="p">(</span><span class="n">state</span><span class="o">.</span><span class="n">X</span><span class="p">,</span> <span class="n">state</span><span class="o">.</span><span class="n">Q_prev</span><span class="p">,</span> <span class="n">state</span><span class="o">.</span><span class="n">dQdt_prev</span><span class="p">,</span>
+<a id="__codelineno-9-30" name="__codelineno-9-30" href="#__codelineno-9-30"></a>                  <span class="n">state</span><span class="o">.</span><span class="n">Q_prev2</span><span class="p">,</span> <span class="n">state</span><span class="o">.</span><span class="n">limit_state</span><span class="p">)</span>
+<a id="__codelineno-9-31" name="__codelineno-9-31" href="#__codelineno-9-31"></a>    <span class="n">final_carry</span><span class="p">,</span> <span class="p">(</span><span class="n">X_traj</span><span class="p">,</span> <span class="n">converged_traj</span><span class="p">)</span> <span class="o">=</span> <span class="n">lax</span><span class="o">.</span><span class="n">scan</span><span class="p">(</span>
+<a id="__codelineno-9-32" name="__codelineno-9-32" href="#__codelineno-9-32"></a>        <span class="n">scan_step</span><span class="p">,</span> <span class="n">init_carry</span><span class="p">,</span> <span class="p">(</span><span class="n">source_vals_v</span><span class="p">,</span> <span class="n">source_vals_i</span><span class="p">)</span>
+<a id="__codelineno-9-33" name="__codelineno-9-33" href="#__codelineno-9-33"></a>    <span class="p">)</span>
+<a id="__codelineno-9-34" name="__codelineno-9-34" href="#__codelineno-9-34"></a>
+<a id="__codelineno-9-35" name="__codelineno-9-35" href="#__codelineno-9-35"></a>    <span class="c1"># Check: did all NR solves converge?</span>
+<a id="__codelineno-9-36" name="__codelineno-9-36" href="#__codelineno-9-36"></a>    <span class="n">all_converged</span> <span class="o">=</span> <span class="n">jnp</span><span class="o">.</span><span class="n">all</span><span class="p">(</span><span class="n">converged_traj</span><span class="p">)</span>
+<a id="__codelineno-9-37" name="__codelineno-9-37" href="#__codelineno-9-37"></a>
+<a id="__codelineno-9-38" name="__codelineno-9-38" href="#__codelineno-9-38"></a>    <span class="c1"># LTE check on final solution</span>
+<a id="__codelineno-9-39" name="__codelineno-9-39" href="#__codelineno-9-39"></a>    <span class="n">X_final</span> <span class="o">=</span> <span class="n">final_carry</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span>
+<a id="__codelineno-9-40" name="__codelineno-9-40" href="#__codelineno-9-40"></a>    <span class="n">V_final</span> <span class="o">=</span> <span class="n">X_final</span><span class="p">[:</span><span class="n">n_total</span><span class="p">]</span>
+<a id="__codelineno-9-41" name="__codelineno-9-41" href="#__codelineno-9-41"></a>    <span class="n">dt_lte</span><span class="p">,</span> <span class="n">lte_norm</span> <span class="o">=</span> <span class="n">compute_lte</span><span class="p">(</span><span class="n">V_final</span><span class="p">,</span> <span class="n">V_pred</span><span class="p">,</span> <span class="o">...</span><span class="p">)</span>
+<a id="__codelineno-9-42" name="__codelineno-9-42" href="#__codelineno-9-42"></a>
+<a id="__codelineno-9-43" name="__codelineno-9-43" href="#__codelineno-9-43"></a>    <span class="c1"># Accept/reject batch</span>
+<a id="__codelineno-9-44" name="__codelineno-9-44" href="#__codelineno-9-44"></a>    <span class="n">lte_reject</span> <span class="o">=</span> <span class="p">(</span><span class="n">dt</span> <span class="o">/</span> <span class="n">dt_lte</span> <span class="o">&gt;</span> <span class="n">redo_factor</span><span class="p">)</span> <span class="o">&amp;</span> <span class="n">all_converged</span>
+<a id="__codelineno-9-45" name="__codelineno-9-45" href="#__codelineno-9-45"></a>    <span class="n">nr_reject</span> <span class="o">=</span> <span class="o">~</span><span class="n">all_converged</span>
+<a id="__codelineno-9-46" name="__codelineno-9-46" href="#__codelineno-9-46"></a>
+<a id="__codelineno-9-47" name="__codelineno-9-47" href="#__codelineno-9-47"></a>    <span class="c1"># ... update state, adjust K and dt ...</span>
+</code></pre></div>
+<h3 id="comparison">Comparison<a class="headerlink" href="#comparison" title="Permanent link">&para;</a></h3>
+<table>
+<thead>
+<tr>
+<th>Mode</th>
+<th>dt control</th>
+<th>GPU fusion</th>
+<th>Overhead</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>while_loop (current)</td>
+<td>per-step</td>
+<td>none (CPU↔GPU sync each step)</td>
+<td>~80ms/step</td>
+</tr>
+<tr>
+<td>fori_loop (fixed)</td>
+<td>none</td>
+<td>full (IREE fuses all iters)</td>
+<td>~0.2ms/step</td>
+</tr>
+<tr>
+<td><strong>batch-adaptive</strong></td>
+<td>per-batch</td>
+<td>within batch (scan fusible)</td>
+<td>per-step + batch overhead</td>
+</tr>
+</tbody>
+</table>
+<h3 id="empirical-lte-analysis-c6288">Empirical LTE Analysis (c6288)<a class="headerlink" href="#empirical-lte-analysis-c6288" title="Permanent link">&para;</a></h3>
+<p>Measured on c6288 (5123 nodes, 100 steps, Apple M4 Pro):</p>
+<table>
+<thead>
+<tr>
+<th>Phase</th>
+<th>Steps</th>
+<th>dt range</th>
+<th>LTE/tol range</th>
+<th>NR iters</th>
+<th>Batchable?</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Warmup</td>
+<td>2-6</td>
+<td>0.5→0.05ps</td>
+<td>n/a (no estimate)</td>
+<td>3-5</td>
+<td>No (dt shrinking)</td>
+</tr>
+<tr>
+<td>Ramp-up</td>
+<td>7-43</td>
+<td>0.04→4.0ps</td>
+<td>0.05-4.4</td>
+<td>1-3</td>
+<td>Marginal (dt growing fast)</td>
+</tr>
+<tr>
+<td>Steady state</td>
+<td>43-61</td>
+<td>2.5-4.0ps</td>
+<td>0.5-2.5</td>
+<td>1</td>
+<td><strong>Yes (38 consecutive accepts)</strong></td>
+</tr>
+<tr>
+<td>Transition</td>
+<td>62-70</td>
+<td>0.17-3.2ps</td>
+<td>0.04-89</td>
+<td>1-4</td>
+<td>No (rejections, dt crash)</td>
+</tr>
+<tr>
+<td>Post-transition</td>
+<td>71-120</td>
+<td>0.8-3.0ps</td>
+<td>0.2-20</td>
+<td>1</td>
+<td>Partial (dt varies 2x)</td>
+</tr>
+</tbody>
+</table>
+<p>Key findings:
+- <strong>4 rejections in 120 steps</strong> (3.3% rejection rate)
+- <strong>38 consecutive accepted steps</strong> in steady state (steps 24-61), all NR=1
+- dt changes ~20-50% per step even in steady state (not constant)
+- LTE/tol rarely exceeds 10 in steady state → conservative acceptance
+- <strong>K=4 is safe</strong> for steady state; K=8 possible but riskier
+- Near input transitions (t≈100ps), K must drop to 1</p>
+<h3 id="double-buffered-pipelined-nr">Double-Buffered Pipelined NR<a class="headerlink" href="#double-buffered-pipelined-nr" title="Permanent link">&para;</a></h3>
+<p>Within each batch step, NR iterations are sequential (each depends on the
+previous solution). But with double-buffered GPU data slots, we can <strong>pipeline
+CPU prep with GPU factorization</strong>:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-10-1" name="__codelineno-10-1" href="#__codelineno-10-1"></a>Slot A: prep₀ → encode₀ ──────────────── flush₀+refine₀
+<a id="__codelineno-10-2" name="__codelineno-10-2" href="#__codelineno-10-2"></a>Slot B:          prep₁ → encode₁ ──────────────── flush₁+refine₁
+<a id="__codelineno-10-3" name="__codelineno-10-3" href="#__codelineno-10-3"></a>Slot A:                    prep₂ → encode₂ ──────────────── ...
+<a id="__codelineno-10-4" name="__codelineno-10-4" href="#__codelineno-10-4"></a>
+<a id="__codelineno-10-5" name="__codelineno-10-5" href="#__codelineno-10-5"></a>GPU:    [──factor₀+solve₀──][──factor₁+solve₁──][──factor₂+solve₂──]
+<a id="__codelineno-10-6" name="__codelineno-10-6" href="#__codelineno-10-6"></a>CPU:    [prep₀][prep₁───────][prep₂──────────────][prep₃─────────────]
+<a id="__codelineno-10-7" name="__codelineno-10-7" href="#__codelineno-10-7"></a>                ↑ overlaps    ↑ overlaps           ↑ overlaps
+</code></pre></div>
+<p>Where "prep" = build_system + equilibrate + scatter (CPU, ~20-25ms on c6288).</p>
+<p>This is implemented via <code>SpruxFFISolver::beginSolve()</code> / <code>endSolve()</code>:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-11-1" name="__codelineno-11-1" href="#__codelineno-11-1"></a><span class="c1">// CPU preprocessing + GPU factor+solve (async, returns immediately)</span>
+<a id="__codelineno-11-2" name="__codelineno-11-2" href="#__codelineno-11-2"></a><span class="kt">void</span><span class="w"> </span><span class="nf">beginSolve</span><span class="p">(</span><span class="k">const</span><span class="w"> </span><span class="kt">double</span><span class="o">*</span><span class="w"> </span><span class="n">csr_data</span><span class="p">,</span><span class="w"> </span><span class="k">const</span><span class="w"> </span><span class="kt">double</span><span class="o">*</span><span class="w"> </span><span class="n">rhs</span><span class="p">);</span>
+<a id="__codelineno-11-3" name="__codelineno-11-3" href="#__codelineno-11-3"></a>
+<a id="__codelineno-11-4" name="__codelineno-11-4" href="#__codelineno-11-4"></a><span class="c1">// GPU sync + CPU iterative refinement → result</span>
+<a id="__codelineno-11-5" name="__codelineno-11-5" href="#__codelineno-11-5"></a><span class="kt">int</span><span class="w"> </span><span class="nf">endSolve</span><span class="p">(</span><span class="kt">double</span><span class="o">*</span><span class="w"> </span><span class="n">x_out</span><span class="p">);</span>
+</code></pre></div>
+<p>Internally, Sprux uses double-buffered slots (ping-pong). Each slot owns
+its own <code>MetalMirror&lt;float&gt; dataGpu</code>, <code>xGpu</code>, cached equilibration scales.
+The <code>devPivots</code> and <code>numCtx</code>/<code>solveCtx</code> are shared (GPU processes slots
+sequentially).</p>
+<p><strong>Python API</strong> (exposed via nanobind, NOT XLA FFI — used outside JIT):</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-12-1" name="__codelineno-12-1" href="#__codelineno-12-1"></a><span class="kn">from</span><span class="w"> </span><span class="nn">vajax.sprux</span><span class="w"> </span><span class="kn">import</span> <span class="n">sprux_jax</span>
+<a id="__codelineno-12-2" name="__codelineno-12-2" href="#__codelineno-12-2"></a>
+<a id="__codelineno-12-3" name="__codelineno-12-3" href="#__codelineno-12-3"></a><span class="n">sprux_jax</span><span class="o">.</span><span class="n">begin_solve</span><span class="p">(</span><span class="n">indptr</span><span class="p">,</span> <span class="n">indices</span><span class="p">,</span> <span class="n">data</span><span class="p">,</span> <span class="n">rhs</span><span class="p">)</span>  <span class="c1"># GPU async</span>
+<a id="__codelineno-12-4" name="__codelineno-12-4" href="#__codelineno-12-4"></a><span class="c1"># ... CPU work here (build_system for next NR iteration) ...</span>
+<a id="__codelineno-12-5" name="__codelineno-12-5" href="#__codelineno-12-5"></a><span class="n">x</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">zeros</span><span class="p">(</span><span class="n">n</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">np</span><span class="o">.</span><span class="n">float64</span><span class="p">)</span>
+<a id="__codelineno-12-6" name="__codelineno-12-6" href="#__codelineno-12-6"></a><span class="n">sprux_jax</span><span class="o">.</span><span class="n">end_solve</span><span class="p">(</span><span class="n">x</span><span class="p">)</span>  <span class="c1"># GPU sync + refine → writes to x</span>
+</code></pre></div>
+<p><strong>JAX FFI API</strong> (inside JIT, <code>lax.while_loop</code>):
+<div class="highlight"><pre><span></span><code><a id="__codelineno-13-1" name="__codelineno-13-1" href="#__codelineno-13-1"></a><span class="c1"># One-shot (current) — no pipelining</span>
+<a id="__codelineno-13-2" name="__codelineno-13-2" href="#__codelineno-13-2"></a><span class="n">x</span> <span class="o">=</span> <span class="n">sprux_jax</span><span class="o">.</span><span class="n">solve</span><span class="p">(</span><span class="n">indptr</span><span class="p">,</span> <span class="n">indices</span><span class="p">,</span> <span class="n">data</span><span class="p">,</span> <span class="n">rhs</span><span class="p">)</span>
+</code></pre></div></p>
+<p>The pipelined API is currently Python-only (nanobind). Integrating it into
+the JAX-JIT NR loop requires either <code>jax.debug.callback</code> or restructuring
+the NR loop to break the while_loop into explicit iterations.</p>
+<h3 id="combined-strategy">Combined Strategy<a class="headerlink" href="#combined-strategy" title="Permanent link">&para;</a></h3>
+<p>The full optimization combines batch-adaptive (inter-step) with
+double-buffered pipelining (intra-step NR):</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-14-1" name="__codelineno-14-1" href="#__codelineno-14-1"></a>Batch k (K steps, fixed dt):
+<a id="__codelineno-14-2" name="__codelineno-14-2" href="#__codelineno-14-2"></a>  lax.scan:
+<a id="__codelineno-14-3" name="__codelineno-14-3" href="#__codelineno-14-3"></a>    step 0: [prep₀(slotA)] [encode₀] ... [flush₀] → X₀
+<a id="__codelineno-14-4" name="__codelineno-14-4" href="#__codelineno-14-4"></a>    step 1: [prep₁(slotB)] [encode₁] ... [flush₁] → X₁  (pipelined)
+<a id="__codelineno-14-5" name="__codelineno-14-5" href="#__codelineno-14-5"></a>    ...
+<a id="__codelineno-14-6" name="__codelineno-14-6" href="#__codelineno-14-6"></a>  LTE check on X_{K-1} vs V_pred
+<a id="__codelineno-14-7" name="__codelineno-14-7" href="#__codelineno-14-7"></a>
+<a id="__codelineno-14-8" name="__codelineno-14-8" href="#__codelineno-14-8"></a>Batch k+1:
+<a id="__codelineno-14-9" name="__codelineno-14-9" href="#__codelineno-14-9"></a>  dt_new from LTE
+<a id="__codelineno-14-10" name="__codelineno-14-10" href="#__codelineno-14-10"></a>  K_new = adjust(K, accepted?)
+<a id="__codelineno-14-11" name="__codelineno-14-11" href="#__codelineno-14-11"></a>  ...
+</code></pre></div>
+<h3 id="dot-graph">DOT Graph<a class="headerlink" href="#dot-graph" title="Permanent link">&para;</a></h3>
+<p>```dot
+digraph batch_adaptive {
+  rankdir=TB;
+  node [shape=box, style=rounded];</p>
+<p>batch_start [label="Batch Start\nX, Q, dt, K"];</p>
+<p>subgraph cluster_prep {
+    label="Batch Preparation (once)";
+    style=dashed;
+    integ [label="integ_coeff\n(constant for batch)"];
+    sources [label="source_eval\n(vectorized, K steps)"];
+    pred [label="predict_voltage\n(once, for LTE)"];
+  }</p>
+<p>subgraph cluster_scan {
+    label="lax.scan (K steps, GPU-fusible)";
+    color=blue;
+    step0 [label="step 0\nbuild→NR→solve"];
+    step1 [label="step 1\nbuild→NR→solve"];
+    step2 [label="step 2\nbuild→NR→solve"];
+    stepK [label="step K-1\n→ X_final"];</p>
+<div class="highlight"><pre><span></span><code>step0 -&gt; step1 [label=&quot;X₀,Q₀&quot;];
+step1 -&gt; step2 [label=&quot;X₁,Q₁&quot;];
+step2 -&gt; stepK [style=dashed, label=&quot;...&quot;];
+</code></pre></div>
+<p>}</p>
+<p>lte [label="LTE check\nV_final vs V_pred"];
+  nr_check [label="NR check\nall converged?"];
+  accept [label="ACCEPT\nt += K*dt\ngrow K"];
+  reject [label="REJECT\ndt /= 2\nshrink K"];</p>
+<p>batch_start -&gt; {integ sources pred};
+  {integ sources} -&gt; step0;
+  stepK -&gt; {lte nr_check};
+  pred -&gt; lte;
+  {lte nr_check} -&gt; accept;
+  {lte nr_check} -&gt; reject;
+  reject -&gt; batch_start [style=dashed, label="retry"];
+  accept -&gt; batch_start [style=dashed, label="next batch"];
+}</p>
+
+
+
+
+
+
+
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+          <button type="button" class="md-top md-icon" data-md-component="top" hidden>
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M13 20h-2V8l-5.5 5.5-1.42-1.42L12 4.16l7.92 7.92-1.42 1.42L13 8z"/></svg>
+  Back to top
+</button>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+  
+    Made with
+    <a href="https://squidfunk.github.io/mkdocs-material/" target="_blank" rel="noopener">
+      Material for MkDocs
+    </a>
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    
+      
+      
+      <script id="__config" type="application/json">{"annotate": null, "base": "..", "features": ["content.code.copy", "navigation.instant", "navigation.sections", "navigation.top", "toc.follow"], "search": "../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
+    
+    
+      <script src="../assets/javascripts/bundle.79ae519e.min.js"></script>
+      
+    
+  </body>
+</html>
