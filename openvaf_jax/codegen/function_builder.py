@@ -59,6 +59,7 @@ class FunctionBuilder:
         self.mir_func = mir_func
         self.cfg = CFGAnalyzer(mir_func)
         self.ssa = SSAAnalyzer(mir_func, self.cfg)
+        self.sccp: Optional["SCCP"] = None  # SCCP for dead block elimination
         self.codegen_warnings: list[str] = []  # Warnings from code generation
         self.simparam_metadata: dict = {}  # Simparam registry metadata after build
 
@@ -542,17 +543,26 @@ class InitFunctionBuilder(FunctionBuilder):
         # for variables only assigned in conditional branches (NMOS/PMOS paths)
         self._pre_initialize_cache_vars(body, ctx)
 
-        # Process blocks
+        # Process blocks (skip dead blocks identified by SCCP constant propagation)
         translator = InstructionTranslator(ctx, self.ssa)
         block_order = self.cfg.topological_order()
 
+        n_dead = 0
         for item in block_order:
             if isinstance(item, LoopInfo):
+                if self.sccp and self.sccp.is_block_dead(item.header):
+                    n_dead += 1
+                    continue
                 self._emit_loop(body, ctx, item, translator)
             else:
+                if self.sccp and self.sccp.is_block_dead(item):
+                    n_dead += 1
+                    continue
                 block = self.mir_func.blocks.get(item)
                 if block:
                     self._emit_block(body, ctx, block, translator)
+        if n_dead > 0:
+            logger.info(f"    SCCP: pruned {n_dead}/{len(block_order)} dead blocks")
 
         # Collect warnings from translator
         self.codegen_warnings.extend(translator.simparam_warnings)
@@ -637,17 +647,26 @@ class InitFunctionBuilder(FunctionBuilder):
         # for variables only assigned in conditional branches (NMOS/PMOS paths)
         self._pre_initialize_cache_vars(body, ctx)
 
-        # Process blocks
+        # Process blocks (skip dead blocks identified by SCCP constant propagation)
         translator = InstructionTranslator(ctx, self.ssa)
         block_order = self.cfg.topological_order()
 
+        n_dead = 0
         for item in block_order:
             if isinstance(item, LoopInfo):
+                if self.sccp and self.sccp.is_block_dead(item.header):
+                    n_dead += 1
+                    continue
                 self._emit_loop(body, ctx, item, translator)
             else:
+                if self.sccp and self.sccp.is_block_dead(item):
+                    n_dead += 1
+                    continue
                 block = self.mir_func.blocks.get(item)
                 if block:
                     self._emit_block(body, ctx, block, translator)
+        if n_dead > 0:
+            logger.info(f"    SCCP: pruned {n_dead}/{len(block_order)} dead blocks")
 
         # Collect warnings from translator
         self.codegen_warnings.extend(translator.simparam_warnings)
@@ -907,17 +926,26 @@ class EvalFunctionBuilder(FunctionBuilder):
         # for variables only assigned in conditional branches (NMOS/PMOS paths)
         self._pre_initialize_output_vars(body, ctx)
 
-        # Process blocks
+        # Process blocks (skip dead blocks identified by SCCP constant propagation)
         translator = InstructionTranslator(ctx, self.ssa)
         block_order = self.cfg.topological_order()
 
+        n_dead = 0
         for item in block_order:
             if isinstance(item, LoopInfo):
+                if self.sccp and self.sccp.is_block_dead(item.header):
+                    n_dead += 1
+                    continue
                 self._emit_loop(body, ctx, item, translator)
             else:
+                if self.sccp and self.sccp.is_block_dead(item):
+                    n_dead += 1
+                    continue
                 block = self.mir_func.blocks.get(item)
                 if block:
                     self._emit_block(body, ctx, block, translator)
+        if n_dead > 0:
+            logger.info(f"    SCCP: pruned {n_dead}/{len(block_order)} dead blocks")
 
         # Collect warnings from translator
         self.codegen_warnings.extend(translator.simparam_warnings)

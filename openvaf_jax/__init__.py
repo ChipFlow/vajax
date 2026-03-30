@@ -1274,6 +1274,7 @@ class OpenVAFToJAX:
         varying_cache_indices: Optional[List[int]] = None,
         use_limit_functions: bool = False,
         limit_param_map: Optional[Dict[int, Tuple[str, str]]] = None,
+        sccp_known_values: Optional[Dict[str, Any]] = None,
     ) -> Tuple[Callable, Dict]:
         """Generate a vmappable eval function with split params and cache (internal API).
 
@@ -1328,6 +1329,7 @@ class OpenVAFToJAX:
             self.cache_mapping,
             self.param_idx_to_val,
             eval_param_names=eval_param_names,
+            sccp_known_values=sccp_known_values,
         )
         fn_name, code_lines = builder.build_with_cache_split(
             shared_indices,

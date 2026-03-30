@@ -930,6 +930,18 @@ def prepare_static_inputs(
 
         limit_funcs = {"pnjlim": pnjlim, "fetlim": fetlim}
 
+        # Build SCCP known values for constant propagation (TYPE specialization, etc.)
+        # Maps MIR value IDs to constant values for shared params.
+        sccp_known_values = {}
+        for j, orig_idx in enumerate(shared_indices):
+            value_id = translator.param_idx_to_val.get(orig_idx)
+            if value_id is not None:
+                sccp_known_values[value_id] = shared_params_list[j]
+        if sccp_known_values:
+            logger.info(
+                f"{model_type}: SCCP seeded with {len(sccp_known_values)} constant params"
+            )
+
         logger.info(
             f"{model_type}: generating split eval function (limit={use_device_limiting})..."
         )
@@ -940,6 +952,7 @@ def prepare_static_inputs(
             varying_cache_indices,
             use_limit_functions=use_device_limiting,
             limit_param_map=limit_param_map,
+            sccp_known_values=sccp_known_values,
         )
         # Safety check: if limiting is enabled but lim_rhs could not be computed
         # (model uses inline limiting without $limit/BuiltinLimit calls), disable
@@ -960,6 +973,7 @@ def prepare_static_inputs(
                     varying_cache_indices,
                     use_limit_functions=False,
                     limit_param_map=limit_param_map,
+                    sccp_known_values=sccp_known_values,
                 )
 
         split_fn = partial(split_fn, limit_funcs=limit_funcs)
