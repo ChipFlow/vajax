@@ -22,6 +22,10 @@ from __future__ import annotations
 
 import os
 import sys
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    import numpy
 
 import jax
 import jax.extend.core
@@ -117,10 +121,10 @@ def end_capture() -> None:
 
 
 def begin_solve(
-    indptr: "np.ndarray",
-    indices: "np.ndarray",
-    data: "np.ndarray",
-    rhs: "np.ndarray",
+    indptr: "numpy.ndarray",
+    indices: "numpy.ndarray",
+    data: "numpy.ndarray",
+    rhs: "numpy.ndarray",
 ) -> None:
     """Submit GPU factor+solve asynchronously (split-phase).
 
@@ -149,7 +153,7 @@ def begin_solve(
     )
 
 
-def end_solve(x_out: "np.ndarray") -> int:
+def end_solve(x_out: "numpy.ndarray") -> int:
     """Complete iterative refinement and write result (split-phase).
 
     Must be called after begin_solve(). Waits for GPU completion,
