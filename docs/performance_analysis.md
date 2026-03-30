@@ -229,3 +229,52 @@ These are known areas where the per-step overhead could be reduced:
 These optimizations would primarily benefit small-circuit CPU performance
 without affecting the large-circuit GPU path where VAJAX already
 outperforms VACASK.
+
+## Model Eval Optimization: SCCP and Branchless Ops
+
+### SCCP Constant Propagation (Implemented)
+
+Sparse Conditional Constant Propagation seeds known parameter values
+(including init-computed cache/hidden_state) into the codegen. This
+eliminates dead blocks at code generation time:
+
+| Model | Dead Blocks | Code Reduction | jnp.where Reduction |
+|-------|-------------|----------------|---------------------|
+| PSP103 | 89% (695/954) | 42% fewer lines | 67% fewer (2247→743) |
+| BSIM4 | 49% | - | - |
+| BSIM3 | 47% | - | - |
+
+Runtime improvement on c6288: **19% faster** (58→47ms/step).
+
+### Branchless `lexp` Operator (TODO)
+
+BSIM models define a safe-exp function `lexp(x)` that guards against overflow:
+```verilog
+if (x > 80)      lexp = MAX_EXPL * (1 + x - 80);   // linear extrapolation
+else if (x < -80) lexp = MIN_EXPL;                   // clamp
+else               lexp = exp(x);
+```
+
+OpenVAF inlines this as 2 MIR blocks + 1 PHI per call → 2 `jnp.where` in
+generated code. BSIMBULK has ~155 of these, BSIMCMG ~136.
+
+**Proposed fix**: Add `lexp` as a JAX custom op with `@jax.custom_jvp`:
+```python
+@jax.custom_jvp
+def lexp(x):
+    safe_x = jnp.clip(x, -80.0, 80.0)
+    base = jnp.exp(safe_x)
+    return jnp.where(x > 80.0, MAX_EXPL * (1.0 + x - 80.0),
+           jnp.where(x < -80.0, MIN_EXPL, base))
+```
+
+This is architecture-independent (CPU SIMD, GPU, Metal all use branchless
+select+exp+clip). Integration options:
+1. **OpenVAF compiler**: Emit `CallbackKind::Lexp` for `lexp`/`limexp` analog
+   functions instead of inlining the body. Then `openvaf_jax` translates the
+   callback to the JAX op (like `WhiteNoise`, `TimeDerivative`).
+2. **Codegen pattern match**: Detect the lexp MIR pattern (±80 compare, branch,
+   exp in one arm) and replace with a single `lexp()` call. More fragile.
+
+Impact: eliminates ~150+ branches per BSIM model eval, reduces `jnp.where`
+count, and avoids computing `exp(x)` when x overflows (single `exp(clip(x))`).
