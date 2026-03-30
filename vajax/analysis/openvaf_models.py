@@ -931,15 +931,32 @@ def prepare_static_inputs(
         limit_funcs = {"pnjlim": pnjlim, "fetlim": fetlim}
 
         # Build SCCP known values for constant propagation (TYPE specialization, etc.)
-        # Maps MIR value IDs to constant values for shared params.
+        # Maps MIR value IDs to constant values for shared params AND cache values.
         sccp_known_values = {}
         for j, orig_idx in enumerate(shared_indices):
             value_id = translator.param_idx_to_val.get(orig_idx)
             if value_id is not None:
                 sccp_known_values[value_id] = shared_params_list[j]
+
+        # Seed shared cache values (hidden_state from init — includes TYPE-derived values).
+        # These are constant across all devices and computed by the init function.
+        # Iterate ALL cache mappings and seed those that are shared (constant).
+        n_cache_seeded = 0
+        if shared_cache_indices and cache.shape[0] > 0:
+            shared_set = set(shared_cache_indices)
+            cache_row = np.asarray(cache[0])  # cache values from first device (shared)
+            for cache_col, mapping in enumerate(translator.cache_mapping):
+                if cache_col in shared_set and cache_col < cache_row.shape[0]:
+                    eval_param_idx = mapping["eval_param"]
+                    value_id = translator.param_idx_to_val.get(eval_param_idx)
+                    if value_id is not None:
+                        sccp_known_values[value_id] = float(cache_row[cache_col])
+                        n_cache_seeded += 1
+
         if sccp_known_values:
             logger.info(
-                f"{model_type}: SCCP seeded with {len(sccp_known_values)} constant params"
+                f"{model_type}: SCCP seeded with {len(sccp_known_values)} constants "
+                f"({len(sccp_known_values) - n_cache_seeded} params + {n_cache_seeded} cache)"
             )
 
         logger.info(

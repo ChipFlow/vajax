@@ -810,16 +810,13 @@ class EvalFunctionBuilder(FunctionBuilder):
             eval_param_names: Optional list of eval parameter names (e.g., ['V(A,CI)', 'R', ...]).
                              Used for tracing voltage params to node names for lim_rhs computation.
         """
-        # Run SCCP if known values provided
-        self.sccp: Optional[SCCP] = None
-        if sccp_known_values:
-            self.sccp = SCCP(mir_func, known_values=sccp_known_values)
-
-        # Call parent init after SCCP so we can pass it to SSAAnalyzer
+        # Call parent init first (sets self.sccp = None via base class)
         super().__init__(mir_func)
 
-        # Re-create SSA analyzer with SCCP if available
-        if self.sccp is not None:
+        # Run SCCP if known values provided (must be after super().__init__)
+        if sccp_known_values:
+            self.sccp = SCCP(mir_func, known_values=sccp_known_values)
+            # Re-create SSA analyzer with SCCP for dead-branch PHI filtering
             self.ssa = SSAAnalyzer(mir_func, self.cfg, sccp=self.sccp)
 
         self.dae_data = dae_data
