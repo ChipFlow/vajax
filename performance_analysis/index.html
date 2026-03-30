@@ -749,6 +749,45 @@
   
 </li>
       
+        <li class="md-nav__item">
+  <a href="#model-eval-optimization-sccp-and-branchless-ops" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Model Eval Optimization: SCCP and Branchless Ops
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Model Eval Optimization: SCCP and Branchless Ops">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#sccp-constant-propagation-implemented" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        SCCP Constant Propagation (Implemented)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#branchless-lexp-operator-todo" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Branchless lexp Operator (TODO)
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
     </ul>
   
 </nav>
@@ -1567,6 +1606,45 @@
   
 </li>
       
+        <li class="md-nav__item">
+  <a href="#model-eval-optimization-sccp-and-branchless-ops" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Model Eval Optimization: SCCP and Branchless Ops
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Model Eval Optimization: SCCP and Branchless Ops">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#sccp-constant-propagation-implemented" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        SCCP Constant Propagation (Implemented)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#branchless-lexp-operator-todo" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Branchless lexp Operator (TODO)
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
     </ul>
   
 </nav>
@@ -1996,6 +2074,67 @@ circuits to CPU, avoiding this overhead in normal usage.</p>
 <p>These optimizations would primarily benefit small-circuit CPU performance
 without affecting the large-circuit GPU path where VAJAX already
 outperforms VACASK.</p>
+<h2 id="model-eval-optimization-sccp-and-branchless-ops">Model Eval Optimization: SCCP and Branchless Ops<a class="headerlink" href="#model-eval-optimization-sccp-and-branchless-ops" title="Permanent link">&para;</a></h2>
+<h3 id="sccp-constant-propagation-implemented">SCCP Constant Propagation (Implemented)<a class="headerlink" href="#sccp-constant-propagation-implemented" title="Permanent link">&para;</a></h3>
+<p>Sparse Conditional Constant Propagation seeds known parameter values
+(including init-computed cache/hidden_state) into the codegen. This
+eliminates dead blocks at code generation time:</p>
+<table>
+<thead>
+<tr>
+<th>Model</th>
+<th>Dead Blocks</th>
+<th>Code Reduction</th>
+<th>jnp.where Reduction</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>PSP103</td>
+<td>89% (695/954)</td>
+<td>42% fewer lines</td>
+<td>67% fewer (2247→743)</td>
+</tr>
+<tr>
+<td>BSIM4</td>
+<td>49%</td>
+<td>-</td>
+<td>-</td>
+</tr>
+<tr>
+<td>BSIM3</td>
+<td>47%</td>
+<td>-</td>
+<td>-</td>
+</tr>
+</tbody>
+</table>
+<p>Runtime improvement on c6288: <strong>19% faster</strong> (58→47ms/step).</p>
+<h3 id="branchless-lexp-operator-todo">Branchless <code>lexp</code> Operator (TODO)<a class="headerlink" href="#branchless-lexp-operator-todo" title="Permanent link">&para;</a></h3>
+<p>BSIM models define a safe-exp function <code>lexp(x)</code> that guards against overflow:
+<div class="highlight"><pre><span></span><code><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a><span class="k">if</span><span class="w"> </span><span class="p">(</span><span class="n">x</span><span class="w"> </span><span class="o">&gt;</span><span class="w"> </span><span class="mh">80</span><span class="p">)</span><span class="w">      </span><span class="n">lexp</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">MAX_EXPL</span><span class="w"> </span><span class="o">*</span><span class="w"> </span><span class="p">(</span><span class="mh">1</span><span class="w"> </span><span class="o">+</span><span class="w"> </span><span class="n">x</span><span class="w"> </span><span class="o">-</span><span class="w"> </span><span class="mh">80</span><span class="p">);</span><span class="w">   </span><span class="c1">// linear extrapolation</span>
+<a id="__codelineno-5-2" name="__codelineno-5-2" href="#__codelineno-5-2"></a><span class="k">else</span><span class="w"> </span><span class="k">if</span><span class="w"> </span><span class="p">(</span><span class="n">x</span><span class="w"> </span><span class="o">&lt;</span><span class="w"> </span><span class="o">-</span><span class="mh">80</span><span class="p">)</span><span class="w"> </span><span class="n">lexp</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">MIN_EXPL</span><span class="p">;</span><span class="w">                   </span><span class="c1">// clamp</span>
+<a id="__codelineno-5-3" name="__codelineno-5-3" href="#__codelineno-5-3"></a><span class="k">else</span><span class="w">               </span><span class="n">lexp</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">exp</span><span class="p">(</span><span class="n">x</span><span class="p">);</span>
+</code></pre></div></p>
+<p>OpenVAF inlines this as 2 MIR blocks + 1 PHI per call → 2 <code>jnp.where</code> in
+generated code. BSIMBULK has ~155 of these, BSIMCMG ~136.</p>
+<p><strong>Proposed fix</strong>: Add <code>lexp</code> as a JAX custom op with <code>@jax.custom_jvp</code>:
+<div class="highlight"><pre><span></span><code><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a><span class="nd">@jax</span><span class="o">.</span><span class="n">custom_jvp</span>
+<a id="__codelineno-6-2" name="__codelineno-6-2" href="#__codelineno-6-2"></a><span class="k">def</span><span class="w"> </span><span class="nf">lexp</span><span class="p">(</span><span class="n">x</span><span class="p">):</span>
+<a id="__codelineno-6-3" name="__codelineno-6-3" href="#__codelineno-6-3"></a>    <span class="n">safe_x</span> <span class="o">=</span> <span class="n">jnp</span><span class="o">.</span><span class="n">clip</span><span class="p">(</span><span class="n">x</span><span class="p">,</span> <span class="o">-</span><span class="mf">80.0</span><span class="p">,</span> <span class="mf">80.0</span><span class="p">)</span>
+<a id="__codelineno-6-4" name="__codelineno-6-4" href="#__codelineno-6-4"></a>    <span class="n">base</span> <span class="o">=</span> <span class="n">jnp</span><span class="o">.</span><span class="n">exp</span><span class="p">(</span><span class="n">safe_x</span><span class="p">)</span>
+<a id="__codelineno-6-5" name="__codelineno-6-5" href="#__codelineno-6-5"></a>    <span class="k">return</span> <span class="n">jnp</span><span class="o">.</span><span class="n">where</span><span class="p">(</span><span class="n">x</span> <span class="o">&gt;</span> <span class="mf">80.0</span><span class="p">,</span> <span class="n">MAX_EXPL</span> <span class="o">*</span> <span class="p">(</span><span class="mf">1.0</span> <span class="o">+</span> <span class="n">x</span> <span class="o">-</span> <span class="mf">80.0</span><span class="p">),</span>
+<a id="__codelineno-6-6" name="__codelineno-6-6" href="#__codelineno-6-6"></a>           <span class="n">jnp</span><span class="o">.</span><span class="n">where</span><span class="p">(</span><span class="n">x</span> <span class="o">&lt;</span> <span class="o">-</span><span class="mf">80.0</span><span class="p">,</span> <span class="n">MIN_EXPL</span><span class="p">,</span> <span class="n">base</span><span class="p">))</span>
+</code></pre></div></p>
+<p>This is architecture-independent (CPU SIMD, GPU, Metal all use branchless
+select+exp+clip). Integration options:
+1. <strong>OpenVAF compiler</strong>: Emit <code>CallbackKind::Lexp</code> for <code>lexp</code>/<code>limexp</code> analog
+   functions instead of inlining the body. Then <code>openvaf_jax</code> translates the
+   callback to the JAX op (like <code>WhiteNoise</code>, <code>TimeDerivative</code>).
+2. <strong>Codegen pattern match</strong>: Detect the lexp MIR pattern (±80 compare, branch,
+   exp in one arm) and replace with a single <code>lexp()</code> call. More fragile.</p>
+<p>Impact: eliminates ~150+ branches per BSIM model eval, reduces <code>jnp.where</code>
+count, and avoids computing <code>exp(x)</code> when x overflows (single <code>exp(clip(x))</code>).</p>
 
 
 
