@@ -57,6 +57,7 @@ runme.py.origin
 
 # Claude Code local config
 .claude/
+.tldr/
 
 # Generated plots and images (keep in scripts/ subdirs if needed)
 *.png
