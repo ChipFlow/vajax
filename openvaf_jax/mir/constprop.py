@@ -421,7 +421,7 @@ class SCCP:
 
         if len(operands) == 1:
             a_val = operands[0].value
-            a_type = operands[0].const_type
+            operands[0].const_type
 
             if op == "not":
                 return LatticeValue.constant(not a_val, ConstType.BOOL)

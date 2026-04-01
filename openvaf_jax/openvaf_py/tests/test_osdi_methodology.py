@@ -158,7 +158,7 @@ class TestDiodeLimOSDI:
         expected_id = id_func(vd_test)
         # The residual at node 0 (anode) should include the diode current
         # Note: May have opposite sign convention
-        actual_residual = residuals[0][0] if residuals else 0.0
+        residuals[0][0] if residuals else 0.0
 
         # Check magnitude is reasonable (exponential at 0.5V is large)
         assert abs(expected_id) > 1e-6, f"Expected significant current at Vd={vd_test}V"

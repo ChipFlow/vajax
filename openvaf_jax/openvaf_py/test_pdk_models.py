@@ -34,7 +34,7 @@ def test_model(va_path, allow_analog_in_cond=False):
         try:
             start = time.time()
             translator = openvaf_jax.OpenVAFToJAX(m)
-            jax_fn = translator.translate()
+            translator.translate()
             jax_time = time.time() - start
         except Exception as e:
             return None, f"JAX translation failed: {e}"

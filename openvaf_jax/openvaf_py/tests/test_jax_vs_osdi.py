@@ -194,7 +194,7 @@ class TestEkvMosfet:
         assert jax_jacobian is not None
 
         # Check at least some entries are non-zero
-        has_nonzero = any(abs(float(v["resist"])) > 1e-20 for v in jax_residuals.values())
+        any(abs(float(v["resist"])) > 1e-20 for v in jax_residuals.values())
         # Note: at zero bias, currents may be zero, that's OK
 
     def test_ekv_matches_interpreter(self, ekv):

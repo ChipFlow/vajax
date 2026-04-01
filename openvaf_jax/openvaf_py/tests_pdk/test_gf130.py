@@ -56,7 +56,7 @@ class TestGF130Compilation:
         for va_file in va_files:
             model_name = va_file.stem
             try:
-                model = compile_pdk_model(va_file, allow_analog_in_cond=True)
+                compile_pdk_model(va_file, allow_analog_in_cond=True)
                 results.append((model_name, True, None))
             except Exception as e:
                 # Sanitize error message

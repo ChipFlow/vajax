@@ -1283,7 +1283,6 @@ class FullMNAStrategy(TransientStrategy):
         )
 
         # NR tolerance floor (static for fixed-step mode)
-        nr_reltol = config.reltol
         nr_abstol = config.abstol
 
         def body_fn(i, state):

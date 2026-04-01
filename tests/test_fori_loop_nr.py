@@ -7,10 +7,9 @@ circuit that converges in 2-3 NR iterations.
 
 import jax
 import jax.numpy as jnp
-import pytest
 
-from vajax.analysis.solver_factories import _make_nr_solver_common
 from vajax.analysis.options import SimulationOptions
+from vajax.analysis.solver_factories import _make_nr_solver_common
 
 
 def _make_resistive_divider_system(n_nodes: int = 3, n_vsources: int = 1):

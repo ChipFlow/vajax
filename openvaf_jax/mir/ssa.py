@@ -589,7 +589,7 @@ class SSAAnalyzer:
             if len(cond_info) != 2:
                 continue
 
-            targets = list(cond_info.keys())
+            list(cond_info.keys())
             true_target = None
             false_target = None
 
@@ -806,7 +806,7 @@ class SSAAnalyzer:
             if len(cond_info) != 2:
                 continue
 
-            targets = list(cond_info.keys())
+            list(cond_info.keys())
             true_target = None
             false_target = None
 
@@ -980,7 +980,7 @@ class SSAAnalyzer:
             if len(cond_info) != 2:
                 continue
 
-            targets = list(cond_info.keys())
+            list(cond_info.keys())
             true_target = None
             false_target = None
 
@@ -1055,7 +1055,7 @@ class SSAAnalyzer:
             if len(cond_info) != 2:
                 continue
 
-            targets = list(cond_info.keys())
+            list(cond_info.keys())
             true_target = None
             false_target = None
 

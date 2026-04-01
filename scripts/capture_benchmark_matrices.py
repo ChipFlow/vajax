@@ -24,7 +24,6 @@ os.environ.setdefault("JAX_PLATFORMS", "cpu")
 
 import jax
 import numpy as np
-import scipy.sparse
 
 from vajax.analysis import CircuitEngine
 from vajax.benchmarks.registry import get_benchmark, list_benchmarks
@@ -384,7 +383,7 @@ def main():
 
     # Prepare and run
     engine.prepare(t_stop=t_stop, dt=dt, use_sparse=use_sparse)
-    print(f"  Augmented system size will be reported by solver factory above")
+    print("  Augmented system size will be reported by solver factory above")
     print("Running simulation...")
     result = engine.run_transient()
 
