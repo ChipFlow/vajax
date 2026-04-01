@@ -402,12 +402,12 @@ class TestGenerateBlocks:
         """A generate block's stdout replaces the block in the netlist."""
         sim = tmp_path / "test.sim"
         sim.write_text(
-            'ground 0\n'
+            "ground 0\n"
             'generate "gates.py" <<<FILE\n'
             'print("subckt inv(out in)")\n'
             'print("  mp (out in vdd vdd) pmos w=1u l=0.2u")\n'
             'print("ends")\n'
-            '>>>FILE\n'
+            ">>>FILE\n"
         )
         circuit = parse_netlist(sim)
         assert "inv" in circuit.subckts
@@ -418,15 +418,15 @@ class TestGenerateBlocks:
         """A generate block can use Python loops."""
         sim = tmp_path / "test.sim"
         sim.write_text(
-            'ground 0\n'
+            "ground 0\n"
             'generate "chain.py" <<<FILE\n'
-            'n = 4\n'
+            "n = 4\n"
             'ports = " ".join(f"n{i}" for i in range(n + 1))\n'
             'print(f"subckt chain({ports})")\n'
-            'for i in range(n):\n'
+            "for i in range(n):\n"
             '    print(f"  r{i} (n{i} n{i+1}) res r=1k")\n'
             'print("ends")\n'
-            '>>>FILE\n'
+            ">>>FILE\n"
         )
         circuit = parse_netlist(sim)
         assert "chain" in circuit.subckts
@@ -437,15 +437,15 @@ class TestGenerateBlocks:
         """A generate block can use va_builder."""
         sim = tmp_path / "test.sim"
         sim.write_text(
-            'ground 0\n'
+            "ground 0\n"
             'generate "builder.py" <<<FILE\n'
-            'from va_builder import Netlist\n'
+            "from va_builder import Netlist\n"
             'nl = Netlist(globals=["vdd"], ground="0")\n'
             'with nl.subckt("buf", ["out", "in"]) as s:\n'
             '    s.inst("inv1", "not", ["mid", "in"])\n'
             '    s.inst("inv2", "not", ["out", "mid"])\n'
-            'print(nl)\n'
-            '>>>FILE\n'
+            "print(nl)\n"
+            ">>>FILE\n"
         )
         circuit = parse_netlist(sim)
         assert "buf" in circuit.subckts
@@ -455,10 +455,7 @@ class TestGenerateBlocks:
         """A failing generate block raises RuntimeError."""
         sim = tmp_path / "test.sim"
         sim.write_text(
-            'ground 0\n'
-            'generate "bad.py" <<<FILE\n'
-            'raise ValueError("deliberate error")\n'
-            '>>>FILE\n'
+            'ground 0\ngenerate "bad.py" <<<FILE\nraise ValueError("deliberate error")\n>>>FILE\n'
         )
         with pytest.raises(RuntimeError, match="deliberate error"):
             parse_netlist(sim)
@@ -467,18 +464,18 @@ class TestGenerateBlocks:
         """PEP 723 inline metadata is stripped before execution."""
         sim = tmp_path / "test.sim"
         sim.write_text(
-            'ground 0\n'
+            "ground 0\n"
             'generate "meta.py" <<<FILE\n'
-            '# /// script\n'
+            "# /// script\n"
             '# requires-python = ">=3.10"\n'
             '# dependencies = ["va-builder"]\n'
-            '# ///\n'
-            'from va_builder import Netlist\n'
+            "# ///\n"
+            "from va_builder import Netlist\n"
             'nl = Netlist(ground="0")\n'
             'with nl.subckt("test", ["a"]) as s:\n'
             '    s.inst("r1", "res", ["a", "0"])\n'
-            'print(nl)\n'
-            '>>>FILE\n'
+            "print(nl)\n"
+            ">>>FILE\n"
         )
         circuit = parse_netlist(sim)
         assert "test" in circuit.subckts

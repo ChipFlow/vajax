@@ -521,9 +521,7 @@ def run_noise_analysis(
     output_noise = jnp.array(output_noise_list, dtype=_fdtype)
     power_gain = jnp.array(power_gain_list, dtype=_fdtype)
 
-    contributions = {
-        name: jnp.array(vals, dtype=_fdtype) for name, vals in device_contribs.items()
-    }
+    contributions = {name: jnp.array(vals, dtype=_fdtype) for name, vals in device_contribs.items()}
 
     detailed = {key: jnp.array(vals, dtype=_fdtype) for key, vals in detailed_contribs.items()}
 

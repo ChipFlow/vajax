@@ -36,43 +36,62 @@ def _make_resistive_divider_system(n_nodes: int = 3, n_vsources: int = 1):
     n_unknowns = n_nodes - 1  # Exclude ground
     n_aug = n_unknowns + n_vsources
 
-    def build_system(X, vsource_vals, isource_vals, Q_prev, integ_c0,
-                     device_arrays, gmin, gshunt, integ_c1, integ_d1,
-                     dQdt_prev, integ_c2, Q_prev2, limit_state, iteration):
+    def build_system(
+        X,
+        vsource_vals,
+        isource_vals,
+        Q_prev,
+        integ_c0,
+        device_arrays,
+        gmin,
+        gshunt,
+        integ_c1,
+        integ_d1,
+        dQdt_prev,
+        integ_c2,
+        Q_prev2,
+        limit_state,
+        iteration,
+    ):
         """Build MNA Jacobian and residual for resistive divider."""
         # X layout: [V_gnd=0 (implicit), V_node1, V_vsrc_node, I_v1]
-        V1 = X[1]       # node1 voltage
-        V2 = X[2]       # vsrc node voltage (should be 1V)
-        I_v1 = X[3]     # V1 branch current
+        V1 = X[1]  # node1 voltage
+        V2 = X[2]  # vsrc node voltage (should be 1V)
+        I_v1 = X[3]  # V1 branch current
 
         V1_val = vsource_vals[0]  # Source voltage (1.0V)
 
         # Jacobian (augmented MNA)
         J = jnp.zeros((n_aug, n_aug), dtype=X.dtype)
         # Node 1 (internal node): (V1-0)/R2 + (V1-V2)/R1 = 0
-        J = J.at[0, 0].set(1.0/R1 + 1.0/R2 + gmin)  # dI1/dV1
-        J = J.at[0, 1].set(-1.0/R1)                    # dI1/dV2
+        J = J.at[0, 0].set(1.0 / R1 + 1.0 / R2 + gmin)  # dI1/dV1
+        J = J.at[0, 1].set(-1.0 / R1)  # dI1/dV2
         # Node 2 (vsrc node): (V2-V1)/R1 + I_v1 = 0
-        J = J.at[1, 0].set(-1.0/R1)                    # dI2/dV1
-        J = J.at[1, 1].set(1.0/R1 + gmin)              # dI2/dV2
-        J = J.at[1, 2].set(1.0)                         # dI2/dI_v1
+        J = J.at[1, 0].set(-1.0 / R1)  # dI2/dV1
+        J = J.at[1, 1].set(1.0 / R1 + gmin)  # dI2/dV2
+        J = J.at[1, 2].set(1.0)  # dI2/dI_v1
         # V1 equation: V2 = V1_val
-        J = J.at[2, 1].set(1.0)                         # dVeq/dV2
+        J = J.at[2, 1].set(1.0)  # dVeq/dV2
 
         # Residual f = J*X - b (KCL errors)
         f = jnp.zeros(n_aug, dtype=X.dtype)
-        f = f.at[0].set((V1 - 0)/R2 + (V1 - V2)/R1 + gmin * V1)
-        f = f.at[1].set((V2 - V1)/R1 + I_v1 + gmin * V2)
+        f = f.at[0].set((V1 - 0) / R2 + (V1 - V2) / R1 + gmin * V1)
+        f = f.at[1].set((V2 - V1) / R1 + I_v1 + gmin * V2)
         f = f.at[2].set(V2 - V1_val)
 
         # Q (charge), I_vsource, limit_state, max_res_contrib
         Q = jnp.zeros(n_unknowns, dtype=X.dtype)
         I_vsource = jnp.array([I_v1], dtype=X.dtype)
         limit_state_out = limit_state
-        max_res_contrib = jnp.abs(jnp.array([
-            jnp.maximum(jnp.abs(V1/R2), jnp.abs((V1-V2)/R1)),
-            jnp.maximum(jnp.abs((V2-V1)/R1), jnp.abs(I_v1)),
-        ], dtype=X.dtype))
+        max_res_contrib = jnp.abs(
+            jnp.array(
+                [
+                    jnp.maximum(jnp.abs(V1 / R2), jnp.abs((V1 - V2) / R1)),
+                    jnp.maximum(jnp.abs((V2 - V1) / R1), jnp.abs(I_v1)),
+                ],
+                dtype=X.dtype,
+            )
+        )
 
         return J, f, Q, I_vsource, limit_state_out, max_res_contrib
 
@@ -122,7 +141,10 @@ def _run_nr_solver(use_fori_loop: bool, max_nr_iters: int = 8):
     device_arrays = {}
 
     result = nr_solve_jit(
-        X_init, vsource_vals, isource_vals, Q_prev,
+        X_init,
+        vsource_vals,
+        isource_vals,
+        Q_prev,
         jnp.array(0.0, dtype=fdtype),  # integ_c0
         device_arrays,
     )

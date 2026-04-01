@@ -585,6 +585,7 @@ class FullMNAStrategy(TransientStrategy):
             # Priority: VAJAX_SPARSE_SOLVER env var > CUDA/Spineax > Sprux > UMFPACK
             # Set VAJAX_SPARSE_SOLVER=sprux|umfpack|spineax to force a specific solver.
             import os
+
             sparse_solver_override = os.environ.get("VAJAX_SPARSE_SOLVER", "auto").lower()
             if sparse_solver_override != "auto":
                 logger.info(f"Sparse solver override: VAJAX_SPARSE_SOLVER={sparse_solver_override}")
@@ -1271,15 +1272,15 @@ class FullMNAStrategy(TransientStrategy):
             else jnp.zeros(0, dtype=dtype)
         )
         init_loop_state = (
-            X0,                                           # 0: X
-            Q_prev_init,                                  # 1: Q_prev
-            jnp.zeros(n_unknowns, dtype=dtype),           # 2: dQdt_prev
-            jnp.zeros(n_unknowns, dtype=dtype),           # 3: Q_prev2
-            times_out,                                    # 4: times_out
-            V_out,                                        # 5: V_out
-            I_out,                                        # 6: I_out
-            jnp.array(0, dtype=jnp.int32),                # 7: total_nr_iters
-            limit_state_init,                             # 8: limit_state
+            X0,  # 0: X
+            Q_prev_init,  # 1: Q_prev
+            jnp.zeros(n_unknowns, dtype=dtype),  # 2: dQdt_prev
+            jnp.zeros(n_unknowns, dtype=dtype),  # 3: Q_prev2
+            times_out,  # 4: times_out
+            V_out,  # 5: V_out
+            I_out,  # 6: I_out
+            jnp.array(0, dtype=jnp.int32),  # 7: total_nr_iters
+            limit_state_init,  # 8: limit_state
         )
 
         # NR tolerance floor (static for fixed-step mode)
@@ -1287,11 +1288,12 @@ class FullMNAStrategy(TransientStrategy):
 
         def body_fn(i, state):
             """One fixed-step timestep: evaluate sources, NR solve, store output."""
-            (X, Q_prev, dQdt_prev, Q_prev2, t_out, v_out, i_out,
-             total_nr, limit_state) = state
+            (X, Q_prev, dQdt_prev, Q_prev2, t_out, v_out, i_out, total_nr, limit_state) = state
 
             # Time for this step (i is 0-based, output index is i+1)
-            t_next = (jnp.float64(i) + 1.0) * dt if dtype == jnp.float64 else (jnp.float32(i) + 1.0) * dt
+            t_next = (
+                (jnp.float64(i) + 1.0) * dt if dtype == jnp.float64 else (jnp.float32(i) + 1.0) * dt
+            )
 
             # Evaluate sources at next time
             vsource_vals, isource_vals = jit_source_eval(t_next)
@@ -1303,11 +1305,30 @@ class FullMNAStrategy(TransientStrategy):
             res_tol_floor = jnp.full(n_unknowns, nr_abstol, dtype=dtype)
 
             # NR solve (uses fori_loop internally when use_fori_loop=True)
-            (X_new, iterations, converged, max_f, Q, dQdt_out,
-             I_vsource, limit_state_out, max_res_contrib_out) = nr_solve(
-                X_init, vsource_vals, isource_vals, Q_prev,
-                c0, device_arrays, 1e-12, 0.0,  # gshunt=0 for fixed step
-                c1, d1, dQdt_prev, c2, Q_prev2,
+            (
+                X_new,
+                iterations,
+                converged,
+                max_f,
+                Q,
+                dQdt_out,
+                I_vsource,
+                limit_state_out,
+                max_res_contrib_out,
+            ) = nr_solve(
+                X_init,
+                vsource_vals,
+                isource_vals,
+                Q_prev,
+                c0,
+                device_arrays,
+                1e-12,
+                0.0,  # gshunt=0 for fixed step
+                c1,
+                d1,
+                dQdt_prev,
+                c2,
+                Q_prev2,
                 limit_state_in=limit_state,
                 res_tol_floor=res_tol_floor,
             )
@@ -1332,9 +1353,15 @@ class FullMNAStrategy(TransientStrategy):
             )
 
             return (
-                X_new, Q, dQdt_out, Q_prev,  # Q_prev2 = old Q_prev
-                new_t_out, new_v_out, new_i_out,
-                new_total_nr, new_limit_state,
+                X_new,
+                Q,
+                dQdt_out,
+                Q_prev,  # Q_prev2 = old Q_prev
+                new_t_out,
+                new_v_out,
+                new_i_out,
+                new_total_nr,
+                new_limit_state,
             )
 
         # Cache key for the fixed-step JIT function
@@ -1351,9 +1378,7 @@ class FullMNAStrategy(TransientStrategy):
                 return lax.fori_loop(0, n_steps, body_fn, state)
 
             self._jit_run_while_cache[fori_cache_key] = run_fori
-            logger.debug(
-                f"{self.name}: Created fori_loop JIT runner for {n_steps} fixed steps"
-            )
+            logger.debug(f"{self.name}: Created fori_loop JIT runner for {n_steps} fixed steps")
 
         run_fori = self._jit_run_while_cache[fori_cache_key]
 

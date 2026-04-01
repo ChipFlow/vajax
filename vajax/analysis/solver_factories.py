@@ -227,11 +227,28 @@ def _make_nr_solver_common(
             f"(enables IREE loop fusion for GPU parallelism)"
         )
 
-    def _nr_body_common(iteration, X, converged, max_f_prev, max_delta_prev,
-                        Q_prev_iter, limit_state,
-                        vsource_vals, isource_vals, Q_prev, integ_c0,
-                        device_arrays_arg, gmin, gshunt, integ_c1, integ_d1,
-                        _dQdt_prev, integ_c2, _Q_prev2, res_tol_floor):
+    def _nr_body_common(
+        iteration,
+        X,
+        converged,
+        max_f_prev,
+        max_delta_prev,
+        Q_prev_iter,
+        limit_state,
+        vsource_vals,
+        isource_vals,
+        Q_prev,
+        integ_c0,
+        device_arrays_arg,
+        gmin,
+        gshunt,
+        integ_c1,
+        integ_d1,
+        _dQdt_prev,
+        integ_c2,
+        _Q_prev2,
+        res_tol_floor,
+    ):
         """Common NR iteration body shared by while_loop and fori_loop modes."""
         J_or_data, f, Q, _, limit_state_out, max_res_contrib = build_system_jit(
             X,
@@ -305,8 +322,7 @@ def _make_nr_solver_common(
             limit_settled = limit_delta < limit_ref
             this_converged = this_converged & limit_settled & (iteration >= 1)
 
-        return (X_candidate, this_converged, max_f, max_delta, Q,
-                limit_state_out)
+        return (X_candidate, this_converged, max_f, max_delta, Q, limit_state_out)
 
     if use_fori_loop:
         # --- fori_loop mode: fixed iteration count, no early exit ---
@@ -337,13 +353,30 @@ def _make_nr_solver_common(
                 res_tol_floor,
             ) = state
 
-            X_candidate, this_converged, new_max_f, new_max_delta, Q_new, \
-                limit_state_new = _nr_body_common(
-                    iteration, X, converged, max_f, max_delta,
-                    Q_iter, limit_state,
-                    vsource_vals, isource_vals, Q_prev, integ_c0,
-                    device_arrays_arg, gmin, gshunt, integ_c1, integ_d1,
-                    _dQdt_prev, integ_c2, _Q_prev2, res_tol_floor)
+            X_candidate, this_converged, new_max_f, new_max_delta, Q_new, limit_state_new = (
+                _nr_body_common(
+                    iteration,
+                    X,
+                    converged,
+                    max_f,
+                    max_delta,
+                    Q_iter,
+                    limit_state,
+                    vsource_vals,
+                    isource_vals,
+                    Q_prev,
+                    integ_c0,
+                    device_arrays_arg,
+                    gmin,
+                    gshunt,
+                    integ_c1,
+                    integ_d1,
+                    _dQdt_prev,
+                    integ_c2,
+                    _Q_prev2,
+                    res_tol_floor,
+                )
+            )
 
             # Update convergence flag (once converged, stays converged)
             new_converged = converged | this_converged
@@ -394,9 +427,7 @@ def _make_nr_solver_common(
             limit_state_in: Array | None = None,
             res_tol_floor: Array | None = None,
         ):
-            _dQdt_prev = (
-                dQdt_prev if dQdt_prev is not None else jnp.zeros(n_unknowns, dtype=fdtype)
-            )
+            _dQdt_prev = dQdt_prev if dQdt_prev is not None else jnp.zeros(n_unknowns, dtype=fdtype)
             _Q_prev2 = Q_prev2 if Q_prev2 is not None else jnp.zeros(n_unknowns, dtype=fdtype)
             _limit_state = (
                 limit_state_in
@@ -420,12 +451,12 @@ def _make_nr_solver_common(
             # fori_loop state: iteration counter provided as first arg
             init_state = (
                 X_init,
-                jnp.array(False),         # converged
-                jnp.array(jnp.inf),       # max_f
-                jnp.array(jnp.inf),       # max_delta
-                init_Q,                    # Q
-                _limit_state,              # limit_state
-                vsource_vals,              # passthroughs below
+                jnp.array(False),  # converged
+                jnp.array(jnp.inf),  # max_f
+                jnp.array(jnp.inf),  # max_delta
+                init_Q,  # Q
+                _limit_state,  # limit_state
+                vsource_vals,  # passthroughs below
                 isource_vals,
                 Q_prev,
                 _integ_c0,
@@ -474,7 +505,10 @@ def _make_nr_solver_common(
             )
 
             dQdt_final = (
-                _integ_c0 * Q_final + _integ_c1 * Q_prev + _integ_d1 * _dQdt_prev + _integ_c2 * _Q_prev2
+                _integ_c0 * Q_final
+                + _integ_c1 * Q_prev
+                + _integ_d1 * _dQdt_prev
+                + _integ_c2 * _Q_prev2
             )
 
             return (
@@ -521,14 +555,28 @@ def _make_nr_solver_common(
                 res_tol_floor,
             ) = state
 
-            X_new, converged, max_f, max_delta, Q, limit_state_out = \
-                _nr_body_common(
-                    iteration, X, jnp.array(False), jnp.array(jnp.inf),
-                    jnp.array(jnp.inf), jnp.zeros(n_unknowns, dtype=fdtype),
-                    limit_state,
-                    vsource_vals, isource_vals, Q_prev, integ_c0,
-                    device_arrays_arg, gmin, gshunt, integ_c1, integ_d1,
-                    _dQdt_prev, integ_c2, _Q_prev2, res_tol_floor)
+            X_new, converged, max_f, max_delta, Q, limit_state_out = _nr_body_common(
+                iteration,
+                X,
+                jnp.array(False),
+                jnp.array(jnp.inf),
+                jnp.array(jnp.inf),
+                jnp.zeros(n_unknowns, dtype=fdtype),
+                limit_state,
+                vsource_vals,
+                isource_vals,
+                Q_prev,
+                integ_c0,
+                device_arrays_arg,
+                gmin,
+                gshunt,
+                integ_c1,
+                integ_d1,
+                _dQdt_prev,
+                integ_c2,
+                _Q_prev2,
+                res_tol_floor,
+            )
 
             return (
                 X_new,
@@ -570,9 +618,7 @@ def _make_nr_solver_common(
             limit_state_in: Array | None = None,
             res_tol_floor: Array | None = None,
         ):
-            _dQdt_prev = (
-                dQdt_prev if dQdt_prev is not None else jnp.zeros(n_unknowns, dtype=fdtype)
-            )
+            _dQdt_prev = dQdt_prev if dQdt_prev is not None else jnp.zeros(n_unknowns, dtype=fdtype)
             _Q_prev2 = Q_prev2 if Q_prev2 is not None else jnp.zeros(n_unknowns, dtype=fdtype)
             _limit_state = (
                 limit_state_in
@@ -660,7 +706,10 @@ def _make_nr_solver_common(
             )
 
             dQdt_final = (
-                _integ_c0 * Q_final + _integ_c1 * Q_prev + _integ_d1 * _dQdt_prev + _integ_c2 * _Q_prev2
+                _integ_c0 * Q_final
+                + _integ_c1 * Q_prev
+                + _integ_d1 * _dQdt_prev
+                + _integ_c2 * _Q_prev2
             )
 
             return (

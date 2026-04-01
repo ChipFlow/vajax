@@ -36,9 +36,14 @@ from jaxtyping import Array
 
 __version__ = "0.1.0"
 __all__ = [
-    "solve", "dot", "clear_cache", "is_available",
-    "begin_solve", "end_solve",
-    "begin_capture", "end_capture",
+    "solve",
+    "dot",
+    "clear_cache",
+    "is_available",
+    "begin_solve",
+    "end_solve",
+    "begin_capture",
+    "end_capture",
 ]
 
 # =============================================================================
