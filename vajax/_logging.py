@@ -52,6 +52,7 @@ def _get_memory_stats() -> str:
 
     # GPU memory via JAX (works for CUDA devices)
     try:
+        parts.append(f"jax devices: {len(jax.devices)}")
         for dev in jax.devices():
             # Check for GPU/CUDA devices (platform can be 'gpu', 'cuda', etc.)
             if dev.platform != "cpu":
