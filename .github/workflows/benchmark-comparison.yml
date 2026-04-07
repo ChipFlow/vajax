@@ -138,7 +138,7 @@ jobs:
       - name: Install CUDA toolkit
         if: matrix.platform == 'cuda'
         run: |
-          sudo apt-get install -y cuda-toolkit-12-6 libcudnn9-cuda-12 libcudss0-cuda-12
+          sudo apt-get install -y cuda-toolkit-12-8 libcudnn9-cuda-12 libcudss0-cuda-12
           echo "/usr/local/cuda-12.6/bin" >> "$GITHUB_PATH"
           CUDSS_LIB=$(dpkg -L libcudss0-cuda-12 | grep '\.so' | head -1)
           if [ -n "$CUDSS_LIB" ]; then

@@ -81,7 +81,7 @@ jobs:
       - name: Install CUDA toolkit
         run: |
           sudo apt-get update
-          sudo apt-get install -y cuda-nvcc-12-6 cuda-cudart-dev-12-6
+          sudo apt-get install -y cuda-nvcc-12-8 cuda-cudart-dev-12-8
           echo "/usr/local/cuda-12.6/bin" >> $GITHUB_PATH
 
       - name: Install system dependencies
