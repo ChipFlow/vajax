@@ -88,7 +88,7 @@ engine.prepare(use_sparse=True)
 
 | AdaptiveConfig | Default | Description |
 |----------------|---------|-------------|
-| `min_dt` | 1e-18 | Minimum allowed timestep (seconds). |
+| `min_dt` | 1e-15 | Minimum allowed timestep (seconds). |
 | `max_order` | 2 | Maximum polynomial order for predictor (0=constant, 1=linear, 2=quadratic). |
 | `grow_factor` | 2.0 | Maximum factor by which timestep can grow per step. |
 | `warmup_steps` | 2 | Fixed-dt steps before enabling LTE control (need history for predictor). |
