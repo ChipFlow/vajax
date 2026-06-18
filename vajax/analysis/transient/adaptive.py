@@ -45,7 +45,7 @@ class AdaptiveConfig:
             new_dt exceeds this, the timestep is rejected. Default 2.5.
         reltol: Relative tolerance for LTE comparison. Default 1e-3.
         abstol: Absolute tolerance for LTE comparison. Default 1e-12.
-        min_dt: Minimum allowed timestep. Default 1e-18 seconds.
+        min_dt: Minimum allowed timestep. Default 1e-15 seconds.
         max_dt: Maximum allowed timestep. Default infinity (no limit).
         warmup_steps: Number of fixed-dt steps before enabling LTE control.
             Need at least 2 past solutions for linear extrapolation. Default 2.
