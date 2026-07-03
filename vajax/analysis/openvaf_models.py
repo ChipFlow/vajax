@@ -767,6 +767,15 @@ def prepare_static_inputs(
             if pname not in all_unique:
                 if pname in ("tnom", "tref", "tr"):
                     default = 27.0
+                elif pname in ("temp", "temperature"):
+                    # Device operating temperature: when not given, the model must fall back to the
+                    # ambient $temperature. Compact models express this with a huge "not given"
+                    # sentinel (e.g. EKV `TEMP = -`NOT_GIVEN` = 1e21) tested as `if (TEMP == -NOT_
+                    # GIVEN)`. init_param_defaults (openvaf_py get_param_defaults) drops such computed
+                    # defaults, so without this the 0.0 fallback below reads as "0 degC given" and
+                    # the device runs at 273.15 K instead of the ambient. (Deeper fix: teach
+                    # get_param_defaults to capture sentinel/computed defaults.)
+                    default = 1e21
                 elif pname in ("nf", "mult", "ns", "nd"):
                     default = 1.0
                 else:
