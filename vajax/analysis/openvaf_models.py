@@ -510,8 +510,32 @@ def compile_openvaf_models(
             f"  {model_type}: init function done in {t4 - t3:.1f}s (cache_size={init_meta['cache_size']})"
         )
 
-        # Build init->eval index mapping
-        eval_name_to_idx = {n.lower(): i for i, n in enumerate(param_names)}
+        # Build init->eval index mapping (case-insensitive).
+        # An init param sources its runtime *value* from the eval input slot of the same name. A
+        # model can expose several eval slots that collide when lowercased: a value `param`, its
+        # `param_given` flag, and a `hidden_state` cache slot (e.g. EKV `TNOM`/`Tnom`; BSIM4
+        # exposes all three for `tnom`, `vth0`, `u0`, ...). A naive last-wins lowercase map points
+        # the init param at whichever comes last — the hidden_state (an init *output*, value 0.0)
+        # or the given-flag (0/1) — silently corrupting the parameter. Rank by preference so a
+        # value-param always reads its value: value-input > param_given > hidden_state; last-wins
+        # within a tier (legacy behaviour among equal-preference slots).
+        _VALUE_INPUT_KINDS = frozenset(
+            {"param", "temperature", "voltage", "implicit_unknown", "sysfun"}
+        )
+
+        def _name_pref(kind: str) -> int:
+            if kind in _VALUE_INPUT_KINDS:
+                return 2
+            if kind == "param_given":
+                return 1
+            return 0  # hidden_state and everything else (init outputs)
+
+        eval_name_to_idx: Dict[str, int] = {}
+        for i, n in enumerate(param_names):
+            key = n.lower()
+            prev = eval_name_to_idx.get(key)
+            if prev is None or _name_pref(param_kinds[i]) >= _name_pref(param_kinds[prev]):
+                eval_name_to_idx[key] = i
         init_to_eval_indices = []
         for name in init_meta["param_names"]:
             eval_idx = eval_name_to_idx.get(name.lower(), -1)
@@ -766,7 +790,13 @@ def prepare_static_inputs(
         for pname, cols in param_to_cols.items():
             if pname not in all_unique:
                 if pname in ("tnom", "tref", "tr"):
-                    default = 27.0
+                    # Un-given nominal temperature. Prefer the model's own literal default; if
+                    # the model expresses "not given" via the -`NOT_GIVEN sentinel idiom (EKV:
+                    # `if (TNOM == -`NOT_GIVEN) Tnom = `DEFAULT_TNOM + `P_CELSIUS0`), then
+                    # get_param_defaults drops that computed default, so fall back to the sentinel
+                    # and let the model select its own DEFAULT_TNOM (matches VACASK) rather than
+                    # reading a spurious 0/27 degC.
+                    default = model_defaults.get(pname, 1e21)
                 elif pname in ("nf", "mult", "ns", "nd"):
                     default = 1.0
                 else:
